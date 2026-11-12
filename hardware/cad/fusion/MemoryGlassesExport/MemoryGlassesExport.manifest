@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": {
+    "": "Exports every printed part of the open Memory Glasses v2 file as a raw STL."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

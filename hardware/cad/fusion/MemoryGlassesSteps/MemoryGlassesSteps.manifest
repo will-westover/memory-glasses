@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": {
+    "": "Builds a new file showing every assembly step of Memory Glasses v2, and saves a picture of each step."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": {
+    "": "Hides helper geometry, applies real-life materials, and queues photoreal renders."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

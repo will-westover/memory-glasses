@@ -1,0 +1,16 @@
+# Recordings, frames and audio: personal data, never committed
+data/
+
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Rust
+target/
+
+# macOS
+.DS_Store

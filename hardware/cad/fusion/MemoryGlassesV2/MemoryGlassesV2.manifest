@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": {
+    "": "Builds Memory Glasses v2: v1's parts restyled with a flat thick brow and flush modules."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

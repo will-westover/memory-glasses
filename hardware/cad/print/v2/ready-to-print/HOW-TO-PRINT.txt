@@ -1,0 +1,12 @@
+MEMORY GLASSES - PRINT THIS
+
+File: memory-glasses-plate.stl
+Every part, laid out on one bed, already the right way up. Needs a bed at least 220 x 220 mm.
+
+1. Open the file in the slicer. Don't rotate, scale or auto-arrange it.
+2. Material: PETG (PLA works too). 0.2 mm layers, 4 walls, 30% infill.
+3. Supports: ON, tree, "everywhere" (not "build plate only").
+4. Brim: 10 mm.
+5. Slice and print.
+
+After: pull the supports out of the slots and grooves on the front piece so the arms and lids slide in.

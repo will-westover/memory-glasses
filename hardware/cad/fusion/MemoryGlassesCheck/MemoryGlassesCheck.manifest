@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": {
+    "": "Reports every body's size and any overlapping solid parts in the MemoryGlasses design."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}
