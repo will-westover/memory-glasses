@@ -24,6 +24,7 @@ Parts and status are in [docs/build-plan.md](docs/build-plan.md).
 - Server is Python with `uv`, the app is Swift, the firmware is Rust.
 - Code lives at the top level and everything physical lives in `hardware/`. Fusion's Scripts folder links
   into `hardware/cad/fusion/`, so don't move it.
+- Tests only for tricky logic. The evals are the test for anything that calls a model.
 - Git: work on `main`, commit freely, tag `part-N` when a part works. No branches, pull requests or CI.
 
 Everything else is your call.
