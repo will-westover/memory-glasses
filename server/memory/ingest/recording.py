@@ -5,7 +5,7 @@
 Writes data/sessions/<start time>/ with:
     frames/        one frame every few seconds, near-duplicates dropped
     audio.wav      mono 16 kHz, ready for speech-to-text (missing if the video has no sound)
-    manifest.json  every kept frame with its time and fingerprint
+    manifest.json  every kept frame with its time and fingerprint, and where it was recorded if known
     index.html     the kept frames on one page, to check by eye
 
 The session is also saved to the database when it's running.
@@ -25,6 +25,7 @@ import psycopg
 
 from memory import db
 from memory.config import DATA_DIR
+from memory.places import parse_location
 from memory.ingest.fingerprint import (
     DEFAULT_MAX_DISTANCE,
     THUMB_BYTES,
@@ -51,15 +52,19 @@ def run(command: list[str]) -> bytes:
     return result.stdout
 
 
-def probe(video: Path) -> tuple[datetime, float, bool]:
-    """Return when the recording started (local time), how long it is in seconds, and whether it has sound."""
+def probe(video: Path) -> tuple[datetime, float, bool, tuple[float, float] | None]:
+    """Return when the recording started (local time), its length in seconds, whether it has sound, and
+    (lat, lon) if the file says where it was recorded."""
     info = json.loads(
         run(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(video)])
     )
     duration = float(info["format"].get("duration", 0))
     has_audio = any(stream["codec_type"] == "audio" for stream in info["streams"])
 
-    created = info["format"].get("tags", {}).get("creation_time")
+    tags = info["format"].get("tags", {})
+    location = parse_location(tags.get("com.apple.quicktime.location.ISO6709") or tags.get("location"))
+
+    created = tags.get("creation_time")
     if created:
         started = datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone()
     else:
@@ -67,7 +72,7 @@ def probe(video: Path) -> tuple[datetime, float, bool]:
         ended = datetime.fromtimestamp(video.stat().st_mtime).astimezone()
         started = ended - timedelta(seconds=duration)
 
-    return started, duration, has_audio
+    return started, duration, has_audio, location
 
 
 def extract_frames(video: Path, frames_dir: Path, seconds_per_frame: float) -> list[int]:
@@ -119,11 +124,13 @@ def caption_html(caption: dict | None) -> str:
     if not caption:
         return ""
 
-    parts = [f'<p>{html.escape(caption["summary"])}</p>', f'<p class="dim">Room: {html.escape(caption["room"])}</p>']
-    if caption["objects"]:
-        parts.append(f'<p class="dim">{html.escape(", ".join(caption["objects"]))}</p>')
-    if caption["text_seen"]:
-        parts.append(f'<p class="dim">Text: {html.escape(caption["text_seen"])}</p>')
+    parts = [f'<p>{html.escape(caption["summary"])}</p>', f'<p class="dim">Setting: {html.escape(caption["setting"])}</p>']
+
+    for name, relation, anchor in caption["objects"]:
+        parts.append(f'<p class="dim">{html.escape(f"{name}: {relation} {anchor}")}</p>')
+
+    for text, surface in caption["texts"]:
+        parts.append(f'<p class="dim">Text on {html.escape(surface)}: {html.escape(text)}</p>')
 
     return "".join(parts)
 
@@ -189,7 +196,9 @@ def refresh_page(conn, session_dir: Path) -> None:
     """Rewrite a session's index.html with whatever captions and transcript the database has for it."""
     manifest = json.loads((session_dir / "manifest.json").read_text())
 
-    write_page(session_dir, manifest, db.captions(conn, manifest["id"]), db.transcript(conn, manifest["id"]))
+    captions = {Path(frame["image_path"]).name: frame for frame in db.captioned_frames(conn, manifest["id"])}
+
+    write_page(session_dir, manifest, captions, db.transcript(conn, manifest["id"]))
 
 
 def ingest(
@@ -203,7 +212,7 @@ def ingest(
     if not video.is_file():
         raise IngestError(f"no such file: {video}")
 
-    started, duration, has_audio = probe(video)
+    started, duration, has_audio, location = probe(video)
     session_id = started.strftime("%Y-%m-%dT%H-%M-%S")
     session_dir = data_dir / "sessions" / session_id
     if session_dir.exists():
@@ -238,6 +247,8 @@ def ingest(
         "video": video.name,
         "started_at": started.isoformat(),
         "duration_seconds": duration,
+        "lat": location[0] if location else None,
+        "lon": location[1] if location else None,
         "seconds_per_frame": seconds_per_frame,
         "frames_sampled": len(fingerprints),
         "frames_kept": len(frames),

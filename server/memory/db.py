@@ -1,4 +1,4 @@
-"""The database: connect, set up the tables, save sessions and list them.
+"""The database: connect, set up the tables, and store and load what each pipeline step produces.
 
     uv run python -m memory.db list
     uv run python -m memory.db save ../data/sessions/<id>
@@ -46,6 +46,8 @@ def migrate(conn: psycopg.Connection) -> list[str]:
     return ran
 
 
+# --- Sessions and frames (recording step) ---
+
 def save_session(conn: psycopg.Connection, session_dir: Path) -> int:
     """Store a session folder's manifest. Saving the same session again replaces it. Return the frame count."""
     manifest = json.loads((session_dir / "manifest.json").read_text())
@@ -56,14 +58,16 @@ def save_session(conn: psycopg.Connection, session_dir: Path) -> int:
         conn.execute("delete from session where id = %s", (session_id,))
 
         conn.execute(
-            "insert into session (id, source, started_at, duration_seconds, audio_path)"
-            " values (%s, %s, %s, %s, %s)",
+            "insert into session (id, source, started_at, duration_seconds, audio_path, lat, lon)"
+            " values (%s, %s, %s, %s, %s, %s, %s)",
             (
                 session_id,
                 manifest["source"],
                 manifest["started_at"],
                 manifest["duration_seconds"],
                 f"{folder}/{manifest['audio']}" if manifest["audio"] else None,
+                manifest.get("lat"),
+                manifest.get("lon"),
             ),
         )
 
@@ -88,6 +92,13 @@ def list_sessions(conn: psycopg.Connection) -> list[tuple]:
     ).fetchall()
 
 
+def session_info(conn: psycopg.Connection, session_id: str) -> tuple:
+    """Return (started_at, lat, lon) for a session. lat and lon are None when the recording had no location."""
+    return conn.execute("select started_at, lat, lon from session where id = %s", (session_id,)).fetchone()
+
+
+# --- Captions ---
+
 def frames_without_caption(conn: psycopg.Connection, session_id: str, limit: int | None = None) -> list[tuple]:
     """Return (frame id, image path) for the session's frames that have no caption, oldest first."""
     return conn.execute(
@@ -98,35 +109,58 @@ def frames_without_caption(conn: psycopg.Connection, session_id: str, limit: int
 
 
 def save_caption(conn: psycopg.Connection, frame_id: int, caption) -> None:
-    """Store a frame's caption and its objects, replacing any earlier ones."""
+    """Store a frame's caption, objects and readable text, replacing any earlier ones."""
     conn.execute(
-        "update frame set summary = %s, room = %s, text_seen = %s, captioned_at = now() where id = %s",
-        (caption.summary, caption.room, caption.text_seen, frame_id),
+        "update frame set summary = %s, setting = %s, captioned_at = now() where id = %s",
+        (caption.summary, caption.setting, frame_id),
     )
 
     conn.execute("delete from frame_object where frame_id = %s", (frame_id,))
+    conn.execute("delete from frame_text where frame_id = %s", (frame_id,))
+
     with conn.cursor() as cursor:
         cursor.executemany(
-            "insert into frame_object (frame_id, name, location) values (%s, %s, %s)",
-            [(frame_id, item.name, item.location) for item in caption.objects],
+            "insert into frame_object (frame_id, name, relation, anchor) values (%s, %s, %s, %s)",
+            [(frame_id, item.name, item.relation, item.anchor) for item in caption.objects],
+        )
+
+        cursor.executemany(
+            "insert into frame_text (frame_id, text, surface) values (%s, %s, %s)",
+            [(frame_id, item.text, item.surface) for item in caption.texts],
         )
 
 
-def captions(conn: psycopg.Connection, session_id: str) -> dict[str, dict]:
-    """Return the session's captions, keyed by frame file name (e.g. '000001.jpg')."""
+def captioned_frames(conn: psycopg.Connection, session_id: str) -> list[dict]:
+    """Return every captioned frame of a session, oldest first, with its objects and readable text."""
     rows = conn.execute(
-        "select f.image_path, f.summary, f.room, f.text_seen,"
-        " coalesce(array_agg(o.name || ' (' || o.location || ')') filter (where o.name is not null), '{}')"
-        " from frame f left join frame_object o on o.frame_id = f.id"
-        " where f.session_id = %s and f.captioned_at is not null group by f.id",
+        "select f.id, f.image_path, f.captured_at, extract(epoch from f.captured_at - s.started_at),"
+        "       f.summary, f.setting,"
+        "       (select coalesce(json_agg(json_build_array(o.name, o.relation, o.anchor)), '[]')"
+        "          from frame_object o where o.frame_id = f.id),"
+        "       (select coalesce(json_agg(json_build_array(t.text, t.surface)), '[]')"
+        "          from frame_text t where t.frame_id = f.id)"
+        "  from frame f join session s on s.id = f.session_id"
+        " where f.session_id = %s and f.captioned_at is not null"
+        " order by f.captured_at",
         (session_id,),
     ).fetchall()
 
-    return {
-        Path(image_path).name: {"summary": summary, "room": room, "text_seen": text_seen, "objects": objects}
-        for image_path, summary, room, text_seen, objects in rows
-    }
+    return [
+        {
+            "id": frame_id,
+            "image_path": image_path,
+            "at": captured_at,
+            "offset_seconds": float(offset),
+            "summary": summary,
+            "setting": setting,
+            "objects": [tuple(item) for item in objects],
+            "texts": [tuple(item) for item in texts],
+        }
+        for frame_id, image_path, captured_at, offset, summary, setting, objects, texts in rows
+    ]
 
+
+# --- Transcript ---
 
 def save_transcript(conn: psycopg.Connection, session_id: str, segments) -> None:
     """Store a session's transcript, replacing any earlier one. Each segment has speaker, start, end, text."""
@@ -153,43 +187,71 @@ def transcript(conn: psycopg.Connection, session_id: str) -> list[tuple]:
     ).fetchall()
 
 
-def frames_without_embedding(conn: psycopg.Connection, session_id: str) -> list[tuple]:
-    """Return (frame id, summary, room, text seen, objects) for captioned frames that have no embedding."""
-    return conn.execute(
-        "select f.id, f.summary, f.room, f.text_seen,"
-        " coalesce(array_agg(o.name || ' ' || o.location) filter (where o.name is not null), '{}')"
-        " from frame f left join frame_object o on o.frame_id = f.id"
-        " where f.session_id = %s and f.captioned_at is not null and f.embedding is null"
-        " group by f.id order by f.captured_at",
+def transcript_lines(conn: psycopg.Connection, session_id: str) -> list[dict]:
+    """Return the session's transcript lines with start and end offsets, in order."""
+    rows = conn.execute(
+        "select start_at, offset_seconds, offset_seconds + extract(epoch from end_at - start_at), speaker, text"
+        " from audio_segment where session_id = %s order by start_at",
         (session_id,),
     ).fetchall()
 
+    return [
+        {"at": start_at, "start": float(start), "end": float(end), "speaker": speaker, "text": text}
+        for start_at, start, end, speaker, text in rows
+    ]
 
-def lines_without_embedding(conn: psycopg.Connection, session_id: str) -> list[tuple]:
-    """Return (line id, text) for transcript lines that have no embedding."""
+
+# --- Places ---
+
+def places(conn: psycopg.Connection) -> list[tuple]:
+    """Return (name, lat, lon, radius in metres) for every saved place."""
+    return conn.execute("select name, lat, lon, radius_m from place order by name").fetchall()
+
+
+def save_place(conn: psycopg.Connection, name: str, lat: float, lon: float, radius_m: float) -> None:
+    """Add a named place, or move it if the name is already used."""
+    conn.execute(
+        "insert into place (name, lat, lon, radius_m) values (%s, %s, %s, %s)"
+        " on conflict (name) do update set lat = excluded.lat, lon = excluded.lon, radius_m = excluded.radius_m",
+        (name, lat, lon, radius_m),
+    )
+
+
+# --- Facts ---
+
+def replace_facts(conn: psycopg.Connection, session_id: str, facts: list[dict], vectors: list[str]) -> None:
+    """Store a session's facts with their embeddings, replacing any earlier ones."""
+    conn.execute("delete from fact where session_id = %s", (session_id,))
+
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "insert into fact (session_id, frame_id, kind, at, offset_seconds, text, embedding)"
+            " values (%s, %s, %s, %s, %s, %s, %s::vector)",
+            [
+                (session_id, fact["frame_id"], fact["kind"], fact["at"], fact["offset_seconds"], fact["text"], vector)
+                for fact, vector in zip(facts, vectors)
+            ],
+        )
+
+
+def last_seen(conn: psycopg.Connection, name: str, limit: int = 3) -> list[tuple]:
+    """Return the most recent sightings of an object whose name contains `name`, newest first.
+
+    Each row is (object, relation, anchor, seen at, setting, session id, offset seconds, image path).
+    """
     return conn.execute(
-        "select id, text from audio_segment where session_id = %s and embedding is null order by start_at",
-        (session_id,),
+        "select o.name, o.relation, o.anchor, f.captured_at, f.setting, f.session_id,"
+        "       extract(epoch from f.captured_at - s.started_at), f.image_path"
+        "  from frame_object o"
+        "  join frame f on f.id = o.frame_id"
+        "  join session s on s.id = f.session_id"
+        " where lower(o.name) like '%%' || lower(%s) || '%%'"
+        " order by f.captured_at desc limit %s",
+        (name, limit),
     ).fetchall()
 
 
-def save_frame_embeddings(conn: psycopg.Connection, rows: list[tuple]) -> None:
-    """Store (frame id, search text, vector) for each frame."""
-    with conn.cursor() as cursor:
-        cursor.executemany(
-            "update frame set search_text = %s, embedding = %s::vector where id = %s",
-            [(text, vector, frame_id) for frame_id, text, vector in rows],
-        )
-
-
-def save_line_embeddings(conn: psycopg.Connection, rows: list[tuple]) -> None:
-    """Store (line id, vector) for each transcript line."""
-    with conn.cursor() as cursor:
-        cursor.executemany(
-            "update audio_segment set embedding = %s::vector where id = %s",
-            [(vector, line_id) for line_id, vector in rows],
-        )
-
+# --- Cost ---
 
 def step_cost(conn: psycopg.Connection, step: str) -> float:
     """Return the total dollars logged for one pipeline step."""

@@ -15,7 +15,7 @@ def make_video(path: Path) -> None:
             "-f", "lavfi", "-i", "sine=f=440:d=16",
             "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
             "-map", "[v]", "-map", "2:a",
-            "-c:v", "mpeg4", "-pix_fmt", "yuv420p", str(path),
+            "-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-metadata", "location=+40.2518-111.6493/", str(path),
         ],
         check=True,
     )
@@ -31,6 +31,7 @@ def test_two_scenes_become_two_frames(tmp_path):
     assert manifest["frames_sampled"] == 8
     assert manifest["frames_kept"] == 2
     assert [frame["offset_seconds"] for frame in manifest["frames"]] == [0.0, 8.0]
+    assert (manifest["lat"], manifest["lon"]) == (40.2518, -111.6493)
 
     on_disk = sorted(path.name for path in (session_dir / "frames").glob("*.jpg"))
     assert on_disk == [Path(frame["file"]).name for frame in manifest["frames"]]

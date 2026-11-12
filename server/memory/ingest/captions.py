@@ -1,9 +1,10 @@
-"""Describe each kept frame of a session with a model: a summary, the room, objects and any readable text.
+"""Describe each kept frame of a session with a model.
 
     uv run python -m memory.ingest.captions <session id>            # every frame not captioned yet
     uv run python -m memory.ingest.captions <session id> --limit 3  # try a few first
 
-Each call is logged in api_cost. The session's index.html is rewritten to show the captions.
+For each frame the model returns a summary, the kind of space, objects placed relative to something that stays
+put ("keys", "on", "kitchen counter"), and any readable text. Each call is logged in api_cost.
 """
 
 import argparse
@@ -13,6 +14,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -24,21 +26,42 @@ from memory.ingest.recording import refresh_page
 IMAGE_WIDTH = 768
 PARALLEL_CALLS = 8
 
+# A fixed list, so the same kind of space always gets the same label.
+Setting = Literal[
+    "kitchen", "bedroom", "bathroom", "living room", "dining room", "office", "classroom", "hallway", "garage",
+    "store", "restaurant", "gym", "vehicle", "outdoors", "other",
+]
+
+Relation = Literal["on", "in", "under", "next to", "above", "in front of", "behind", "hanging on", "held by"]
+
 INSTRUCTIONS = """\
-You are looking at one frame from a camera worn on someone's glasses. Describe it so that later they can
-ask what they saw and where things were. Report only what is visible. Do not guess names of people."""
+You are looking at one frame from a camera worn on someone's glasses, so the view is what the wearer sees.
+Describe it so that later they can ask what they saw and where things were.
+
+Objects: list things a person might later look for, such as keys, a phone, a bag, a laptop, a cup, a book or a
+tool. Skip walls, floors, cables and furniture. Place each object relative to an anchor: something nearby that
+stays put, such as a counter, desk, shelf, bed or door. If the wearer is holding it, use "held by" and
+"the wearer".
+
+Report only what is visible. Do not guess the names of people."""
 
 
 class SeenObject(BaseModel):
-    name: str = Field(description="A plain noun for the object, lowercase, e.g. 'laptop'")
-    location: str = Field(description="Where it is in the scene, e.g. 'on the desk, left of the monitor'")
+    name: str = Field(description="A plain noun for the object, lowercase, e.g. 'keys'")
+    relation: Relation = Field(description="How the object relates to the anchor")
+    anchor: str = Field(description="What it is on, in or next to, lowercase, e.g. 'kitchen counter'")
+
+
+class SeenText(BaseModel):
+    text: str = Field(description="Readable text, copied exactly")
+    surface: str = Field(description="What it is written on, lowercase, e.g. 'whiteboard' or 'laptop screen'")
 
 
 class Caption(BaseModel):
     summary: str = Field(description="One or two sentences: what is happening and what stands out")
-    room: str = Field(description="The kind of place, e.g. 'kitchen' or 'office', or 'unknown'")
-    objects: list[SeenObject] = Field(description="Up to 8 objects someone might later look for")
-    text_seen: str = Field(description="Readable text in the frame, copied exactly, or an empty string")
+    setting: Setting = Field(description="The kind of space this is; 'other' if none fits")
+    objects: list[SeenObject] = Field(description="Up to 6 objects someone might later look for")
+    texts: list[SeenText] = Field(description="Each piece of readable text; empty if there is none")
 
 
 def small_jpeg(path: Path) -> bytes:
@@ -97,7 +120,7 @@ def caption_session(conn, session_id: str, limit: int | None = None, model: str 
             totals["input_tokens"] += usage.input_tokens
             totals["output_tokens"] += usage.output_tokens
 
-            print(f"  {Path(path).name}  {caption.summary}")
+            print(f"  {Path(path).name}  [{caption.setting}]  {caption.summary}")
 
     totals["seconds"] = time.monotonic() - started
 

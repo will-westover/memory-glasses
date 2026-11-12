@@ -12,8 +12,8 @@ structured output, tool calling, and a judge model.
 
 ## Shape
 
-Recording -> kept frames and audio -> captions and transcript -> embeddings in Postgres (pgvector) -> agent
-with search tools -> judge and cost log. An iPhone app sits on top, and the glasses firmware comes last.
+Recording -> kept frames and audio -> captions and transcript -> small facts, each embedded with its context,
+in Postgres (pgvector) -> agent with search tools -> judge and cost log. An iPhone app sits on top, and the glasses firmware comes last.
 
 ## Build plan
 
@@ -21,9 +21,9 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 
 1. **Recording to session** (done): a video becomes kept frames, audio and a page showing them.
 2. **Database** (done): sessions and frames stored in Postgres.
-3. **Captions** (done): each frame gets a summary, objects and any text seen.
+3. **Captions** (done): each frame gets a summary, a setting, objects placed relative to an anchor, and text seen.
 4. **Speech-to-text** (done): the audio becomes timed transcript lines.
-5. **Embeddings and search** (done): a search returns the right frames and lines.
+5. **Facts and search** (done): captions and speech become facts; search finds them, and a lookup finds objects.
 6. **Agent**: ask a question, get an answer with its sources.
 7. **Evals**: a test set scored by the judge, with cost per run.
 8. **API**: the server answers the app's requests.
@@ -48,6 +48,8 @@ Everything else is your call.
 ## Handy
 
 - Tests: `uv run pytest` in `server/`.
+- Pipeline for one video, in order: `memory.ingest.recording <video>`, then `captions`, `transcript` and
+  `facts` with the session id. Then `memory.search "question"` or `memory.search --object keys`.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
   in a new numbered file in `server/migrations/`.
 - Test clip: `data/samples/nasa/crew-quarters-tour.webm` (public-domain NASA tour, 2 minutes, with speech).
