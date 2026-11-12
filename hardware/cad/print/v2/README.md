@@ -62,7 +62,7 @@ It's a big, awkward print, so save it for last, once the fit test and smaller pa
 
 ## Printing at BYU (Harold B. Lee Library, The Workshop)
 
-Staff do the printing; you hand over files and pay. Everything in `BYU-REQUEST.md` is ready to send. Details checked
+Staff do the printing; you hand over files and pay. Send them `ready-to-print/memory-glasses-plate.stl`. Details checked
 2026-10-30 from [the service page](https://lib.byu.edu/services/3d-printers/) and
 [the 3D printing guide](https://guides.lib.byu.edu/3Dprinting).
 
@@ -92,4 +92,3 @@ Staff do the printing; you hand over files and pay. Everything in `BYU-REQUEST.m
 2. Run `MemoryGlassesExport` with that tab still open.
 3. Run `python3 hardware/cad/print/prepare_v2_stls.py`. It rewrites these files and `mesh-check.txt`. The raw exports in
    `_raw/` can be deleted afterward.
-4. Rebuild `byu-v2-parts.zip` from the new STLs (from this folder: `rm byu-v2-parts.zip && zip -X byu-v2-parts.zip *.stl`).

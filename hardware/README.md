@@ -20,7 +20,7 @@ cad/
   print/v2/                    Ready-to-print v2 parts, already oriented, with a print guide (README.md there)
   print/prepare_v2_stls.py     Orients and checks the raw STLs from fusion/MemoryGlassesExport
   reports/check-report.txt     Latest collision-check output
-  renders/                     Screenshots of each design iteration (v0 -> v6), for the report
+  renders/                     Photoreal renders of v2
   vendor/                      Manufacturer models and drawings; see vendor/SOURCES.md
 ```
 
