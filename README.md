@@ -6,7 +6,7 @@ leave my keys?"). CS class final project.
 - `server/`: the software. Run `uv run pytest` there to test it.
 - `firmware/`: code that runs on the glasses.
 - `hardware/`: CAD, print files, parts list and wiring. Start at [hardware/README.md](hardware/README.md).
-- `docs/build-plan.md`: what's built and what's next.
+- `CLAUDE.md`: goals, constraints and the build plan, with what's done.
 
 Try it on a video, from `server/`:
 
