@@ -24,3 +24,14 @@ DATA_DIR = Path(os.environ.get("MEMORY_DATA_DIR", PROJECT_ROOT / "data"))
 
 # The default matches the local database in compose.yaml.
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://memory:memory@localhost:5433/memory")
+
+# Captions run once per kept frame, so this is the cheapest model that can read an image.
+CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gpt-6-luna")
+
+
+def require(name: str) -> str:
+    """Return an environment variable, or stop with a message saying where to set it."""
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(f"error: {name} is not set. Add it to {SERVER_DIR / '.env'}")
+    return value

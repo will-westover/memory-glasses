@@ -107,11 +107,25 @@ def clock(seconds: float) -> str:
     return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
 
 
-def write_page(session_dir: Path, manifest: dict) -> None:
-    """Write index.html: the kept frames on one page."""
+def caption_html(caption: dict | None) -> str:
+    """Return the HTML shown under a frame for its caption, or nothing if it has none."""
+    if not caption:
+        return ""
+    parts = [f'<p>{html.escape(caption["summary"])}</p>', f'<p class="dim">Room: {html.escape(caption["room"])}</p>']
+    if caption["objects"]:
+        parts.append(f'<p class="dim">{html.escape(", ".join(caption["objects"]))}</p>')
+    if caption["text_seen"]:
+        parts.append(f'<p class="dim">Text: {html.escape(caption["text_seen"])}</p>')
+    return "".join(parts)
+
+
+def write_page(session_dir: Path, manifest: dict, captions: dict[str, dict] | None = None) -> None:
+    """Write index.html: the kept frames on one page, with captions (keyed by file name) where they exist."""
+    captions = captions or {}
     cards = "\n".join(
         f'<figure><img src="{html.escape(frame["file"])}" loading="lazy">'
-        f'<figcaption>{clock(frame["offset_seconds"])}</figcaption></figure>'
+        f'<figcaption>{clock(frame["offset_seconds"])}'
+        f'{caption_html(captions.get(Path(frame["file"]).name))}</figcaption></figure>'
         for frame in manifest["frames"]
     )
     audio = '<audio controls src="audio.wav"></audio>' if manifest["audio"] else "<p>No sound in this recording.</p>"
@@ -124,6 +138,8 @@ def write_page(session_dir: Path, manifest: dict) -> None:
   figure {{ margin: 0; }}
   img {{ width: 100%; border-radius: 6px; display: block; }}
   figcaption {{ color: #aaa; padding-top: 4px; }}
+  figcaption p {{ margin: 4px 0 0; color: #eee; }}
+  figcaption p.dim {{ color: #999; font-size: 13px; }}
 </style>
 <h1>Session {html.escape(manifest["id"])}</h1>
 <p>From {html.escape(manifest["video"])}, {clock(manifest["duration_seconds"])} long.

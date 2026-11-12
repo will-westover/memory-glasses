@@ -80,6 +80,44 @@ def list_sessions(conn: psycopg.Connection) -> list[tuple]:
     ).fetchall()
 
 
+def frames_without_caption(conn: psycopg.Connection, session_id: str, limit: int | None = None) -> list[tuple]:
+    """Return (frame id, image path) for the session's frames that have no caption, oldest first."""
+    return conn.execute(
+        "select id, image_path from frame where session_id = %s and captioned_at is null"
+        " order by captured_at limit %s",
+        (session_id, limit),
+    ).fetchall()
+
+
+def save_caption(conn: psycopg.Connection, frame_id: int, caption) -> None:
+    """Store a frame's caption and its objects, replacing any earlier ones."""
+    conn.execute(
+        "update frame set summary = %s, room = %s, text_seen = %s, captioned_at = now() where id = %s",
+        (caption.summary, caption.room, caption.text_seen, frame_id),
+    )
+    conn.execute("delete from frame_object where frame_id = %s", (frame_id,))
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "insert into frame_object (frame_id, name, location) values (%s, %s, %s)",
+            [(frame_id, item.name, item.location) for item in caption.objects],
+        )
+
+
+def captions(conn: psycopg.Connection, session_id: str) -> dict[str, dict]:
+    """Return the session's captions, keyed by frame file name (e.g. '000001.jpg')."""
+    rows = conn.execute(
+        "select f.image_path, f.summary, f.room, f.text_seen,"
+        " coalesce(array_agg(o.name || ' (' || o.location || ')') filter (where o.name is not null), '{}')"
+        " from frame f left join frame_object o on o.frame_id = f.id"
+        " where f.session_id = %s and f.captioned_at is not null group by f.id",
+        (session_id,),
+    ).fetchall()
+    return {
+        Path(image_path).name: {"summary": summary, "room": room, "text_seen": text_seen, "objects": objects}
+        for image_path, summary, room, text_seen, objects in rows
+    }
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "list"
     try:
