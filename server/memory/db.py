@@ -130,6 +130,11 @@ def save_caption(conn: psycopg.Connection, frame_id: int, caption) -> None:
         )
 
 
+def clear_captions(conn: psycopg.Connection, session_id: str) -> None:
+    """Mark every frame of a session as not captioned, so the caption step writes them all again."""
+    conn.execute("update frame set captioned_at = null where session_id = %s", (session_id,))
+
+
 def captioned_frames(conn: psycopg.Connection, session_id: str) -> list[dict]:
     """Return every captioned frame of a session, oldest first, with its objects and readable text."""
     rows = conn.execute(

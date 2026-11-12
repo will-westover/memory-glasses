@@ -5,7 +5,7 @@
 A fact is one searchable thing: a moment, an object and where it was, a piece of readable text, or a passage of
 speech. Each carries where and when it happened, so it still makes sense when read alone:
 
-    keys: on kitchen counter. Home, kitchen, Tuesday evening. A person is making coffee.
+    water bottle: on kitchen island. Home, kitchen, Tuesday evening. A person is making coffee.
 
 Run it after the captions and transcript steps. It rebuilds every fact for the session each time.
 """

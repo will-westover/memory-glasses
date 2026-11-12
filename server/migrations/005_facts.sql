@@ -1,5 +1,5 @@
 -- Rework of how frames are described and what gets embedded.
---   Objects are stored as object, relation, anchor ("keys", "on", "kitchen counter").
+--   Objects are stored as object, relation, anchor ("water bottle", "on", "kitchen island").
 --   The free-text room is replaced by a setting from a fixed list, plus coordinates and named places.
 --   Search runs over small facts, each embedded with its context, instead of one paragraph per frame.
 

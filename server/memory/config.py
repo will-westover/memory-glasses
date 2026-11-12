@@ -26,8 +26,9 @@ DATA_DIR = Path(os.environ.get("MEMORY_DATA_DIR", PROJECT_ROOT / "data"))
 # The default matches the local database in compose.yaml.
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://memory:memory@localhost:5433/memory")
 
-# Captions run once per kept frame, so this is the cheapest model that can read an image.
-CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gpt-6-luna")
+# The caption is the only record of a frame, so this is the model that names things most accurately.
+# Measured at about $0.0085 per frame. gpt-6-luna is about 20 times cheaper and names things more vaguely.
+CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gpt-6-sol")
 
 # Speech-to-text that also labels who is speaking and gives each line a start and end time.
 # Measured at about $0.019 per minute of audio. OpenAI retires this model on 2027-02-26.

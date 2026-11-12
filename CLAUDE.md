@@ -1,8 +1,8 @@
 # Memory Glasses
 
-Camera glasses that record what the wearer sees and hears, and an agent that answers questions about it
-("where did I leave my keys?"). CS class final project. The graded part is the LLM software: embeddings,
-structured output, tool calling, and a judge model.
+Camera glasses that record what the wearer sees and hears, and an agent that answers any question about it:
+what a sign said, who they talked to, what they were doing, where something is. CS class final project. The
+graded part is the LLM software: embeddings, structured output, tool calling, and a judge model.
 
 ## Goals
 
@@ -33,6 +33,8 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 
 ## Constraints
 
+- These are general-purpose memory glasses. Don't slant prompts, code, examples or docs toward finding lost
+  items; that is one kind of question among many.
 - Build one part at a time, and show the user something that runs before starting the next.
 - Models come from OpenAI. The key is in `server/.env`. Log the tokens and cost of every call.
 - `data/` and `.env` are personal and never committed.
@@ -49,7 +51,7 @@ Everything else is your call.
 
 - Tests: `uv run pytest` in `server/`.
 - Pipeline for one video, in order: `memory.ingest.recording <video>`, then `captions`, `transcript` and
-  `facts` with the session id. Then `memory.search "question"` or `memory.search --object keys`.
+  `facts` with the session id. Then `memory.search "question"` or `memory.search --object bottle`.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
   in a new numbered file in `server/migrations/`.
 - Test clips, both in the ignored `data/samples/`: `nasa/crew-quarters-tour.webm` (public-domain NASA tour,

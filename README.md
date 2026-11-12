@@ -1,7 +1,7 @@
 # Memory Glasses
 
-Camera glasses that record what you see and hear, and an agent that answers questions about it ("where did I
-leave my keys?"). CS class final project.
+Camera glasses that record what you see and hear, and an agent that answers any question about it: what a sign
+said, who you talked to, what you were doing, where something is. CS class final project.
 
 - `server/`: the software. Run `uv run pytest` there to test it.
 - `firmware/`: code that runs on the glasses.

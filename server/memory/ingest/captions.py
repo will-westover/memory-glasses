@@ -2,9 +2,10 @@
 
     uv run python -m memory.ingest.captions <session id>            # every frame not captioned yet
     uv run python -m memory.ingest.captions <session id> --limit 3  # try a few first
+    uv run python -m memory.ingest.captions <session id> --redo     # pay to caption every frame again
 
-For each frame the model returns a summary, the kind of space, objects placed relative to something that stays
-put ("keys", "on", "kitchen counter"), and any readable text. Each call is logged in api_cost.
+For each frame the model returns a summary, the kind of space, every object placed relative to something that
+stays put ("water bottle", "on", "kitchen island"), and any readable text. Each call is logged in api_cost.
 """
 
 import argparse
@@ -22,8 +23,8 @@ from memory import db, llm
 from memory.config import CAPTION_MODEL, DATA_DIR
 from memory.ingest.recording import refresh_page
 
-# Frames are shrunk to this width before upload. Image cost grows with size, and this still reads signs.
-IMAGE_WIDTH = 768
+# Frames wider than this are shrunk before upload. Small objects and text need the detail, so it is kept high.
+IMAGE_WIDTH = 1080
 PARALLEL_CALLS = 8
 
 # A fixed list, so the same kind of space always gets the same label.
@@ -36,20 +37,21 @@ Relation = Literal["on", "in", "under", "next to", "above", "in front of", "behi
 
 INSTRUCTIONS = """\
 You are looking at one frame from a camera worn on someone's glasses, so the view is what the wearer sees.
-Describe it so that later they can ask what they saw and where things were.
+Describe it thoroughly and accurately. Your description is the only record of this moment, and it will be used
+later to answer any kind of question about what the wearer saw.
 
-Objects: list things a person might later look for, such as keys, a phone, a bag, a laptop, a cup, a book or a
-tool. Skip walls, floors, cables and furniture. Place each object relative to an anchor: something nearby that
-stays put, such as a counter, desk, shelf, bed or door. If the wearer is holding it, use "held by" and
-"the wearer".
+Objects: list every separate thing you can see, large or small, including things in the background. Name each
+one as specifically as you can. Skip walls, floors and built-in furniture. Place each object relative to an
+anchor: something nearby that stays put, such as a counter, desk, shelf, bed or door. If the wearer is holding
+it, use "held by" and "the wearer".
 
 Report only what is visible. Do not guess the names of people."""
 
 
 class SeenObject(BaseModel):
-    name: str = Field(description="A plain noun for the object, lowercase, e.g. 'keys'")
+    name: str = Field(description="A plain noun for the object, lowercase, e.g. 'water bottle'")
     relation: Relation = Field(description="How the object relates to the anchor")
-    anchor: str = Field(description="What it is on, in or next to, lowercase, e.g. 'kitchen counter'")
+    anchor: str = Field(description="What it is on, in or next to, lowercase, e.g. 'kitchen island'")
 
 
 class SeenText(BaseModel):
@@ -60,14 +62,14 @@ class SeenText(BaseModel):
 class Caption(BaseModel):
     summary: str = Field(description="One or two sentences: what is happening and what stands out")
     setting: Setting = Field(description="The kind of space this is; 'other' if none fits")
-    objects: list[SeenObject] = Field(description="Up to 6 objects someone might later look for")
+    objects: list[SeenObject] = Field(description="Every separate object visible, up to 20")
     texts: list[SeenText] = Field(description="Each piece of readable text; empty if there is none")
 
 
 def small_jpeg(path: Path) -> bytes:
-    """Return the image shrunk to IMAGE_WIDTH pixels wide, as JPEG bytes."""
+    """Return the image as JPEG bytes, shrunk to IMAGE_WIDTH pixels wide if it is wider."""
     result = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-vf", f"scale={IMAGE_WIDTH}:-2", "-q:v", "4",
+        ["ffmpeg", "-v", "error", "-i", str(path), "-vf", f"scale='min({IMAGE_WIDTH},iw)':-2", "-q:v", "3",
          "-f", "image2pipe", "-c:v", "mjpeg", "-"],
         capture_output=True, check=True,
     )
@@ -131,6 +133,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Caption a session's frames.")
     parser.add_argument("session_id")
     parser.add_argument("--limit", type=int, help="caption at most this many frames")
+    parser.add_argument("--redo", action="store_true", help="pay to caption every frame again")
     parser.add_argument("--model", default=CAPTION_MODEL)
     args = parser.parse_args()
 
@@ -140,6 +143,9 @@ def main() -> int:
         return 1
 
     with db.connect() as conn:
+        if args.redo:
+            db.clear_captions(conn, args.session_id)
+
         totals = caption_session(conn, args.session_id, args.limit, args.model)
 
         refresh_page(conn, session_dir)
