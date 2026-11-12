@@ -3,7 +3,9 @@ name = "memory-glasses-server"
 version = "0.1.0"
 description = "Ingest, search and question-answering for Memory Glasses"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "psycopg[binary]>=3.3.8",
+]
 
 [dependency-groups]
 dev = ["pytest>=8"]

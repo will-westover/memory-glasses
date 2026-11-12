@@ -7,6 +7,8 @@ Writes data/sessions/<start time>/ with:
     audio.wav      mono 16 kHz, ready for speech-to-text (missing if the video has no sound)
     manifest.json  every kept frame with its time and fingerprint
     index.html     the kept frames on one page, to check by eye
+
+The session is also saved to the database when it's running.
 """
 
 import argparse
@@ -19,6 +21,9 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import psycopg
+
+from memory import db
 from memory.config import DATA_DIR
 from memory.ingest.fingerprint import (
     DEFAULT_MAX_DISTANCE,
@@ -214,6 +219,13 @@ def main() -> int:
     print(f"Kept {manifest['frames_kept']} of {manifest['frames_sampled']} frames.")
     print(f"Sound: {'audio.wav' if manifest['audio'] else 'none'}")
     print(f"Look at: {session_dir / 'index.html'}")
+
+    try:
+        with db.connect() as conn:
+            db.save_session(conn, session_dir)
+        print("Saved to the database.")
+    except psycopg.OperationalError:
+        print("Not saved: the database isn't running. Start it with: docker compose up -d --wait")
     return 0
 
 

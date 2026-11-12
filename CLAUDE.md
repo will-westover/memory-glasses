@@ -20,7 +20,7 @@ with search tools -> judge and cost log. An iPhone app sits on top, and the glas
 Each part runs by itself and ends with something to look at. Parts 1 to 8 work from a recorded video.
 
 1. **Recording to session** (done): a video becomes kept frames, audio and a page showing them.
-2. **Database**: sessions and frames stored in Postgres.
+2. **Database** (done): sessions and frames stored in Postgres.
 3. **Captions**: each frame gets a summary, objects and any text seen.
 4. **Speech-to-text**: the audio becomes timed transcript lines.
 5. **Embeddings and search**: a search returns the right frames and lines.
@@ -47,4 +47,6 @@ Everything else is your call.
 ## Handy
 
 - Tests: `uv run pytest` in `server/`.
+- Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
+  in a new numbered file in `server/migrations/`.
 - Test clip: `data/samples/nasa/crew-quarters-tour.webm` (public-domain NASA tour, 2 minutes, with speech).
