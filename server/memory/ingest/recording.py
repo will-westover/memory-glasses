@@ -3,7 +3,7 @@
     uv run python -m memory.ingest.recording path/to/video.mov
 
 Writes data/sessions/<start time>/ with:
-    frames/        one frame every few seconds, near-duplicates dropped
+    frames/        the sharpest frame from every few seconds; blurry and near-duplicate ones dropped
     audio.wav      mono 16 kHz, ready for speech-to-text (missing if the video has no sound)
     manifest.json  every kept frame with its time and fingerprint, and where it was recorded if known
     index.html     the kept frames on one page, to check by eye
@@ -25,6 +25,7 @@ import psycopg
 
 from memory import db
 from memory.config import DATA_DIR
+from memory.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
 from memory.places import parse_location
 from memory.ingest.fingerprint import (
     DEFAULT_MAX_DISTANCE,
@@ -42,9 +43,9 @@ class IngestError(Exception):
     """The recording could not be turned into a session."""
 
 
-def run(command: list[str]) -> bytes:
+def run(command: list[str], cwd: Path | None = None) -> bytes:
     """Run a command and return what it printed, or raise IngestError with its error text."""
-    result = subprocess.run(command, capture_output=True)
+    result = subprocess.run(command, capture_output=True, cwd=cwd)
 
     if result.returncode != 0:
         raise IngestError(f"{command[0]} failed: {result.stderr.decode(errors='replace').strip()}")
@@ -75,35 +76,56 @@ def probe(video: Path) -> tuple[datetime, float, bool, tuple[float, float] | Non
     return started, duration, has_audio, location
 
 
-def extract_frames(video: Path, frames_dir: Path, seconds_per_frame: float) -> list[int]:
-    """Write one JPEG every `seconds_per_frame` seconds into frames_dir and return each one's fingerprint.
+# Edge strength: each pixel compared with its four neighbours. Written once per colour plane for ffmpeg.
+EDGES = "convolution='" + ":".join(["0 -1 0 -1 4 -1 0 -1 0"] * 4) + "'"
 
-    One ffmpeg pass writes both the JPEGs and the tiny grey thumbnails, so the two always line up.
+
+def read_averages(path: Path) -> list[float]:
+    """Read the per-frame averages that ffmpeg's metadata filter printed to a file."""
+    return [float(line.split("=")[1]) for line in path.read_text().splitlines() if "YAVG=" in line]
+
+
+def extract_candidates(video: Path, frames_dir: Path, seconds_per_frame: float) -> tuple[list[int], list]:
+    """Write CANDIDATES_PER_SLOT JPEGs for every `seconds_per_frame` seconds into frames_dir.
+
+    Return each one's fingerprint and blur score. One ffmpeg pass writes the JPEGs, the tiny grey thumbnails
+    and the two detail measurements, so all four always line up.
     """
     frames_dir.mkdir(parents=True)
+    # Measured at up to 640 pixels wide. Small frames are left as they are, since enlarging one blurs it.
+    measure = "scale='min(640,iw)':-2,format=gray"
+    average = "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file="
 
     with tempfile.TemporaryDirectory() as scratch:
-        thumbs = Path(scratch) / "thumbs.grey"
         graph = (
-            f"[0:v]fps=1/{seconds_per_frame},split[full][small];"
-            f"[small]scale={THUMB_WIDTH}:{THUMB_HEIGHT},format=gray[thumb]"
+            f"[0:v]fps={CANDIDATES_PER_SLOT}/{seconds_per_frame},split=4[full][small][plain][soft];"
+            f"[small]scale={THUMB_WIDTH}:{THUMB_HEIGHT},format=gray[thumb];"
+            f"[plain]{measure},{EDGES},{average}detail.txt[detail];"
+            f"[soft]{measure},gblur=sigma=1.5,{EDGES},{average}blurred.txt[blurred]"
         )
 
+        # Run inside the scratch folder so the two measurement files can be named without a path.
         run([
-            "ffmpeg", "-v", "error", "-i", str(video),
+            "ffmpeg", "-v", "error", "-i", str(video.resolve()),
             "-filter_complex", graph,
-            "-map", "[full]", "-q:v", "3", str(frames_dir / "%06d.jpg"),
-            "-map", "[thumb]", "-f", "rawvideo", str(thumbs),
-        ])
+            "-map", "[full]", "-q:v", "3", str(frames_dir.resolve() / "%06d.jpg"),
+            "-map", "[thumb]", "-f", "rawvideo", "thumbs.grey",
+            "-map", "[detail]", "-f", "null", "-",
+            "-map", "[blurred]", "-f", "null", "-",
+        ], cwd=Path(scratch))
 
-        grey = thumbs.read_bytes()
+        grey = (Path(scratch) / "thumbs.grey").read_bytes()
+        detail = read_averages(Path(scratch) / "detail.txt")
+        blurred = read_averages(Path(scratch) / "blurred.txt")
 
     count = len(grey) // THUMB_BYTES
     written = len(list(frames_dir.glob("*.jpg")))
-    if count != written:
-        raise IngestError(f"ffmpeg wrote {written} frames but {count} thumbnails")
+    if not (count == written == len(detail) == len(blurred)):
+        raise IngestError(f"ffmpeg wrote {written} frames, {count} thumbnails and {len(detail)} measurements")
 
-    return [fingerprint(grey[i * THUMB_BYTES : (i + 1) * THUMB_BYTES]) for i in range(count)]
+    fingerprints = [fingerprint(grey[i * THUMB_BYTES : (i + 1) * THUMB_BYTES]) for i in range(count)]
+
+    return fingerprints, blur_scores(detail, blurred)
 
 
 def extract_audio(video: Path, audio_path: Path) -> None:
@@ -178,8 +200,9 @@ def write_page(
 </style>
 <h1>Session {html.escape(manifest["id"])}</h1>
 <p>From {html.escape(manifest["video"])}, {clock(manifest["duration_seconds"])} long.
-Kept {manifest["frames_kept"]} of {manifest["frames_sampled"]} frames
-(one sampled every {manifest["seconds_per_frame"]:g} seconds; the rest looked the same as the frame before).</p>
+Kept {manifest["frames_kept"]} of {manifest["frames_sampled"]} frames, one for every
+{manifest["seconds_per_frame"]:g} seconds. {manifest.get("frames_blurry", 0)} were too blurry and the rest
+looked the same as the frame before.</p>
 {audio}
 <div class="spoken">
 {spoken}
@@ -206,6 +229,7 @@ def ingest(
     data_dir: Path = DATA_DIR,
     seconds_per_frame: float = DEFAULT_SECONDS_PER_FRAME,
     max_distance: int = DEFAULT_MAX_DISTANCE,
+    max_blur: float = DEFAULT_MAX_BLUR,
     replace: bool = False,
 ) -> Path:
     """Turn a video into a session folder and return the folder's path."""
@@ -221,8 +245,14 @@ def ingest(
         shutil.rmtree(session_dir)
 
     frames_dir = session_dir / "frames"
-    fingerprints = extract_frames(video, frames_dir, seconds_per_frame)
-    kept = set(indexes_to_keep(fingerprints, max_distance))
+    fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame)
+
+    # One frame per slot: its sharpest. A slot with no sharp frame gives None and is dropped.
+    slots = sharpest_per_slot(blur, CANDIDATES_PER_SLOT, max_blur)
+    sharp = [index for index in slots if index is not None]
+
+    # Then drop frames that look the same as the last one kept.
+    kept = {sharp[position] for position in indexes_to_keep([fingerprints[index] for index in sharp], max_distance)}
 
     frames = []
     for index, path in enumerate(sorted(frames_dir.glob("*.jpg"))):
@@ -230,12 +260,13 @@ def ingest(
             path.unlink()
             continue
 
-        offset = index * seconds_per_frame
+        offset = index * seconds_per_frame / CANDIDATES_PER_SLOT
         frames.append({
             "file": f"frames/{path.name}",
             "offset_seconds": offset,
             "captured_at": (started + timedelta(seconds=offset)).isoformat(),
             "fingerprint": f"{fingerprints[index]:016x}",
+            "blur": round(blur[index], 3),
         })
 
     if has_audio:
@@ -250,7 +281,8 @@ def ingest(
         "lat": location[0] if location else None,
         "lon": location[1] if location else None,
         "seconds_per_frame": seconds_per_frame,
-        "frames_sampled": len(fingerprints),
+        "frames_sampled": len(slots),
+        "frames_blurry": len(slots) - len(sharp),
         "frames_kept": len(frames),
         "audio": "audio.wav" if has_audio else None,
         "frames": frames,
@@ -270,6 +302,10 @@ def main() -> int:
         "--max-distance", type=int, default=DEFAULT_MAX_DISTANCE,
         help="frames differing in this many fingerprint bits or fewer are dropped (0 to 64)",
     )
+    parser.add_argument(
+        "--max-blur", type=float, default=DEFAULT_MAX_BLUR,
+        help="a moment is dropped when its sharpest frame scores above this; raise it to keep more",
+    )
     parser.add_argument("--replace", action="store_true", help="rebuild the session if it already exists")
     args = parser.parse_args()
 
@@ -278,6 +314,7 @@ def main() -> int:
             args.video,
             seconds_per_frame=args.seconds_per_frame,
             max_distance=args.max_distance,
+            max_blur=args.max_blur,
             replace=args.replace,
         )
     except IngestError as error:
@@ -285,7 +322,8 @@ def main() -> int:
         return 1
 
     manifest = json.loads((session_dir / "manifest.json").read_text())
-    print(f"Kept {manifest['frames_kept']} of {manifest['frames_sampled']} frames.")
+    print(f"Kept {manifest['frames_kept']} of {manifest['frames_sampled']} frames"
+          f" ({manifest['frames_blurry']} too blurry).")
     print(f"Sound: {'audio.wav' if manifest['audio'] else 'none'}")
     print(f"Look at: {session_dir / 'index.html'}")
 
