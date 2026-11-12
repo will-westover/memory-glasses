@@ -33,6 +33,10 @@ CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gpt-6-luna")
 # Measured at about $0.019 per minute of audio. OpenAI retires this model on 2027-02-26.
 TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-4o-transcribe-diarize")
 
+# Turns text into 1536 numbers so that texts with similar meaning land close together.
+# The vector columns in the database are sized for this model.
+EMBED_MODEL = "text-embedding-3-small"
+
 
 def require(name: str) -> str:
     """Return an environment variable, or stop with a message saying where to set it."""

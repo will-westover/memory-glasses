@@ -23,7 +23,7 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 2. **Database** (done): sessions and frames stored in Postgres.
 3. **Captions** (done): each frame gets a summary, objects and any text seen.
 4. **Speech-to-text** (done): the audio becomes timed transcript lines.
-5. **Embeddings and search**: a search returns the right frames and lines.
+5. **Embeddings and search** (done): a search returns the right frames and lines.
 6. **Agent**: ask a question, get an answer with its sources.
 7. **Evals**: a test set scored by the judge, with cost per run.
 8. **API**: the server answers the app's requests.

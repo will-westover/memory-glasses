@@ -153,6 +153,51 @@ def transcript(conn: psycopg.Connection, session_id: str) -> list[tuple]:
     ).fetchall()
 
 
+def frames_without_embedding(conn: psycopg.Connection, session_id: str) -> list[tuple]:
+    """Return (frame id, summary, room, text seen, objects) for captioned frames that have no embedding."""
+    return conn.execute(
+        "select f.id, f.summary, f.room, f.text_seen,"
+        " coalesce(array_agg(o.name || ' ' || o.location) filter (where o.name is not null), '{}')"
+        " from frame f left join frame_object o on o.frame_id = f.id"
+        " where f.session_id = %s and f.captioned_at is not null and f.embedding is null"
+        " group by f.id order by f.captured_at",
+        (session_id,),
+    ).fetchall()
+
+
+def lines_without_embedding(conn: psycopg.Connection, session_id: str) -> list[tuple]:
+    """Return (line id, text) for transcript lines that have no embedding."""
+    return conn.execute(
+        "select id, text from audio_segment where session_id = %s and embedding is null order by start_at",
+        (session_id,),
+    ).fetchall()
+
+
+def save_frame_embeddings(conn: psycopg.Connection, rows: list[tuple]) -> None:
+    """Store (frame id, search text, vector) for each frame."""
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "update frame set search_text = %s, embedding = %s::vector where id = %s",
+            [(text, vector, frame_id) for frame_id, text, vector in rows],
+        )
+
+
+def save_line_embeddings(conn: psycopg.Connection, rows: list[tuple]) -> None:
+    """Store (line id, vector) for each transcript line."""
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "update audio_segment set embedding = %s::vector where id = %s",
+            [(vector, line_id) for line_id, vector in rows],
+        )
+
+
+def step_cost(conn: psycopg.Connection, step: str) -> float:
+    """Return the total dollars logged for one pipeline step."""
+    (usd,) = conn.execute("select coalesce(sum(usd), 0) from api_cost where step = %s", (step,)).fetchone()
+
+    return float(usd)
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "list"
 
