@@ -8,7 +8,6 @@ Each call is logged in api_cost. The session's index.html is rewritten to show t
 
 import argparse
 import base64
-import json
 import subprocess
 import sys
 import time
@@ -19,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from memory import db, llm
 from memory.config import CAPTION_MODEL, DATA_DIR
-from memory.ingest.recording import write_page
+from memory.ingest.recording import refresh_page
 
 # Frames are shrunk to this width before upload. Image cost grows with size, and this still reads signs.
 IMAGE_WIDTH = 768
@@ -120,8 +119,7 @@ def main() -> int:
     with db.connect() as conn:
         totals = caption_session(conn, args.session_id, args.limit, args.model)
 
-        manifest = json.loads((session_dir / "manifest.json").read_text())
-        write_page(session_dir, manifest, db.captions(conn, args.session_id))
+        refresh_page(conn, session_dir)
 
         remaining = len(db.frames_without_caption(conn, args.session_id))
 

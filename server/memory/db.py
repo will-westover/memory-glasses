@@ -128,6 +128,31 @@ def captions(conn: psycopg.Connection, session_id: str) -> dict[str, dict]:
     }
 
 
+def save_transcript(conn: psycopg.Connection, session_id: str, segments) -> None:
+    """Store a session's transcript, replacing any earlier one. Each segment has speaker, start, end, text."""
+    conn.execute("delete from audio_segment where session_id = %s", (session_id,))
+
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "insert into audio_segment (session_id, start_at, end_at, offset_seconds, speaker, text)"
+            " select id, started_at + make_interval(secs => %s), started_at + make_interval(secs => %s), %s, %s, %s"
+            " from session where id = %s",
+            [
+                (segment.start, segment.end, segment.start, segment.speaker, segment.text.strip(), session_id)
+                for segment in segments
+                if segment.text.strip()
+            ],
+        )
+
+
+def transcript(conn: psycopg.Connection, session_id: str) -> list[tuple]:
+    """Return the session's transcript as (offset seconds, speaker, text), in order."""
+    return conn.execute(
+        "select offset_seconds, speaker, text from audio_segment where session_id = %s order by start_at",
+        (session_id,),
+    ).fetchall()
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "list"
 

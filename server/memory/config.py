@@ -29,6 +29,10 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://memory:memory@localh
 # Captions run once per kept frame, so this is the cheapest model that can read an image.
 CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gpt-6-luna")
 
+# Speech-to-text that also labels who is speaking and gives each line a start and end time.
+# Measured at about $0.019 per minute of audio. OpenAI retires this model on 2027-02-26.
+TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-4o-transcribe-diarize")
+
 
 def require(name: str) -> str:
     """Return an environment variable, or stop with a message saying where to set it."""

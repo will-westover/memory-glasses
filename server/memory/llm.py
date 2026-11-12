@@ -16,6 +16,7 @@ PRICES = {
     "gpt-5.6-terra": (2.00, 0.20, 12.00),
     "gpt-5.6-sol": (4.00, 0.40, 20.00),
     "text-embedding-3-small": (0.02, 0.02, 0.0),
+    "gpt-4o-transcribe-diarize": (2.50, 2.50, 10.00),
 }
 
 

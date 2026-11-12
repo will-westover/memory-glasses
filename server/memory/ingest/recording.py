@@ -128,8 +128,16 @@ def caption_html(caption: dict | None) -> str:
     return "".join(parts)
 
 
-def write_page(session_dir: Path, manifest: dict, captions: dict[str, dict] | None = None) -> None:
-    """Write index.html: the kept frames on one page, with captions (keyed by file name) where they exist."""
+def write_page(
+    session_dir: Path,
+    manifest: dict,
+    captions: dict[str, dict] | None = None,
+    transcript: list[tuple] | None = None,
+) -> None:
+    """Write index.html: the kept frames on one page, plus captions and the transcript where they exist.
+
+    captions is keyed by frame file name. transcript is a list of (offset seconds, speaker, text).
+    """
     captions = captions or {}
 
     cards = "\n".join(
@@ -140,6 +148,11 @@ def write_page(session_dir: Path, manifest: dict, captions: dict[str, dict] | No
     )
 
     audio = '<audio controls src="audio.wav"></audio>' if manifest["audio"] else "<p>No sound in this recording.</p>"
+
+    spoken = "\n".join(
+        f'<p><span class="dim">{clock(offset)} {html.escape(speaker or "?")}</span> {html.escape(text)}</p>'
+        for offset, speaker, text in transcript or []
+    )
 
     page = f"""<!doctype html>
 <meta charset="utf-8">
@@ -152,18 +165,31 @@ def write_page(session_dir: Path, manifest: dict, captions: dict[str, dict] | No
   figcaption {{ color: #aaa; padding-top: 4px; }}
   figcaption p {{ margin: 4px 0 0; color: #eee; }}
   figcaption p.dim {{ color: #999; font-size: 13px; }}
+  .spoken {{ max-width: 70ch; margin: 12px 0 24px; }}
+  .spoken p {{ margin: 4px 0; }}
+  .spoken .dim {{ color: #999; font-size: 13px; margin-right: 6px; }}
 </style>
 <h1>Session {html.escape(manifest["id"])}</h1>
 <p>From {html.escape(manifest["video"])}, {clock(manifest["duration_seconds"])} long.
 Kept {manifest["frames_kept"]} of {manifest["frames_sampled"]} frames
 (one sampled every {manifest["seconds_per_frame"]:g} seconds; the rest looked the same as the frame before).</p>
 {audio}
+<div class="spoken">
+{spoken}
+</div>
 <div class="grid">
 {cards}
 </div>
 """
 
     (session_dir / "index.html").write_text(page)
+
+
+def refresh_page(conn, session_dir: Path) -> None:
+    """Rewrite a session's index.html with whatever captions and transcript the database has for it."""
+    manifest = json.loads((session_dir / "manifest.json").read_text())
+
+    write_page(session_dir, manifest, db.captions(conn, manifest["id"]), db.transcript(conn, manifest["id"]))
 
 
 def ingest(
