@@ -39,6 +39,7 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 - Server is Python with `uv`, the app is Swift, the firmware is Rust.
 - Code lives at the top level and everything physical lives in `hardware/`. Fusion's Scripts folder links
   into `hardware/cad/fusion/`, so don't move it.
+- Inside functions, put a blank line between groups of lines that do different jobs.
 - Tests only for tricky logic. The evals are the test for anything that calls a model.
 - Git: work on `main`, commit freely, tag `part-N` when a part works. No branches, pull requests or CI.
 

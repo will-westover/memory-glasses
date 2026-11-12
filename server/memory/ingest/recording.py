@@ -44,8 +44,10 @@ class IngestError(Exception):
 def run(command: list[str]) -> bytes:
     """Run a command and return what it printed, or raise IngestError with its error text."""
     result = subprocess.run(command, capture_output=True)
+
     if result.returncode != 0:
         raise IngestError(f"{command[0]} failed: {result.stderr.decode(errors='replace').strip()}")
+
     return result.stdout
 
 
@@ -64,6 +66,7 @@ def probe(video: Path) -> tuple[datetime, float, bool]:
         # No start time in the file: the file's modified time is when recording ended.
         ended = datetime.fromtimestamp(video.stat().st_mtime).astimezone()
         started = ended - timedelta(seconds=duration)
+
     return started, duration, has_audio
 
 
@@ -73,24 +76,28 @@ def extract_frames(video: Path, frames_dir: Path, seconds_per_frame: float) -> l
     One ffmpeg pass writes both the JPEGs and the tiny grey thumbnails, so the two always line up.
     """
     frames_dir.mkdir(parents=True)
+
     with tempfile.TemporaryDirectory() as scratch:
         thumbs = Path(scratch) / "thumbs.grey"
         graph = (
             f"[0:v]fps=1/{seconds_per_frame},split[full][small];"
             f"[small]scale={THUMB_WIDTH}:{THUMB_HEIGHT},format=gray[thumb]"
         )
+
         run([
             "ffmpeg", "-v", "error", "-i", str(video),
             "-filter_complex", graph,
             "-map", "[full]", "-q:v", "3", str(frames_dir / "%06d.jpg"),
             "-map", "[thumb]", "-f", "rawvideo", str(thumbs),
         ])
+
         grey = thumbs.read_bytes()
 
     count = len(grey) // THUMB_BYTES
     written = len(list(frames_dir.glob("*.jpg")))
     if count != written:
         raise IngestError(f"ffmpeg wrote {written} frames but {count} thumbnails")
+
     return [fingerprint(grey[i * THUMB_BYTES : (i + 1) * THUMB_BYTES]) for i in range(count)]
 
 
@@ -111,24 +118,29 @@ def caption_html(caption: dict | None) -> str:
     """Return the HTML shown under a frame for its caption, or nothing if it has none."""
     if not caption:
         return ""
+
     parts = [f'<p>{html.escape(caption["summary"])}</p>', f'<p class="dim">Room: {html.escape(caption["room"])}</p>']
     if caption["objects"]:
         parts.append(f'<p class="dim">{html.escape(", ".join(caption["objects"]))}</p>')
     if caption["text_seen"]:
         parts.append(f'<p class="dim">Text: {html.escape(caption["text_seen"])}</p>')
+
     return "".join(parts)
 
 
 def write_page(session_dir: Path, manifest: dict, captions: dict[str, dict] | None = None) -> None:
     """Write index.html: the kept frames on one page, with captions (keyed by file name) where they exist."""
     captions = captions or {}
+
     cards = "\n".join(
         f'<figure><img src="{html.escape(frame["file"])}" loading="lazy">'
         f'<figcaption>{clock(frame["offset_seconds"])}'
         f'{caption_html(captions.get(Path(frame["file"]).name))}</figcaption></figure>'
         for frame in manifest["frames"]
     )
+
     audio = '<audio controls src="audio.wav"></audio>' if manifest["audio"] else "<p>No sound in this recording.</p>"
+
     page = f"""<!doctype html>
 <meta charset="utf-8">
 <title>Session {html.escape(manifest["id"])}</title>
@@ -150,6 +162,7 @@ Kept {manifest["frames_kept"]} of {manifest["frames_sampled"]} frames
 {cards}
 </div>
 """
+
     (session_dir / "index.html").write_text(page)
 
 
@@ -181,6 +194,7 @@ def ingest(
         if index not in kept:
             path.unlink()
             continue
+
         offset = index * seconds_per_frame
         frames.append({
             "file": f"frames/{path.name}",
@@ -204,8 +218,10 @@ def ingest(
         "audio": "audio.wav" if has_audio else None,
         "frames": frames,
     }
+
     (session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     write_page(session_dir, manifest)
+
     return session_dir
 
 
@@ -242,6 +258,7 @@ def main() -> int:
         print("Saved to the database.")
     except psycopg.OperationalError:
         print("Not saved: the database isn't running. Start it with: docker compose up -d --wait")
+
     return 0
 
 

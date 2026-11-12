@@ -22,6 +22,7 @@ PRICES = {
 @functools.cache
 def client() -> OpenAI:
     config.require("OPENAI_API_KEY")
+
     return OpenAI()
 
 
@@ -29,6 +30,7 @@ def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: i
     """Return what a call cost. cached_tokens is the part of input_tokens billed at the cheaper cached rate."""
     input_price, cached_price, output_price = PRICES[model]
     fresh_tokens = input_tokens - cached_tokens
+
     return (fresh_tokens * input_price + cached_tokens * cached_price + output_tokens * output_price) / 1_000_000
 
 
@@ -37,10 +39,13 @@ def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: i
     details = getattr(usage, "input_tokens_details", None)
     cached_tokens = getattr(details, "cached_tokens", 0) or 0
     output_tokens = getattr(usage, "output_tokens", 0) or 0
+
     usd = cost_usd(model, usage.input_tokens, cached_tokens, output_tokens)
+
     conn.execute(
         "insert into api_cost (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd)"
         " values (%s, %s, %s, %s, %s, %s, %s)",
         (step, model, frame_id, usage.input_tokens, cached_tokens, output_tokens, usd),
     )
+
     return usd

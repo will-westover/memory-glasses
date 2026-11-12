@@ -21,6 +21,7 @@ def connect() -> psycopg.Connection:
     """Open a connection and make sure the tables are up to date."""
     conn = psycopg.connect(DATABASE_URL, connect_timeout=3)
     migrate(conn)
+
     return conn
 
 
@@ -30,14 +31,18 @@ def migrate(conn: psycopg.Connection) -> list[str]:
         "create table if not exists schema_migration"
         " (name text primary key, applied_at timestamptz not null default now())"
     )
+
     done = {name for (name,) in conn.execute("select name from schema_migration")}
     ran = []
+
     for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
         if path.name not in done:
             conn.execute(path.read_text())
             conn.execute("insert into schema_migration (name) values (%s)", (path.name,))
             ran.append(path.name)
+
     conn.commit()
+
     return ran
 
 
@@ -49,6 +54,7 @@ def save_session(conn: psycopg.Connection, session_dir: Path) -> int:
 
     with conn.transaction():
         conn.execute("delete from session where id = %s", (session_id,))
+
         conn.execute(
             "insert into session (id, source, started_at, duration_seconds, audio_path)"
             " values (%s, %s, %s, %s, %s)",
@@ -60,6 +66,7 @@ def save_session(conn: psycopg.Connection, session_dir: Path) -> int:
                 f"{folder}/{manifest['audio']}" if manifest["audio"] else None,
             ),
         )
+
         with conn.cursor() as cursor:
             cursor.executemany(
                 "insert into frame (session_id, captured_at, image_path, fingerprint) values (%s, %s, %s, %s)",
@@ -68,6 +75,7 @@ def save_session(conn: psycopg.Connection, session_dir: Path) -> int:
                     for frame in manifest["frames"]
                 ],
             )
+
     return len(manifest["frames"])
 
 
@@ -95,6 +103,7 @@ def save_caption(conn: psycopg.Connection, frame_id: int, caption) -> None:
         "update frame set summary = %s, room = %s, text_seen = %s, captioned_at = now() where id = %s",
         (caption.summary, caption.room, caption.text_seen, frame_id),
     )
+
     conn.execute("delete from frame_object where frame_id = %s", (frame_id,))
     with conn.cursor() as cursor:
         cursor.executemany(
@@ -112,6 +121,7 @@ def captions(conn: psycopg.Connection, session_id: str) -> dict[str, dict]:
         " where f.session_id = %s and f.captioned_at is not null group by f.id",
         (session_id,),
     ).fetchall()
+
     return {
         Path(image_path).name: {"summary": summary, "room": room, "text_seen": text_seen, "objects": objects}
         for image_path, summary, room, text_seen, objects in rows
@@ -120,6 +130,7 @@ def captions(conn: psycopg.Connection, session_id: str) -> dict[str, dict]:
 
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "list"
+
     try:
         conn = connect()
     except psycopg.OperationalError:
@@ -133,15 +144,18 @@ def main() -> int:
             print(f"Saved {count} frames.")
         elif command == "list":
             rows = list_sessions(conn)
+
             print(f"{'session':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
             for session_id, source, _, duration, frames, has_sound in rows:
                 length = f"{int(duration) // 60}:{int(duration) % 60:02d}"
                 print(f"{session_id:<21} {source:<10} {length:>7} {frames:>7}  {'yes' if has_sound else 'no'}")
+
             if not rows:
                 print("(no sessions yet)")
         else:
             print(__doc__, file=sys.stderr)
             return 1
+
     return 0
 
 

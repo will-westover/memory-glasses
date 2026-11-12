@@ -49,12 +49,14 @@ def small_jpeg(path: Path) -> bytes:
          "-f", "image2pipe", "-c:v", "mjpeg", "-"],
         capture_output=True, check=True,
     )
+
     return result.stdout
 
 
 def caption_image(path: Path, model: str = CAPTION_MODEL):
     """Ask the model to describe one image. Return (Caption, usage)."""
     encoded = base64.b64encode(small_jpeg(path)).decode()
+
     response = llm.client().responses.parse(
         model=model,
         instructions=INSTRUCTIONS,
@@ -65,6 +67,7 @@ def caption_image(path: Path, model: str = CAPTION_MODEL):
         text_format=Caption,
         reasoning={"effort": "none"},
     )
+
     return response.output_parsed, response.usage
 
 
@@ -76,23 +79,29 @@ def caption_session(conn, session_id: str, limit: int | None = None, model: str 
 
     with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
         jobs = {pool.submit(caption_image, DATA_DIR / path, model): (frame_id, path) for frame_id, path in frames}
+
         for job in as_completed(jobs):
             frame_id, path = jobs[job]
+
             try:
                 caption, usage = job.result()
             except Exception as error:  # one bad frame shouldn't stop the rest
                 totals["failed"] += 1
                 print(f"  failed {Path(path).name}: {error}", file=sys.stderr)
                 continue
+
             with conn.transaction():
                 db.save_caption(conn, frame_id, caption)
                 totals["usd"] += llm.log_cost(conn, "caption", model, usage, frame_id)
+
             totals["frames"] += 1
             totals["input_tokens"] += usage.input_tokens
             totals["output_tokens"] += usage.output_tokens
+
             print(f"  {Path(path).name}  {caption.summary}")
 
     totals["seconds"] = time.monotonic() - started
+
     return totals
 
 
@@ -110,8 +119,10 @@ def main() -> int:
 
     with db.connect() as conn:
         totals = caption_session(conn, args.session_id, args.limit, args.model)
+
         manifest = json.loads((session_dir / "manifest.json").read_text())
         write_page(session_dir, manifest, db.captions(conn, args.session_id))
+
         remaining = len(db.frames_without_caption(conn, args.session_id))
 
     print(f"\nCaptioned {totals['frames']} frames in {totals['seconds']:.0f} s with {args.model}.")
@@ -122,6 +133,7 @@ def main() -> int:
         print(f"{totals['failed']} failed; run again to retry them.")
     print(f"{remaining} frames still without a caption.")
     print(f"Look at: {session_dir / 'index.html'}")
+
     return 0
 
 

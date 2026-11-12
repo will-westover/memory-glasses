@@ -16,12 +16,14 @@ def fingerprint(grey: bytes) -> int:
     """Return the 64-bit fingerprint of a 9 x 8 grey thumbnail, given as 72 bytes in row order."""
     if len(grey) != THUMB_BYTES:
         raise ValueError(f"expected {THUMB_BYTES} bytes, got {len(grey)}")
+
     bits = 0
     for row in range(THUMB_HEIGHT):
         start = row * THUMB_WIDTH
         for col in range(THUMB_WIDTH - 1):
             brighter = grey[start + col] > grey[start + col + 1]
             bits = (bits << 1) | brighter
+
     return bits
 
 
@@ -37,7 +39,9 @@ def indexes_to_keep(fingerprints: list[int], max_distance: int = DEFAULT_MAX_DIS
     produces a new frame once it adds up.
     """
     kept: list[int] = []
+
     for index, current in enumerate(fingerprints):
         if not kept or distance(current, fingerprints[kept[-1]]) > max_distance:
             kept.append(index)
+
     return kept
