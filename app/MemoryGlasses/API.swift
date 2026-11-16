@@ -214,5 +214,9 @@ func clock(_ seconds: Double) -> String {
 }
 
 func dollars(_ amount: Double) -> String {
-    amount < 0.01 ? String(format: "$%.4f", amount) : String(format: "$%.2f", amount)
+    if amount > 0 && amount < 0.0001 {
+        return "under $0.0001"
+    }
+
+    return amount < 0.01 ? String(format: "$%.4f", amount) : String(format: "$%.2f", amount)
 }
