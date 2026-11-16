@@ -29,7 +29,8 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
    timeline; `--plain` is one search and one call, the baseline the evals compare it with.
 7. **Evals** (done): `memory.evals` asks every test question in both modes; a judge model grades each
    answer, and the run reports scores, whether the right fact was retrieved, and cost.
-8. **API**: the server answers the app's requests.
+8. **API** (done): `memory/api.py` (FastAPI) serves sessions, a session's timeline, frame images, ask,
+   stats and settings.
 9. **iPhone app**: Timeline, Ask, Stats and Glasses screens.
 10. **Glasses firmware**: the glasses upload frames and audio. Start with a test that takes one photo, since
     Rust has to call Espressif's C camera driver.
@@ -62,6 +63,8 @@ Everything else is your call.
   raw facts.
 - Eval questions: `server/evals/questions.json` (the NASA clip) and the ignored
   `data/evals/questions.json` (the user's own recordings). Runs are saved in `data/evals/runs/`.
+- API: `uv run uvicorn memory.api:app` in `server/`, then open `/docs`. Set `API_TOKEN` in `server/.env`
+  to require `Authorization: Bearer <token>`; add `--host 0.0.0.0` to reach it from a phone.
 - Places: `memory.places add "Home" <lat> <lon> --radius 75`, `memory.places list`.
 - Model prices are in `server/prices.json`. A model with no price there is refused before any call.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go

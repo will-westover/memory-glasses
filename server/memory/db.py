@@ -283,6 +283,50 @@ def step_cost(conn: psycopg.Connection, step: str) -> float:
     return float(usd)
 
 
+def summaries(conn: psycopg.Connection, session_id: str) -> list[dict]:
+    """Return a session's summary facts, in order."""
+    return fact_rows(conn.execute(
+        f"{FACT_COLUMNS} where fact.session_id = %s and fact.kind = 'summary' order by fact.at", (session_id,)
+    ))
+
+
+def costs(conn: psycopg.Connection) -> list[dict]:
+    """Return the calls, tokens and dollars logged for each pipeline step."""
+    rows = conn.execute(
+        "select step, count(*), sum(input_tokens), sum(output_tokens), sum(usd) from api_cost"
+        " group by step order by sum(usd) desc"
+    )
+
+    return [
+        {"step": step, "calls": calls, "input_tokens": tokens_in, "output_tokens": tokens_out, "usd": float(usd)}
+        for step, calls, tokens_in, tokens_out, usd in rows
+    ]
+
+
+def counts(conn: psycopg.Connection) -> dict:
+    """Return how many sessions, frames and facts are stored."""
+    sessions, frames, facts = conn.execute(
+        "select (select count(*) from session), (select count(*) from frame), (select count(*) from fact)"
+    ).fetchone()
+
+    return {"sessions": sessions, "frames": frames, "facts": facts}
+
+
+def setting(conn: psycopg.Connection, name: str, default):
+    """Return a saved setting, or the default if it has never been set."""
+    row = conn.execute("select value from setting where name = %s", (name,)).fetchone()
+
+    return row[0] if row else default
+
+
+def save_setting(conn: psycopg.Connection, name: str, value) -> None:
+    """Save a setting."""
+    conn.execute(
+        "insert into setting (name, value) values (%s, %s) on conflict (name) do update set value = excluded.value",
+        (name, str(value)),
+    )
+
+
 def print_sessions(rows: list[tuple]) -> None:
     print(f"{'session':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
 

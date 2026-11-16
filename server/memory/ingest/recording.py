@@ -330,8 +330,8 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Turn a recorded video into a session folder.")
     parser.add_argument("video", type=Path)
     parser.add_argument(
-        "--frames-per-minute", type=float, default=FRAMES_PER_MINUTE,
-        help=f"how many pictures to take each minute, 0 to {MAX_FRAMES_PER_MINUTE}; 0 keeps sound only",
+        "--frames-per-minute", type=float,
+        help=f"how many pictures to take each minute, 0 to {MAX_FRAMES_PER_MINUTE}; defaults to the saved setting",
     )
     parser.add_argument(
         "--max-distance", type=int, default=DEFAULT_MAX_DISTANCE,
@@ -368,13 +368,22 @@ def save_to_database(session_dir: Path) -> None:
         print("Not saved: the database isn't running. Start it with: docker compose up -d --wait")
 
 
+def saved_rate() -> float:
+    """Return the frames per minute saved in the database, or the default if it can't be read."""
+    try:
+        with db.connect() as conn:
+            return float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE))
+    except psycopg.OperationalError:
+        return FRAMES_PER_MINUTE
+
+
 def main() -> int:
     args = parse_arguments()
 
     try:
         session_dir = ingest(
             args.video,
-            frames_per_minute=args.frames_per_minute,
+            frames_per_minute=saved_rate() if args.frames_per_minute is None else args.frames_per_minute,
             max_distance=args.max_distance,
             max_blur=args.max_blur,
             replace=args.replace,
