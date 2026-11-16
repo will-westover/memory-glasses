@@ -31,7 +31,9 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
    answer, and the run reports scores, whether the right fact was retrieved, and cost.
 8. **API** (done): `memory/api.py` (FastAPI) serves sessions, a session's timeline, frame images, ask,
    stats and settings.
-9. **iPhone app**: Timeline, Ask, Stats and Glasses screens.
+9. **iPhone app** (written, not yet run): SwiftUI in `app/`, with Timeline, Ask, Stats and Glasses screens.
+   It compiles and its API client works against the server, but the screens have never been run because
+   Xcode's iOS platform isn't installed (`xcodebuild -downloadPlatform iOS`).
 10. **Glasses firmware**: the glasses upload frames and audio. Start with a test that takes one photo, since
     Rust has to call Espressif's C camera driver.
 
