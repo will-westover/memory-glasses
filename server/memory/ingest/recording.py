@@ -1,7 +1,4 @@
-"""Turn a recorded video into a session folder of kept frames, audio and a page to check them.
-
-    uv run python -m memory.ingest.recording path/to/video.mov
-"""
+"""Turn a recorded video into a session folder of kept frames, audio and a page to check them."""
 
 import argparse
 import html
@@ -12,9 +9,11 @@ import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+
 import psycopg
+
 from memory import db
-from memory.config import DATA_DIR, FRAMES_PER_MINUTE
+from memory.config import DATA_DIR, FRAMES_PER_MINUTE, clock
 from memory.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
 from memory.places import parse_location
 from memory.ingest.fingerprint import (
@@ -140,11 +139,6 @@ def extract_audio(video: Path, audio_path: Path) -> None:
     ])
 
 
-def clock(seconds: float) -> str:
-    """Format seconds as m:ss."""
-    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
-
-
 def caption_html(caption: dict | None) -> str:
     """Return the HTML shown under a frame for its caption."""
     if not caption:
@@ -225,19 +219,41 @@ def refresh_page(conn, session_dir: Path) -> None:
     write_page(session_dir, manifest, captions, db.transcript(conn, manifest["id"]))
 
 
-def new_session_dir(data_dir: Path, session_id: str, replace: bool) -> Path:
-    """Return an empty folder for the session, removing an earlier one if replace is set."""
-    session_dir = data_dir / "sessions" / session_id
+def build_session(video: Path, info: dict, build_dir: Path, session_id: str,
+                  frames_per_minute: float, max_distance: int, max_blur: float) -> None:
+    """Fill a folder with the session's kept frames, audio, manifest and page."""
+    started = start_time(info, video)
+    place = location(info)
+    frames_dir = build_dir / "frames"
+    frames_dir.mkdir(parents=True)
 
-    if session_dir.exists():
-        if not replace:
-            raise IngestError(f"{session_dir} already exists. Pass --replace to build it again.")
+    seconds_per_frame = 60 / frames_per_minute if frames_per_minute else 0.0
+    fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame) if frames_per_minute else ([], [])
 
-        shutil.rmtree(session_dir)
+    sampled, sharp, kept = choose_frames(fingerprints, blur, max_distance, max_blur)
+    frames = keep_frames(frames_dir, kept, fingerprints, blur, started, seconds_per_frame)
 
-    (session_dir / "frames").mkdir(parents=True)
+    if has_sound(info):
+        extract_audio(video, build_dir / "audio.wav")
 
-    return session_dir
+    manifest = {
+        "id": session_id,
+        "source": "recording",
+        "video": video.name,
+        "started_at": started.isoformat(),
+        "duration_seconds": duration(info),
+        "lat": place[0] if place else None,
+        "lon": place[1] if place else None,
+        "frames_per_minute": frames_per_minute,
+        "frames_sampled": sampled,
+        "frames_blurry": sampled - sharp,
+        "frames_kept": len(frames),
+        "audio": "audio.wav" if has_sound(info) else None,
+        "frames": frames,
+    }
+
+    (build_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    write_page(build_dir, manifest)
 
 
 def choose_frames(fingerprints: list[int], blur: list, max_distance: int, max_blur: float) -> tuple[int, int, set[int]]:
@@ -289,40 +305,23 @@ def ingest(
         raise IngestError(f"frames per minute must be between 0 and {MAX_FRAMES_PER_MINUTE}")
 
     info = video_info(video)
-    started = start_time(info, video)
-    place = location(info)
+    session_id = start_time(info, video).strftime("%Y-%m-%dT%H-%M-%S")
+    session_dir = data_dir / "sessions" / session_id
+    build_dir = data_dir / "sessions" / f"{session_id}.building"
 
-    session_id = started.strftime("%Y-%m-%dT%H-%M-%S")
-    session_dir = new_session_dir(data_dir, session_id, replace)
-    frames_dir = session_dir / "frames"
+    if session_dir.exists() and not replace:
+        raise IngestError(f"{session_dir} already exists. Pass --replace to build it again.")
 
-    seconds_per_frame = 60 / frames_per_minute if frames_per_minute else 0.0
-    fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame) if frames_per_minute else ([], [])
+    shutil.rmtree(build_dir, ignore_errors=True)
 
-    sampled, sharp, kept = choose_frames(fingerprints, blur, max_distance, max_blur)
-    frames = keep_frames(frames_dir, kept, fingerprints, blur, started, seconds_per_frame)
+    try:
+        build_session(video, info, build_dir, session_id, frames_per_minute, max_distance, max_blur)
+    except Exception:
+        shutil.rmtree(build_dir, ignore_errors=True)
+        raise
 
-    if has_sound(info):
-        extract_audio(video, session_dir / "audio.wav")
-
-    manifest = {
-        "id": session_id,
-        "source": "recording",
-        "video": video.name,
-        "started_at": started.isoformat(),
-        "duration_seconds": duration(info),
-        "lat": place[0] if place else None,
-        "lon": place[1] if place else None,
-        "frames_per_minute": frames_per_minute,
-        "frames_sampled": sampled,
-        "frames_blurry": sampled - sharp,
-        "frames_kept": len(frames),
-        "audio": "audio.wav" if has_sound(info) else None,
-        "frames": frames,
-    }
-
-    (session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    write_page(session_dir, manifest)
+    shutil.rmtree(session_dir, ignore_errors=True)
+    build_dir.rename(session_dir)
 
     return session_dir
 
@@ -359,9 +358,12 @@ def print_report(session_dir: Path) -> None:
 def save_to_database(session_dir: Path) -> None:
     try:
         with db.connect() as conn:
-            db.save_session(conn, session_dir)
+            saved = db.save_session(conn, session_dir)
 
-        print("Saved to the database.")
+        print(f"Saved to the database. {saved['captions_kept']} captions kept, {saved['captions_lost']} lost.")
+
+        if saved["changed"]:
+            print("The frames changed, so run the captions and facts steps again.")
     except psycopg.OperationalError:
         print("Not saved: the database isn't running. Start it with: docker compose up -d --wait")
 

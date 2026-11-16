@@ -1,8 +1,4 @@
-"""Named places: turn coordinates into a name such as "Home".
-
-    uv run python -m memory.places add "Home" 40.2518 -111.6493 --radius 75
-    uv run python -m memory.places list
-"""
+"""Named places: turn coordinates into a name such as "Home"."""
 
 import argparse
 import math

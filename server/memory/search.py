@@ -1,13 +1,11 @@
-"""Find the facts that best match a question, by meaning and by keyword.
-
-    uv run python -m memory.search "what does the sign above the door say"
-"""
+"""Find the facts that best match a question, by meaning and by keyword."""
 
 import argparse
 import sys
 from datetime import datetime
 
 from memory import db, llm
+from memory.config import clock
 
 CANDIDATES = 20
 
@@ -56,6 +54,9 @@ def search(
     vector = llm.embed(conn, [question], "embed-question")[0]
     values = {"vector": vector, "text": question, "limit": CANDIDATES, "start": start, "end": end}
 
+    if start or end:
+        conn.execute("set local hnsw.iterative_scan = relaxed_order")
+
     by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING, values)]
     by_keyword = [fact_id for (fact_id,) in conn.execute(BY_KEYWORD, values)]
 
@@ -70,11 +71,6 @@ def search(
         }
         for fact_id, score in ranked
     ]
-
-
-def clock(seconds: float) -> str:
-    """Format seconds as m:ss."""
-    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
 
 
 def print_results(results: list[dict]) -> None:

@@ -1,20 +1,18 @@
-"""Turn a session's captions and transcript into small facts and summaries, and embed each with its context.
-
-    uv run python -m memory.ingest.facts <session id>
-"""
+"""Turn a session's captions and transcript into small facts and summaries, each embedded."""
 
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from pydantic import BaseModel, Field
 
 from memory import db, llm
-from memory.config import SUMMARY_MODEL
+from memory.config import STRETCH_SECONDS, SUMMARY_MODEL
 from memory.places import place_for
 
 PASSAGE_WORDS = 60
 PASSAGE_GAP_SECONDS = 8.0
-STRETCH_SECONDS = 60
+PARALLEL_CALLS = 8
 
 KINDS = ("moment", "object", "text", "speech", "said", "summary")
 
@@ -25,13 +23,18 @@ letters.
 
 Write two things, using only what is given:
 - happened: two or three sentences on what took place in this minute, combining what was seen and said.
-- said: for each passage, in the same order, one or two plain sentences stating what was said and by which
+- said: for each passage, its number and one or two plain sentences stating what was said and by which
   speaker. Leave out filler words. Keep names, numbers and other specifics."""
+
+
+class Said(BaseModel):
+    passage: int = Field(description="The number of the passage this is about")
+    text: str = Field(description="What was said in that passage, in one or two plain sentences")
 
 
 class Stretch(BaseModel):
     happened: str = Field(description="What took place in this minute, in two or three sentences")
-    said: list[str] = Field(description="One entry per passage, in order; empty if nothing was said")
+    said: list[Said] = Field(description="One entry per passage; empty if nothing was said")
 
 
 def at_place(place: str | None) -> str:
@@ -123,8 +126,8 @@ def stretches(frames: list[dict], groups: list[list[dict]]) -> list[tuple[list, 
     return [slots[slot] for slot in sorted(slots)]
 
 
-def summarise(conn, frames: list[dict], groups: list[list[dict]]) -> Stretch:
-    """Ask the model what happened in one stretch and what each passage said."""
+def summarise(frames: list[dict], groups: list[list[dict]]):
+    """Ask the model what happened in one stretch and what each passage said. Return (Stretch, usage)."""
     seen = "\n".join(f"{int(frame['offset_seconds'])} s: {frame['summary']}" for frame in frames)
     heard = "\n".join(f"{number}. {spoken(passage)}" for number, passage in enumerate(groups, start=1))
 
@@ -135,9 +138,8 @@ def summarise(conn, frames: list[dict], groups: list[list[dict]]) -> Stretch:
         text_format=Stretch,
         reasoning={"effort": "low"},
     )
-    llm.log_cost(conn, "summary", SUMMARY_MODEL, response.usage)
 
-    return response.output_parsed
+    return response.output_parsed, response.usage
 
 
 def summary_fact(frames: list[dict], groups: list[list[dict]], place: str | None, happened: str) -> dict:
@@ -155,15 +157,31 @@ def summary_fact(frames: list[dict], groups: list[list[dict]], place: str | None
     }
 
 
+def said_facts(groups: list[list[dict]], said: list[Said], place: str | None) -> list[dict]:
+    """Return a 'said' fact for each passage the model summarised, matched by passage number."""
+    by_number = {item.passage: item.text for item in reversed(said)}
+
+    return [
+        speech_fact(passage, place, "said", by_number[number])
+        for number, passage in enumerate(groups, start=1)
+        if number in by_number
+    ]
+
+
 def summary_facts(conn, frames: list[dict], groups: list[list[dict]], place: str | None) -> list[dict]:
     """Return a summary fact for each stretch and a 'said' fact for each passage in it."""
+    parts = stretches(frames, groups)
     facts = []
 
-    for stretch_frames, stretch_groups in stretches(frames, groups):
-        stretch = summarise(conn, stretch_frames, stretch_groups)
+    with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
+        results = list(pool.map(lambda part: summarise(*part), parts))
 
-        facts.append(summary_fact(stretch_frames, stretch_groups, place, stretch.happened))
-        facts += [speech_fact(passage, place, "said", said) for passage, said in zip(stretch_groups, stretch.said)]
+    for (stretch_frames, stretch_groups), (stretch, usage) in zip(parts, results):
+        llm.log_cost(conn, "summary", SUMMARY_MODEL, usage)
+
+        if stretch:
+            facts.append(summary_fact(stretch_frames, stretch_groups, place, stretch.happened))
+            facts += said_facts(stretch_groups, stretch.said, place)
 
     return facts
 
@@ -180,6 +198,8 @@ def count_kinds(facts: list[dict]) -> dict[str, int]:
 
 def build_facts(conn, session_id: str) -> dict[str, int]:
     """Rebuild and embed every fact for a session. Return how many of each kind were made."""
+    llm.require_price(SUMMARY_MODEL)
+
     _, lat, lon = db.session_info(conn, session_id)
     place = place_for(lat, lon, db.places(conn))
 

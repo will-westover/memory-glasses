@@ -1,4 +1,4 @@
-"""Settings shared by every part of the server."""
+"""Settings and small helpers shared by every part of the server."""
 
 import os
 from pathlib import Path
@@ -34,7 +34,14 @@ AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-6-luna")
 
 SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gpt-6-luna")
 
+STRETCH_SECONDS = 60
+
 EMBED_MODEL = "text-embedding-3-small"
+
+
+def clock(seconds: float) -> str:
+    """Format seconds as m:ss."""
+    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
 
 
 def require(name: str) -> str:

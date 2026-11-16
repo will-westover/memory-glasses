@@ -1,22 +1,22 @@
 """OpenAI access shared by every step: one client, prices, and the cost log."""
 
 import functools
+import json
 
 import psycopg
 from openai import OpenAI
 
 from memory import config
-from memory.config import EMBED_MODEL
+from memory.config import EMBED_MODEL, SERVER_DIR
 
-PRICES = {
-    "gpt-6-luna": (0.10, 0.01, 0.50),
-    "gpt-6-sol": (2.00, 0.20, 10.00),
-    "gpt-5.6-luna": (0.20, 0.02, 1.20),
-    "gpt-5.6-terra": (2.00, 0.20, 12.00),
-    "gpt-5.6-sol": (4.00, 0.40, 20.00),
-    "text-embedding-3-small": (0.02, 0.02, 0.0),
-    "gpt-4o-transcribe-diarize": (2.50, 2.50, 10.00),
-}
+PRICES_FILE = SERVER_DIR / "prices.json"
+PRICES = json.loads(PRICES_FILE.read_text())["usd_per_million_tokens"]
+
+
+def require_price(model: str) -> None:
+    """Stop before any call is paid for if the model has no price."""
+    if model not in PRICES:
+        raise SystemExit(f"error: no price for {model}. Add it to {PRICES_FILE}")
 
 
 @functools.cache
@@ -28,10 +28,12 @@ def client() -> OpenAI:
 
 def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
     """Return what a call cost in dollars."""
-    input_price, cached_price, output_price = PRICES[model]
+    price = PRICES[model]
     fresh_tokens = input_tokens - cached_tokens
 
-    return (fresh_tokens * input_price + cached_tokens * cached_price + output_tokens * output_price) / 1_000_000
+    dollars = fresh_tokens * price["input"] + cached_tokens * price["cached_input"] + output_tokens * price["output"]
+
+    return dollars / 1_000_000
 
 
 def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: int | None = None) -> float:
@@ -54,6 +56,7 @@ def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: i
 
 def embed(conn: psycopg.Connection, texts: list[str], step: str) -> list[str]:
     """Embed each text and return the vectors as text Postgres can store."""
+    require_price(EMBED_MODEL)
     vectors = []
 
     for start in range(0, len(texts), 500):

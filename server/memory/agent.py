@@ -1,8 +1,4 @@
-"""Answer a question from what the glasses recorded.
-
-    uv run python -m memory.agent "what was I doing in the kitchen?"
-    uv run python -m memory.agent "what was I doing in the kitchen?" --plain
-"""
+"""Answer a question from what the glasses recorded."""
 
 import argparse
 import json
@@ -14,9 +10,9 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
 
 from memory import db, llm
-from memory.config import AGENT_MODEL
+from memory.config import AGENT_MODEL, clock
 from memory.places import place_for
-from memory.search import clock, search
+from memory.search import search
 
 MAX_ROUNDS = 5
 
@@ -57,7 +53,7 @@ You are given the facts that one search found for the question. You cannot searc
 
 LONG_STRETCH = "This stretch is long, so it is summarised. Ask for a shorter stretch to see every moment."
 
-ISO_TIME ="ISO 8601, e.g. 2026-11-11T19:54:00"
+ISO_TIME = "ISO 8601, e.g. 2026-11-11T19:54:00"
 
 TOOLS = [
     {
@@ -105,8 +101,7 @@ def instructions(conn, notes: str) -> str:
     places = db.places(conn)
     lines = []
 
-    for session_id, _, started_at, duration, _, _ in db.list_sessions(conn)[:RECENT_SESSIONS]:
-        _, lat, lon = db.session_info(conn, session_id)
+    for _, _, started_at, duration, _, _, lat, lon in db.list_sessions(conn)[:RECENT_SESSIONS]:
         place = place_for(lat, lon, places)
 
         start = started_at.astimezone()
@@ -162,6 +157,9 @@ def find_facts(conn, name: str, arguments: dict) -> list[dict]:
     if name == "search":
         return search(conn, arguments["query"], SEARCH_RESULTS, start, end)
 
+    if not start or not end:
+        raise ValueError("timeline needs a start and an end")
+
     return fit(db.timeline(conn, start, end))
 
 
@@ -187,6 +185,7 @@ def check_sources(cited: list[int], seen: dict) -> list[dict]:
 
 def ask_agent(conn, question: str, model: str = AGENT_MODEL) -> dict:
     """Answer a question by letting the model call the tools."""
+    llm.require_price(model)
     started = time.monotonic()
     prompt = instructions(conn, AGENT_NOTES)
 
@@ -230,6 +229,7 @@ def ask_agent(conn, question: str, model: str = AGENT_MODEL) -> dict:
 
 def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
     """Answer a question from one search and one model call."""
+    llm.require_price(model)
     started = time.monotonic()
 
     facts = search(conn, question, PLAIN_RESULTS)
@@ -247,8 +247,10 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
     return finish(response.output_parsed, seen, [], usd, 1, started)
 
 
-def finish(answer: Answer, seen: dict, calls: list, usd: float, model_calls: int, started: float) -> dict:
+def finish(answer: Answer | None, seen: dict, calls: list, usd: float, model_calls: int, started: float) -> dict:
     """Bundle an answer with its checked sources and what it took to get."""
+    answer = answer or Answer(answer="The model gave no answer.", found=False, sources=[])
+
     return {
         "answer": answer.answer,
         "found": answer.found,

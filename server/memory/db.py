@@ -1,18 +1,16 @@
-"""The database. Start it from server/ with: docker compose up -d --wait
-
-    uv run python -m memory.db list
-    uv run python -m memory.db save ../data/sessions/<id>
-"""
+"""The database: tables, and storing and loading what each step produces."""
 
 import json
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import psycopg
 
-from memory.config import DATABASE_URL, SERVER_DIR
+from memory.config import DATABASE_URL, SERVER_DIR, STRETCH_SECONDS, clock
 
 MIGRATIONS_DIR = SERVER_DIR / "migrations"
+USAGE = "usage: python -m memory.db list | save <session folder>"
 
 
 def connect() -> psycopg.Connection:
@@ -44,45 +42,67 @@ def migrate(conn: psycopg.Connection) -> list[str]:
     return ran
 
 
-def save_session(conn: psycopg.Connection, session_dir: Path) -> int:
-    """Store a session folder's manifest, replacing any earlier copy."""
+def save_session(conn: psycopg.Connection, session_dir: Path) -> dict:
+    """Store a session folder's manifest, keeping the captions of frames that are unchanged."""
     manifest = json.loads((session_dir / "manifest.json").read_text())
     session_id = manifest["id"]
     folder = f"sessions/{session_id}"
 
-    with conn.transaction():
-        conn.execute("delete from session where id = %s", (session_id,))
+    wanted = {(f"{folder}/{frame['file']}", frame["fingerprint"]): frame["captured_at"] for frame in manifest["frames"]}
 
+    with conn.transaction():
         conn.execute(
             "insert into session (id, source, started_at, duration_seconds, audio_path, lat, lon)"
-            " values (%s, %s, %s, %s, %s, %s, %s)",
-            (
-                session_id,
-                manifest["source"],
-                manifest["started_at"],
-                manifest["duration_seconds"],
-                f"{folder}/{manifest['audio']}" if manifest["audio"] else None,
-                manifest.get("lat"),
-                manifest.get("lon"),
-            ),
+            " values (%(id)s, %(source)s, %(started_at)s, %(duration)s, %(audio)s, %(lat)s, %(lon)s)"
+            " on conflict (id) do update set source = excluded.source, started_at = excluded.started_at,"
+            " duration_seconds = excluded.duration_seconds, audio_path = excluded.audio_path,"
+            " lat = excluded.lat, lon = excluded.lon",
+            {
+                "id": session_id,
+                "source": manifest["source"],
+                "started_at": manifest["started_at"],
+                "duration": manifest["duration_seconds"],
+                "audio": f"{folder}/{manifest['audio']}" if manifest["audio"] else None,
+                "lat": manifest.get("lat"),
+                "lon": manifest.get("lon"),
+            },
         )
+
+        stored = {
+            (image_path, fingerprint): (frame_id, captioned)
+            for frame_id, image_path, fingerprint, captioned in conn.execute(
+                "select id, image_path, fingerprint, captioned_at is not null from frame where session_id = %s",
+                (session_id,),
+            )
+        }
+
+        gone = [stored[key] for key in stored.keys() - wanted.keys()]
+        conn.execute("delete from frame where id = any(%s)", ([frame_id for frame_id, _ in gone],))
 
         with conn.cursor() as cursor:
             cursor.executemany(
-                "insert into frame (session_id, captured_at, image_path, fingerprint) values (%s, %s, %s, %s)",
-                [
-                    (session_id, frame["captured_at"], f"{folder}/{frame['file']}", frame["fingerprint"])
-                    for frame in manifest["frames"]
-                ],
+                "update frame set captured_at = %s where id = %s",
+                [(wanted[key], stored[key][0]) for key in wanted.keys() & stored.keys()],
             )
 
-    return len(manifest["frames"])
+            cursor.executemany(
+                "insert into frame (session_id, captured_at, image_path, fingerprint) values (%s, %s, %s, %s)",
+                [(session_id, wanted[key], *key) for key in wanted.keys() - stored.keys()],
+            )
+
+    return {
+        "frames": len(wanted),
+        "captions_kept": sum(stored[key][1] for key in wanted.keys() & stored.keys()),
+        "captions_lost": sum(captioned for _, captioned in gone),
+        "changed": bool(stored) and wanted.keys() != stored.keys(),
+    }
 
 
 def list_sessions(conn: psycopg.Connection) -> list[tuple]:
     """Return every session, newest first."""
     return conn.execute(
-        "select s.id, s.source, s.started_at, s.duration_seconds, count(f.id), s.audio_path is not null"
+        "select s.id, s.source, s.started_at, s.duration_seconds, count(f.id), s.audio_path is not null,"
+        "       s.lat, s.lon"
         " from session s left join frame f on f.session_id = s.id"
         " group by s.id order by s.started_at desc"
     ).fetchall()
@@ -248,9 +268,11 @@ def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
 def timeline(conn: psycopg.Connection, start, end) -> list[dict]:
     """Return the moments, speech and summaries between two times, in order."""
     return fact_rows(conn.execute(
-        f"{FACT_COLUMNS} where fact.kind in ('moment', 'speech', 'summary') and fact.at between %s and %s"
+        f"{FACT_COLUMNS} where fact.at <= %(end)s and ("
+        "    (fact.kind in ('moment', 'speech') and fact.at >= %(start)s)"
+        " or (fact.kind = 'summary' and fact.at > %(summary_start)s))"
         " order by fact.at, fact.id",
-        (start, end),
+        {"start": start, "end": end, "summary_start": start - timedelta(seconds=STRETCH_SECONDS)},
     ))
 
 
@@ -264,9 +286,8 @@ def step_cost(conn: psycopg.Connection, step: str) -> float:
 def print_sessions(rows: list[tuple]) -> None:
     print(f"{'session':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
 
-    for session_id, source, _, duration, frames, has_sound in rows:
-        length = f"{int(duration) // 60}:{int(duration) % 60:02d}"
-        print(f"{session_id:<21} {source:<10} {length:>7} {frames:>7}  {'yes' if has_sound else 'no'}")
+    for session_id, source, _, duration, frames, has_sound, _, _ in rows:
+        print(f"{session_id:<21} {source:<10} {clock(duration):>7} {frames:>7}  {'yes' if has_sound else 'no'}")
 
     if not rows:
         print("(no sessions yet)")
@@ -284,12 +305,12 @@ def main() -> int:
 
     with conn:
         if command == "save" and len(sys.argv) == 3:
-            count = save_session(conn, Path(sys.argv[2]))
-            print(f"Saved {count} frames.")
+            saved = save_session(conn, Path(sys.argv[2]))
+            print(f"Saved {saved['frames']} frames. {saved['captions_kept']} captions kept, {saved['captions_lost']} lost.")
         elif command == "list":
             print_sessions(list_sessions(conn))
         else:
-            print(__doc__, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
             return 1
 
     return 0

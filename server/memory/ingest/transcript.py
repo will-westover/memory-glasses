@@ -1,8 +1,4 @@
-"""Turn a session's audio into timed lines of text, each labelled with who spoke.
-
-    uv run python -m memory.ingest.transcript <session id>
-    uv run python -m memory.ingest.transcript <session id> --redo
-"""
+"""Turn a session's audio into timed lines of text, each labelled with who spoke."""
 
 import argparse
 import subprocess
@@ -11,8 +7,8 @@ import time
 from pathlib import Path
 
 from memory import db, llm
-from memory.config import DATA_DIR, TRANSCRIBE_MODEL
-from memory.ingest.recording import clock, refresh_page
+from memory.config import DATA_DIR, TRANSCRIBE_MODEL, clock
+from memory.ingest.recording import refresh_page
 
 UPLOAD_KBPS = 48
 UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024
@@ -73,6 +69,8 @@ def main() -> int:
         if db.transcript(conn, args.session_id) and not args.redo:
             print("This session already has a transcript. Pass --redo to transcribe it again.")
             return 0
+
+        llm.require_price(TRANSCRIBE_MODEL)
 
         started = time.monotonic()
         segments, usage = transcribe(audio_path)

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from memory.ingest.facts import frame_facts, passages, stretches
+from memory.ingest.facts import Said, frame_facts, passages, said_facts, stretches
 
 ZONE = timezone(timedelta(hours=-7))
 EVENING = datetime(2026, 11, 10, 19, 54, tzinfo=ZONE)
@@ -57,3 +57,12 @@ def test_frames_and_speech_are_split_into_minutes():
     passage = [line(65, 68, "second minute")]
 
     assert stretches([early, late], [passage]) == [([early], []), ([late], [passage])]
+
+
+def test_speech_summaries_go_to_the_passage_they_name():
+    first, second, third = [line(0, 2, "one")], [line(10, 12, "two")], [line(20, 22, "three")]
+    said = [Said(passage=3, text="About three."), Said(passage=1, text="About one."), Said(passage=9, text="Stray.")]
+
+    facts = said_facts([first, second, third], said, None)
+
+    assert [(fact["offset_seconds"], fact["text"]) for fact in facts] == [(0, "About one."), (20, "About three.")]

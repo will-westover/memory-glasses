@@ -54,9 +54,13 @@ Everything else is your call.
 ## Handy
 
 - Tests: `uv run pytest` in `server/`.
-- Pipeline for one video, in order: `memory.ingest.recording <video>`, then `captions`, `transcript` and
-  `facts` with the session id. Then `memory.agent "question"` (add `--plain` for the baseline), or
-  `memory.search "question"` to see the raw facts.
+- Every step runs from `server/` as `uv run python -m <module>`; `--help` lists its options.
+- Pipeline for one video, in order: `memory.ingest.recording <video>` (`--replace` to rebuild; captions of
+  unchanged frames are kept), then `memory.ingest.captions`, `.transcript` and `.facts` with the session id.
+  Then `memory.agent "question"` (add `--plain` for the baseline), or `memory.search "question"` to see the
+  raw facts.
+- Places: `memory.places add "Home" <lat> <lon> --radius 75`, `memory.places list`.
+- Model prices are in `server/prices.json`. A model with no price there is refused before any call.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
   in a new numbered file in `server/migrations/`.
 - Test clips, both in the ignored `data/samples/`: `nasa/crew-quarters-tour.webm` (public-domain NASA tour,

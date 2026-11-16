@@ -1,9 +1,4 @@
-"""Describe each kept frame of a session with a model.
-
-    uv run python -m memory.ingest.captions <session id>
-    uv run python -m memory.ingest.captions <session id> --limit 3
-    uv run python -m memory.ingest.captions <session id> --redo
-"""
+"""Describe each kept frame of a session with a model."""
 
 import argparse
 import base64
@@ -92,6 +87,8 @@ def save_result(conn, totals: dict, frame_id: int, caption: Caption, usage, mode
 
 def caption_session(conn, session_id: str, limit: int | None = None, model: str = CAPTION_MODEL) -> dict:
     """Caption the session's frames that have no caption yet, several at a time."""
+    llm.require_price(model)
+
     frames = db.frames_without_caption(conn, session_id, limit)
     started = time.monotonic()
     totals = {"frames": 0, "failed": 0, "usd": 0.0, "input_tokens": 0, "output_tokens": 0}
