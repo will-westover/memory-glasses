@@ -1,19 +1,14 @@
-"""Frame fingerprints, used to drop frames that look the same as the last one kept.
-
-A fingerprint is 64 bits. The frame is shrunk to 9 x 8 grey pixels, and each bit records whether a pixel is
-brighter than the one to its right. Two frames of the same scene differ in only a few bits.
-"""
+"""Frame fingerprints, used to drop frames that look the same as the last one kept."""
 
 THUMB_WIDTH = 9
 THUMB_HEIGHT = 8
 THUMB_BYTES = THUMB_WIDTH * THUMB_HEIGHT
 
-# Frames whose fingerprints differ in this many bits or fewer count as the same scene.
 DEFAULT_MAX_DISTANCE = 6
 
 
 def fingerprint(grey: bytes) -> int:
-    """Return the 64-bit fingerprint of a 9 x 8 grey thumbnail, given as 72 bytes in row order."""
+    """Return the 64-bit fingerprint of a 9 x 8 grey thumbnail."""
     if len(grey) != THUMB_BYTES:
         raise ValueError(f"expected {THUMB_BYTES} bytes, got {len(grey)}")
 
@@ -33,11 +28,7 @@ def distance(a: int, b: int) -> int:
 
 
 def indexes_to_keep(fingerprints: list[int], max_distance: int = DEFAULT_MAX_DISTANCE) -> list[int]:
-    """Return the positions of the frames worth keeping.
-
-    Each frame is compared with the last frame kept, not the one just before it, so a slow change still
-    produces a new frame once it adds up.
-    """
+    """Return the positions of frames that differ enough from the last one kept."""
     kept: list[int] = []
 
     for index, current in enumerate(fingerprints):

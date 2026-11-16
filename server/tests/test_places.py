@@ -12,7 +12,6 @@ def test_parses_the_tag_phones_write_into_videos():
 
 
 def test_distance_matches_a_known_value():
-    # One degree of latitude is about 111.2 km everywhere.
     assert distance_m(40.0, -111.0, 41.0, -111.0) == pytest.approx(111_195, rel=0.001)
 
 

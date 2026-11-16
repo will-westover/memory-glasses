@@ -1,14 +1,6 @@
-"""Turn a recorded video into a session folder.
+"""Turn a recorded video into a session folder of kept frames, audio and a page to check them.
 
     uv run python -m memory.ingest.recording path/to/video.mov
-
-Writes data/sessions/<start time>/ with:
-    frames/        the sharpest frame from every few seconds; blurry and near-duplicate ones dropped
-    audio.wav      mono 16 kHz, ready for speech-to-text (missing if the video has no sound)
-    manifest.json  every kept frame with its time and fingerprint, and where it was recorded if known
-    index.html     the kept frames on one page, to check by eye
-
-The session is also saved to the database when it's running.
 """
 
 import argparse
@@ -44,7 +36,7 @@ class IngestError(Exception):
 
 
 def run(command: list[str], cwd: Path | None = None) -> bytes:
-    """Run a command and return what it printed, or raise IngestError with its error text."""
+    """Run a command and return what it printed."""
     result = subprocess.run(command, capture_output=True, cwd=cwd)
 
     if result.returncode != 0:
@@ -54,8 +46,7 @@ def run(command: list[str], cwd: Path | None = None) -> bytes:
 
 
 def probe(video: Path) -> tuple[datetime, float, bool, tuple[float, float] | None]:
-    """Return when the recording started (local time), its length in seconds, whether it has sound, and
-    (lat, lon) if the file says where it was recorded."""
+    """Return the recording's start time, length, whether it has sound, and location."""
     info = json.loads(
         run(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(video)])
     )
@@ -69,30 +60,23 @@ def probe(video: Path) -> tuple[datetime, float, bool, tuple[float, float] | Non
     if created:
         started = datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone()
     else:
-        # No start time in the file: the file's modified time is when recording ended.
         ended = datetime.fromtimestamp(video.stat().st_mtime).astimezone()
         started = ended - timedelta(seconds=duration)
 
     return started, duration, has_audio, location
 
 
-# Edge strength: each pixel compared with its four neighbours. Written once per colour plane for ffmpeg.
 EDGES = "convolution='" + ":".join(["0 -1 0 -1 4 -1 0 -1 0"] * 4) + "'"
 
 
 def read_averages(path: Path) -> list[float]:
-    """Read the per-frame averages that ffmpeg's metadata filter printed to a file."""
+    """Read the per-frame averages ffmpeg printed to a file."""
     return [float(line.split("=")[1]) for line in path.read_text().splitlines() if "YAVG=" in line]
 
 
 def extract_candidates(video: Path, frames_dir: Path, seconds_per_frame: float) -> tuple[list[int], list]:
-    """Write CANDIDATES_PER_SLOT JPEGs for every `seconds_per_frame` seconds into frames_dir.
-
-    Return each one's fingerprint and blur score. One ffmpeg pass writes the JPEGs, the tiny grey thumbnails
-    and the two detail measurements, so all four always line up.
-    """
+    """Write the candidate JPEGs and return each one's fingerprint and blur score."""
     frames_dir.mkdir(parents=True)
-    # Measured at up to 640 pixels wide. Small frames are left as they are, since enlarging one blurs it.
     measure = "scale='min(640,iw)':-2,format=gray"
     average = "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file="
 
@@ -104,7 +88,6 @@ def extract_candidates(video: Path, frames_dir: Path, seconds_per_frame: float) 
             f"[soft]{measure},gblur=sigma=1.5,{EDGES},{average}blurred.txt[blurred]"
         )
 
-        # Run inside the scratch folder so the two measurement files can be named without a path.
         run([
             "ffmpeg", "-v", "error", "-i", str(video.resolve()),
             "-filter_complex", graph,
@@ -142,11 +125,11 @@ def clock(seconds: float) -> str:
 
 
 def caption_html(caption: dict | None) -> str:
-    """Return the HTML shown under a frame for its caption, or nothing if it has none."""
+    """Return the HTML shown under a frame for its caption."""
     if not caption:
         return ""
 
-    parts = [f'<p>{html.escape(caption["summary"])}</p>', f'<p class="dim">Setting: {html.escape(caption["setting"])}</p>']
+    parts = [f'<p>{html.escape(caption["summary"])}</p>']
 
     for name, relation, anchor in caption["objects"]:
         parts.append(f'<p class="dim">{html.escape(f"{name}: {relation} {anchor}")}</p>')
@@ -163,10 +146,7 @@ def write_page(
     captions: dict[str, dict] | None = None,
     transcript: list[tuple] | None = None,
 ) -> None:
-    """Write index.html: the kept frames on one page, plus captions and the transcript where they exist.
-
-    captions is keyed by frame file name. transcript is a list of (offset seconds, speaker, text).
-    """
+    """Write index.html: the kept frames, with captions and the transcript where they exist."""
     captions = captions or {}
 
     cards = "\n".join(
@@ -216,7 +196,7 @@ looked the same as the frame before.</p>
 
 
 def refresh_page(conn, session_dir: Path) -> None:
-    """Rewrite a session's index.html with whatever captions and transcript the database has for it."""
+    """Rewrite a session's index.html from the database."""
     manifest = json.loads((session_dir / "manifest.json").read_text())
 
     captions = {Path(frame["image_path"]).name: frame for frame in db.captioned_frames(conn, manifest["id"])}
@@ -247,11 +227,9 @@ def ingest(
     frames_dir = session_dir / "frames"
     fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame)
 
-    # One frame per slot: its sharpest. A slot with no sharp frame gives None and is dropped.
     slots = sharpest_per_slot(blur, CANDIDATES_PER_SLOT, max_blur)
     sharp = [index for index in slots if index is not None]
 
-    # Then drop frames that look the same as the last one kept.
     kept = {sharp[position] for position in indexes_to_keep([fingerprints[index] for index in sharp], max_distance)}
 
     frames = []

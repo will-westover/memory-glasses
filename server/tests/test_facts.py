@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from memory.ingest.facts import context, frame_facts, passages
+from memory.ingest.facts import context, frame_facts, passages, stretches
 
-# 7:54 pm on Tuesday 10 November 2026, in a fixed UTC-7 zone so the test doesn't depend on the machine.
 ZONE = timezone(timedelta(hours=-7))
 EVENING = datetime(2026, 11, 10, 19, 54, tzinfo=ZONE)
 
@@ -11,16 +10,15 @@ def line(start, end, text, speaker="A"):
     return {"at": EVENING, "start": start, "end": end, "speaker": speaker, "text": text}
 
 
-def frame(frame_id, offset, objects=(), texts=(), setting="kitchen"):
+def frame(frame_id, offset, objects=(), texts=()):
     return {"id": frame_id, "at": EVENING, "offset_seconds": offset, "summary": "Making coffee. Steam rises.",
-            "setting": setting, "objects": list(objects), "texts": list(texts)}
+            "objects": list(objects), "texts": list(texts)}
 
 
 def test_context_leaves_out_what_is_unknown():
-    weekday_part = context(EVENING, None, None)
+    weekday_part = context(EVENING, None)
 
-    assert context(EVENING, "Home", "kitchen") == f"Home, kitchen, {weekday_part}"
-    assert context(EVENING, None, "other") == weekday_part
+    assert context(EVENING, "Home") == f"Home, {weekday_part}"
 
 
 def test_short_lines_are_joined_into_one_passage():
@@ -41,7 +39,7 @@ def test_each_object_becomes_its_own_fact_with_context():
     object_facts = [fact["text"] for fact in facts if fact["kind"] == "object"]
 
     assert len(object_facts) == 2
-    assert object_facts[0].startswith("bottle: on counter. Home, kitchen, ")
+    assert object_facts[0].startswith("bottle: on counter. Home, ")
     assert object_facts[0].endswith("Making coffee.")
 
 
@@ -59,3 +57,10 @@ def test_a_passage_stops_before_it_gets_too_long():
     lines = [line(0, 10, forty_words), line(10, 20, forty_words), line(20, 21, "short")]
 
     assert passages(lines) == [[lines[0]], [lines[1], lines[2]]]
+
+
+def test_frames_and_speech_are_split_into_minutes():
+    early, late = frame(1, 5.0), frame(2, 70.0)
+    passage = [line(65, 68, "second minute")]
+
+    assert stretches([early, late], [passage]) == [([early], []), ([late], [passage])]

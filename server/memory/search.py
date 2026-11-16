@@ -1,11 +1,6 @@
-"""Find the facts that best match a question.
+"""Find the facts that best match a question, by meaning and by keyword.
 
     uv run python -m memory.search "what does the sign above the door say"
-
-Two searches run over the facts and their results are combined:
-  by meaning   the question is embedded and compared with every fact's embedding
-  by keyword   the question's words are matched against each fact's text
-A fact that ranks well in both ends up on top. Both can be limited to a stretch of time.
 """
 
 import argparse
@@ -14,13 +9,10 @@ from datetime import datetime
 
 from memory import db, llm
 
-# How many results each of the two searches contributes before they are combined.
 CANDIDATES = 20
 
-# Standard constant for reciprocal rank fusion. Larger values flatten the gap between ranks.
 FUSION_K = 60
 
-# Keeps a search to a stretch of time. A start or end of null means no limit on that side.
 IN_RANGE = """
     (%(start)s::timestamptz is null or at >= %(start)s::timestamptz)
     and (%(end)s::timestamptz is null or at <= %(end)s::timestamptz)
@@ -33,7 +25,6 @@ BY_MEANING = f"""
      limit %(limit)s
 """
 
-# plainto_tsquery joins the words with AND; swapping in OR lets a fact match on any of them.
 BY_KEYWORD = f"""
     with words as (select replace(plainto_tsquery('english', %(text)s)::text, '&', '|')::tsquery as query)
     select id from fact, words
@@ -44,11 +35,7 @@ BY_KEYWORD = f"""
 
 
 def fuse(rankings: list[list], k: int = FUSION_K) -> list[tuple]:
-    """Combine several ranked lists into one, best first, as (item, score).
-
-    Reciprocal rank fusion: an item scores 1 / (k + its position) in each list it appears in, and the scores add
-    up. It only uses positions, so lists scored on different scales (distance, keyword rank) can be combined.
-    """
+    """Combine ranked lists into one by reciprocal rank fusion, best first, as (item, score)."""
     scores: dict = {}
 
     for ranking in rankings:
@@ -65,7 +52,7 @@ def search(
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> list[dict]:
-    """Return the facts that best match a question, best first. start and end keep it to a stretch of time."""
+    """Return the facts that best match a question, best first."""
     vector = llm.embed(conn, [question], "embed-question")[0]
     values = {"vector": vector, "text": question, "limit": CANDIDATES, "start": start, "end": end}
 

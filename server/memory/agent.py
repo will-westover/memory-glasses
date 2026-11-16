@@ -2,14 +2,6 @@
 
     uv run python -m memory.agent "what was I doing in the kitchen?"
     uv run python -m memory.agent "what was I doing in the kitchen?" --plain
-
-There are two ways to answer, and both give an answer, whether it was found, and the facts it rests on:
-  agent   the model calls tools as often as it needs, then answers
-  plain   one search on the question, then one model call (plain RAG, the baseline to compare against)
-
-The agent has two tools:
-  search     finds facts by what they are about, optionally within a stretch of time
-  timeline   lists what happened between two times, in order
 """
 
 import argparse
@@ -26,23 +18,19 @@ from memory.config import AGENT_MODEL
 from memory.places import place_for
 from memory.search import clock, search
 
-# The agent may ask for tools this many times. After that it has to answer with what it has.
 MAX_ROUNDS = 5
 
-# How many facts one search hands the agent, and how many the plain mode gets from its single search.
 SEARCH_RESULTS = 8
 PLAIN_RESULTS = 10
 
-# The most facts one timeline call returns. Longer stretches are thinned out to fit.
 TIMELINE_LIMIT = 60
 
-# How many of the newest recordings are listed in the instructions.
 RECENT_SESSIONS = 20
 
 INSTRUCTIONS = """\
 You answer questions for someone who wears camera glasses. The glasses record what the wearer sees and hears,
 and that record is kept as facts: moments (what was happening), objects and where each one was, text that was
-readable, and speech. Each fact starts with its number in [brackets] and the time it was recorded. "I" and "me"
+readable, speech, and summaries of what happened and what was said. Each fact starts with its number in [brackets] and the time it was recorded. "I" and "me"
 in a question mean the wearer. Speakers are labelled with letters, not names.
 
 Answer only from the facts. Do not guess or add outside knowledge. A search always returns its closest matches,
@@ -139,16 +127,16 @@ def parse_time(text: str | None) -> datetime | None:
     return at if at.tzinfo else at.astimezone()
 
 
-def thin(facts: list[dict], limit: int = TIMELINE_LIMIT) -> list[dict]:
-    """Cut a long timeline down to about `limit` facts by keeping evenly spaced moments and all the speech."""
-    if len(facts) <= limit:
-        return facts
+def fit(facts: list[dict], limit: int = TIMELINE_LIMIT) -> list[dict]:
+    """Return the moments and speech if they fit in `limit`, otherwise the summaries of that stretch."""
+    detail = [fact for fact in facts if fact["kind"] != "summary"]
 
-    moments = [fact for fact in facts if fact["kind"] == "moment"]
-    room = max(limit - (len(facts) - len(moments)), 1)
-    keep = {fact["id"] for fact in moments[:: math.ceil(len(moments) / room)]}
+    if len(detail) <= limit:
+        return detail
 
-    return [fact for fact in facts if fact["kind"] != "moment" or fact["id"] in keep]
+    overview = [fact for fact in facts if fact["kind"] == "summary"] or detail
+
+    return overview[:: math.ceil(len(overview) / limit)]
 
 
 def fact_line(fact: dict) -> str:
@@ -157,7 +145,7 @@ def fact_line(fact: dict) -> str:
 
 
 def run_tool(conn, name: str, arguments: dict, seen: dict) -> str:
-    """Run one tool call and return its result as text. Every fact returned is added to `seen`."""
+    """Run one tool call and return its result as text."""
     try:
         start = parse_time(arguments.get("start"))
         end = parse_time(arguments.get("end"))
@@ -169,11 +157,10 @@ def run_tool(conn, name: str, arguments: dict, seen: dict) -> str:
     if name == "search":
         facts = search(conn, arguments["query"], SEARCH_RESULTS, start, end)
     else:
-        everything = db.timeline(conn, start, end)
-        facts = thin(everything)
+        facts = fit(db.timeline(conn, start, end))
 
-        if len(facts) < len(everything):
-            note = f"Showing {len(facts)} of {len(everything)}. Ask for a shorter stretch to see every moment.\n"
+        if facts and facts[0]["kind"] == "summary":
+            note = "This stretch is long, so it is summarised. Ask for a shorter stretch to see every moment.\n"
 
     seen.update({fact["id"]: fact for fact in facts})
 
@@ -184,7 +171,7 @@ def run_tool(conn, name: str, arguments: dict, seen: dict) -> str:
 
 
 def check_sources(cited: list[int], seen: dict) -> list[dict]:
-    """Return the cited facts, in order and once each, leaving out any number the model was never shown."""
+    """Return the cited facts, once each, leaving out any the model was never shown."""
     return [seen[fact_id] for fact_id in dict.fromkeys(cited) if fact_id in seen]
 
 
@@ -201,7 +188,6 @@ def ask_agent(conn, question: str, model: str = AGENT_MODEL) -> dict:
     previous_id = None
 
     for round_number in range(MAX_ROUNDS + 1):
-        # Each request carries only what is new; previous_response_id links it to the conversation so far.
         response = llm.client().responses.parse(
             model=model,
             instructions=prompt,
@@ -253,8 +239,7 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
 
 
 def finish(answer: Answer, seen: dict, calls: list, usd: float, model_calls: int, started: float) -> dict:
-    """Bundle an answer with its checked sources and what it took to get. usd leaves out the question's
-    embedding, which costs well under a thousandth of a cent."""
+    """Bundle an answer with its checked sources and what it took to get."""
     return {
         "answer": answer.answer,
         "found": answer.found,

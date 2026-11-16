@@ -4,7 +4,7 @@ from memory.ingest.fingerprint import THUMB_BYTES, distance, fingerprint, indexe
 
 
 def test_fingerprint_marks_pixels_brighter_than_their_right_neighbour():
-    falling = bytes(range(9, 0, -1)) * 8  # every pixel is brighter than the one to its right
+    falling = bytes(range(9, 0, -1)) * 8
     rising = bytes(range(1, 10)) * 8
     assert fingerprint(falling) == 2**64 - 1
     assert fingerprint(rising) == 0
@@ -26,7 +26,6 @@ def test_keeps_the_first_frame_and_each_new_scene():
 
 
 def test_slow_change_is_kept_once_it_adds_up():
-    # Each frame differs from the one before by 3 bits, under the limit of 6, but the change accumulates.
     frames = [0b0, 0b111, 0b111111, 0b111111111]
     assert indexes_to_keep(frames, max_distance=6) == [0, 3]
 

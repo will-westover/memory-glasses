@@ -1,11 +1,8 @@
 """Describe each kept frame of a session with a model.
 
-    uv run python -m memory.ingest.captions <session id>            # every frame not captioned yet
-    uv run python -m memory.ingest.captions <session id> --limit 3  # try a few first
-    uv run python -m memory.ingest.captions <session id> --redo     # pay to caption every frame again
-
-For each frame the model returns a summary, the kind of space, every object placed relative to something that
-stays put ("water bottle", "on", "kitchen island"), and any readable text. Each call is logged in api_cost.
+    uv run python -m memory.ingest.captions <session id>
+    uv run python -m memory.ingest.captions <session id> --limit 3
+    uv run python -m memory.ingest.captions <session id> --redo
 """
 
 import argparse
@@ -23,15 +20,8 @@ from memory import db, llm
 from memory.config import CAPTION_MODEL, DATA_DIR
 from memory.ingest.recording import refresh_page
 
-# Frames wider than this are shrunk before upload. Small objects and text need the detail, so it is kept high.
 IMAGE_WIDTH = 1080
 PARALLEL_CALLS = 8
-
-# A fixed list, so the same kind of space always gets the same label.
-Setting = Literal[
-    "kitchen", "bedroom", "bathroom", "living room", "dining room", "office", "classroom", "hallway", "garage",
-    "store", "restaurant", "gym", "vehicle", "outdoors", "other",
-]
 
 Relation = Literal["on", "in", "under", "next to", "above", "in front of", "behind", "hanging on", "held by"]
 
@@ -60,14 +50,13 @@ class SeenText(BaseModel):
 
 
 class Caption(BaseModel):
-    summary: str = Field(description="One or two sentences: what is happening and what stands out")
-    setting: Setting = Field(description="The kind of space this is; 'other' if none fits")
+    summary: str = Field(description="One or two sentences: what is happening, where, and what stands out")
     objects: list[SeenObject] = Field(description="Every separate object visible, up to 20")
     texts: list[SeenText] = Field(description="Each piece of readable text; empty if there is none")
 
 
 def small_jpeg(path: Path) -> bytes:
-    """Return the image as JPEG bytes, shrunk to IMAGE_WIDTH pixels wide if it is wider."""
+    """Return the image as JPEG bytes, at most IMAGE_WIDTH pixels wide."""
     result = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(path), "-vf", f"scale='min({IMAGE_WIDTH},iw)':-2", "-q:v", "3",
          "-f", "image2pipe", "-c:v", "mjpeg", "-"],
@@ -96,7 +85,7 @@ def caption_image(path: Path, model: str = CAPTION_MODEL):
 
 
 def caption_session(conn, session_id: str, limit: int | None = None, model: str = CAPTION_MODEL) -> dict:
-    """Caption the session's frames that have no caption yet. Return totals for the run."""
+    """Caption the session's frames that have no caption yet."""
     frames = db.frames_without_caption(conn, session_id, limit)
     started = time.monotonic()
     totals = {"frames": 0, "failed": 0, "usd": 0.0, "input_tokens": 0, "output_tokens": 0}
@@ -109,7 +98,7 @@ def caption_session(conn, session_id: str, limit: int | None = None, model: str 
 
             try:
                 caption, usage = job.result()
-            except Exception as error:  # one bad frame shouldn't stop the rest
+            except Exception as error:
                 totals["failed"] += 1
                 print(f"  failed {Path(path).name}: {error}", file=sys.stderr)
                 continue
@@ -122,7 +111,7 @@ def caption_session(conn, session_id: str, limit: int | None = None, model: str 
             totals["input_tokens"] += usage.input_tokens
             totals["output_tokens"] += usage.output_tokens
 
-            print(f"  {Path(path).name}  [{caption.setting}]  {caption.summary}")
+            print(f"  {Path(path).name}  {caption.summary}")
 
     totals["seconds"] = time.monotonic() - started
 

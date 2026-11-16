@@ -1,9 +1,7 @@
 """Turn a session's audio into timed lines of text, each labelled with who spoke.
 
     uv run python -m memory.ingest.transcript <session id>
-    uv run python -m memory.ingest.transcript <session id> --redo   # pay to transcribe it again
-
-The call is logged in api_cost. The session's index.html is rewritten to show the transcript.
+    uv run python -m memory.ingest.transcript <session id> --redo
 """
 
 import argparse
@@ -16,7 +14,6 @@ from memory import db, llm
 from memory.config import DATA_DIR, TRANSCRIBE_MODEL
 from memory.ingest.recording import clock, refresh_page
 
-# OpenAI accepts uploads up to 25 MB. At this bitrate that is about an hour of speech.
 UPLOAD_KBPS = 48
 UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024
 
@@ -32,7 +29,7 @@ def small_mp3(path: Path) -> bytes:
 
 
 def transcribe(path: Path, model: str = TRANSCRIBE_MODEL):
-    """Send one audio file to the model. Return (segments, usage); each segment has speaker, start, end, text."""
+    """Transcribe one audio file. Return (segments, usage)."""
     audio = small_mp3(path)
 
     if len(audio) > UPLOAD_LIMIT_BYTES:

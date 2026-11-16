@@ -21,9 +21,10 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 
 1. **Recording to session** (done): a video becomes kept frames, audio and a page showing them.
 2. **Database** (done): sessions and frames stored in Postgres.
-3. **Captions** (done): each frame gets a summary, a setting, objects placed relative to an anchor, and text seen.
+3. **Captions** (done): each frame gets a summary, objects placed relative to an anchor, and text seen.
 4. **Speech-to-text** (done): the audio becomes timed transcript lines.
-5. **Facts and search** (done): captions and speech become facts, and search finds them.
+5. **Facts and search** (done): captions and speech become facts, plus model-written summaries of each
+   minute and of what was said, and search finds them.
 6. **Agent** (done): ask a question, get an answer with its sources. The agent has two tools, search and
    timeline; `--plain` is one search and one call, the baseline the evals compare it with.
 7. **Evals**: a test set scored by the judge, with cost per run.
@@ -43,6 +44,8 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 - Code lives at the top level and everything physical lives in `hardware/`. Fusion's Scripts folder links
   into `hardware/cad/fusion/`, so don't move it.
 - Inside functions, put a blank line between groups of lines that do different jobs.
+- No comments in code. Docstrings are one short line.
+- Avoid fixed lists and hard categories for what the model describes; let it use its own words.
 - Tests only for tricky logic. The evals are the test for anything that calls a model.
 - Git: work on `main`, commit freely, tag `part-N` when a part works. No branches, pull requests or CI.
 

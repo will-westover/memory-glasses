@@ -8,8 +8,6 @@ from openai import OpenAI
 from memory import config
 from memory.config import EMBED_MODEL
 
-# US dollars per 1 million tokens: (input, cached input, output).
-# From https://developers.openai.com/api/docs/pricing on 2026-11-11.
 PRICES = {
     "gpt-6-luna": (0.10, 0.01, 0.50),
     "gpt-6-sol": (2.00, 0.20, 10.00),
@@ -29,7 +27,7 @@ def client() -> OpenAI:
 
 
 def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
-    """Return what a call cost. cached_tokens is the part of input_tokens billed at the cheaper cached rate."""
+    """Return what a call cost in dollars."""
     input_price, cached_price, output_price = PRICES[model]
     fresh_tokens = input_tokens - cached_tokens
 
@@ -37,8 +35,7 @@ def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: i
 
 
 def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: int | None = None) -> float:
-    """Record one model call in api_cost and return its cost in dollars. `usage` is the response's usage."""
-    # Embedding calls name their input count prompt_tokens; every other call names it input_tokens.
+    """Record one model call in api_cost and return its cost in dollars."""
     input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", 0)
     details = getattr(usage, "input_tokens_details", None)
     cached_tokens = getattr(details, "cached_tokens", 0) or 0
@@ -56,7 +53,7 @@ def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: i
 
 
 def embed(conn: psycopg.Connection, texts: list[str], step: str) -> list[str]:
-    """Embed each text and log the cost. Return the vectors as text Postgres can store, e.g. '[0.1,-0.2,...]'."""
+    """Embed each text and return the vectors as text Postgres can store."""
     vectors = []
 
     for start in range(0, len(texts), 500):

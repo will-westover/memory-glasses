@@ -33,7 +33,7 @@ def test_two_scenes_become_two_frames(tmp_path):
     assert manifest["frames_blurry"] == 0
 
     first, second = (frame["offset_seconds"] for frame in manifest["frames"])
-    assert 0 <= first < 2 and 8 <= second < 10  # the sharpest sample within each 2-second slot
+    assert 0 <= first < 2 and 8 <= second < 10
     assert (manifest["lat"], manifest["lon"]) == (40.2518, -111.6493)
 
     on_disk = sorted(path.name for path in (session_dir / "frames").glob("*.jpg"))

@@ -1,10 +1,7 @@
 """Named places: turn coordinates into a name such as "Home".
 
-    uv run python -m memory.places add "Home" 40.2518 -111.6493
-    uv run python -m memory.places add "Library" 40.2488 -111.6494 --radius 120
+    uv run python -m memory.places add "Home" 40.2518 -111.6493 --radius 75
     uv run python -m memory.places list
-
-A session counts as being at a place when its coordinates fall inside the place's radius.
 """
 
 import argparse
@@ -18,7 +15,7 @@ EARTH_RADIUS_M = 6_371_000
 
 
 def parse_location(tag: str | None) -> tuple[float, float] | None:
-    """Read (lat, lon) from the location tag phones write into videos, e.g. '+40.2518-111.6493+1387.000/'."""
+    """Read (lat, lon) from the location tag phones write into videos."""
     match = re.match(r"^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)", tag or "")
 
     if not match:
@@ -28,7 +25,7 @@ def parse_location(tag: str | None) -> tuple[float, float] | None:
 
 
 def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Return the distance in metres between two points on the Earth (haversine formula)."""
+    """Return the distance in metres between two points."""
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     half_dphi = math.radians(lat2 - lat1) / 2
     half_dlambda = math.radians(lon2 - lon1) / 2
@@ -39,10 +36,7 @@ def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def place_for(lat: float | None, lon: float | None, places: list[tuple]) -> str | None:
-    """Return the name of the nearest place whose radius contains the point, or None.
-
-    places is a list of (name, lat, lon, radius in metres).
-    """
+    """Return the name of the nearest place whose radius contains the point."""
     if lat is None or lon is None:
         return None
 
