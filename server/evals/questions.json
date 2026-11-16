@@ -1,0 +1,21 @@
+[
+  {"question": "How many crew quarters are in the module?", "expected": "Four.", "evidence": ["four crew quarters"]},
+  {"question": "What did he compare the size of a crew quarter to?", "expected": "An old telephone box.", "evidence": ["telephone box"]},
+  {"question": "Why is the sleeping bag fixed to the wall?", "expected": "So he doesn't float away or kick anything.", "evidence": ["float away"]},
+  {"question": "What were the two computers used for?", "expected": "One for the schedule, official emails and procedures; the other for internet access, which he tweets from.", "evidence": ["official emails"]},
+  {"question": "What does he use the headset for?", "expected": "Personal calls to the ground, to talk with family and friends after hours and on weekends.", "evidence": ["headset"]},
+  {"question": "What does he watch on the iPad?", "expected": "Movies and news programmes that the ground uplinks.", "evidence": ["iPad"]},
+  {"question": "Where are Sergey and Misha's crew quarters?", "expected": "In the service module.", "evidence": ["service module"]},
+  {"question": "What did the sign above the hatch say?", "expected": "EXIT (a label there also read OVHD).", "evidence": ["\"EXIT\""]},
+  {"question": "Which space agency's name appeared on a patch?", "expected": "JAXA.", "evidence": ["JAXA"]},
+  {"question": "What was the man giving the tour wearing?", "expected": "A black polo shirt.", "evidence": ["black polo"]},
+  {"question": "What happened right after he talked about the telephone box?", "expected": "He said he had slept in that same place on his first long-duration flight four years earlier, then showed how to get in and described the sleeping bag.", "evidence": ["long duration flight", "long-duration flight"]},
+  {"question": "Which did he show first, the computers or the sleeping bag?", "expected": "The sleeping bag.", "evidence": ["sleeping bag"]},
+  {"question": "What was the tour about, overall?", "expected": "The crew quarters of a spacecraft: where he sleeps, and the computers and equipment he uses to work and stay in touch.", "evidence": ["crew quarter"]},
+  {"question": "When he mentioned tweeting, what was he showing?", "expected": "His two computers; he tweets from the one with internet access.", "evidence": ["tweet"]},
+  {"question": "What did the receipt say?", "expected": null},
+  {"question": "Who did I have lunch with?", "expected": null},
+  {"question": "What did he say about the food on board?", "expected": null},
+  {"question": "What is the name of the man who gave the tour?", "expected": null},
+  {"question": "What did I do on Monday morning?", "expected": null}
+]

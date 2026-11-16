@@ -34,6 +34,8 @@ AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-6-luna")
 
 SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gpt-6-luna")
 
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gpt-6-sol")
+
 STRETCH_SECONDS = 60
 
 EMBED_MODEL = "text-embedding-3-small"

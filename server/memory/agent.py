@@ -255,6 +255,7 @@ def finish(answer: Answer | None, seen: dict, calls: list, usd: float, model_cal
         "answer": answer.answer,
         "found": answer.found,
         "sources": check_sources(answer.sources, seen),
+        "shown": list(seen.values()),
         "calls": calls,
         "model_calls": model_calls,
         "usd": usd,
