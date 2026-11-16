@@ -21,7 +21,7 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 
 1. **Recording to session** (done): a video becomes kept frames, audio and a page showing them.
 2. **Database** (done): sessions and frames stored in Postgres.
-3. **Captions** (done): each frame gets a summary, objects placed relative to an anchor, and text seen.
+3. **Captions** (done): each frame gets a summary, objects with where each one is, and text seen.
 4. **Speech-to-text** (done): the audio becomes timed transcript lines.
 5. **Facts and search** (done): captions and speech become facts, plus model-written summaries of each
    minute and of what was said, and search finds them.

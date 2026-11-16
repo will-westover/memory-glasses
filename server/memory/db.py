@@ -114,8 +114,8 @@ def save_caption(conn: psycopg.Connection, frame_id: int, caption) -> None:
 
     with conn.cursor() as cursor:
         cursor.executemany(
-            "insert into frame_object (frame_id, name, relation, anchor) values (%s, %s, %s, %s)",
-            [(frame_id, item.name, item.relation, item.anchor) for item in caption.objects],
+            "insert into frame_object (frame_id, name, location) values (%s, %s, %s)",
+            [(frame_id, item.name, item.location) for item in caption.objects],
         )
 
         cursor.executemany(
@@ -134,7 +134,7 @@ def captioned_frames(conn: psycopg.Connection, session_id: str) -> list[dict]:
     rows = conn.execute(
         "select f.id, f.image_path, f.captured_at, extract(epoch from f.captured_at - s.started_at),"
         "       f.summary,"
-        "       (select coalesce(json_agg(json_build_array(o.name, o.relation, o.anchor)), '[]')"
+        "       (select coalesce(json_agg(json_build_array(o.name, o.location)), '[]')"
         "          from frame_object o where o.frame_id = f.id),"
         "       (select coalesce(json_agg(json_build_array(t.text, t.surface)), '[]')"
         "          from frame_text t where t.frame_id = f.id)"

@@ -131,8 +131,8 @@ def caption_html(caption: dict | None) -> str:
 
     parts = [f'<p>{html.escape(caption["summary"])}</p>']
 
-    for name, relation, anchor in caption["objects"]:
-        parts.append(f'<p class="dim">{html.escape(f"{name}: {relation} {anchor}")}</p>')
+    for name, location in caption["objects"]:
+        parts.append(f'<p class="dim">{html.escape(f"{name}: {location}")}</p>')
 
     for text, surface in caption["texts"]:
         parts.append(f'<p class="dim">Text on {html.escape(surface)}: {html.escape(text)}</p>')

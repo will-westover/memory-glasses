@@ -76,9 +76,9 @@ def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
 
         facts.append({**base, "kind": "moment", "text": f"{frame['summary']} {where_when}."})
 
-        for name, relation, anchor in frame["objects"]:
-            if (name, relation, anchor) not in previous_objects:
-                facts.append({**base, "kind": "object", "text": f"{name}: {relation} {anchor}. {where_when}. {scene}"})
+        for name, location in frame["objects"]:
+            if (name, location) not in previous_objects:
+                facts.append({**base, "kind": "object", "text": f"{name}: {location}. {where_when}. {scene}"})
 
         for text, surface in frame["texts"]:
             if (text, surface) not in previous_texts:

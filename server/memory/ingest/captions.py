@@ -12,7 +12,6 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,25 +22,21 @@ from memory.ingest.recording import refresh_page
 IMAGE_WIDTH = 1080
 PARALLEL_CALLS = 8
 
-Relation = Literal["on", "in", "under", "next to", "above", "in front of", "behind", "hanging on", "held by"]
-
 INSTRUCTIONS = """\
 You are looking at one frame from a camera worn on someone's glasses, so the view is what the wearer sees.
 Describe it thoroughly and accurately. Your description is the only record of this moment, and it will be used
 later to answer any kind of question about what the wearer saw.
 
 Objects: list every separate thing you can see, large or small, including things in the background. Name each
-one as specifically as you can. Skip walls, floors and built-in furniture. Place each object relative to an
-anchor: something nearby that stays put, such as a counter, desk, shelf, bed or door. If the wearer is holding
-it, use "held by" and "the wearer".
+one as specifically as you can. Skip walls, floors and built-in furniture. For each, say where it is in a short
+phrase of your own, in whatever way describes it best.
 
 Report only what is visible. Do not guess the names of people."""
 
 
 class SeenObject(BaseModel):
     name: str = Field(description="A plain noun for the object, lowercase, e.g. 'water bottle'")
-    relation: Relation = Field(description="How the object relates to the anchor")
-    anchor: str = Field(description="What it is on, in or next to, lowercase, e.g. 'kitchen island'")
+    location: str = Field(description="Where it is, as a short lowercase phrase, e.g. 'on the kitchen island'")
 
 
 class SeenText(BaseModel):
