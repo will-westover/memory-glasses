@@ -1,18 +1,16 @@
-"""Find the facts that best match a question, or look up where an object was last seen.
+"""Find the facts that best match a question.
 
-    uv run python -m memory.search "where does he sleep"
-    uv run python -m memory.search --object laptop
+    uv run python -m memory.search "what does the sign above the door say"
 
-For a question, two searches run over the facts and their results are combined:
+Two searches run over the facts and their results are combined:
   by meaning   the question is embedded and compared with every fact's embedding
   by keyword   the question's words are matched against each fact's text
-A fact that ranks well in both ends up on top.
-
-The object lookup uses no embeddings. It reads the objects table, newest sighting first.
+A fact that ranks well in both ends up on top. Both can be limited to a stretch of time.
 """
 
 import argparse
 import sys
+from datetime import datetime
 
 from memory import db, llm
 
@@ -22,26 +20,26 @@ CANDIDATES = 20
 # Standard constant for reciprocal rank fusion. Larger values flatten the gap between ranks.
 FUSION_K = 60
 
-BY_MEANING = """
+# Keeps a search to a stretch of time. A start or end of null means no limit on that side.
+IN_RANGE = """
+    (%(start)s::timestamptz is null or at >= %(start)s::timestamptz)
+    and (%(end)s::timestamptz is null or at <= %(end)s::timestamptz)
+"""
+
+BY_MEANING = f"""
     select id from fact
-     where embedding is not null
+     where embedding is not null and {IN_RANGE}
      order by embedding <=> %(vector)s::vector
      limit %(limit)s
 """
 
 # plainto_tsquery joins the words with AND; swapping in OR lets a fact match on any of them.
-BY_KEYWORD = """
+BY_KEYWORD = f"""
     with words as (select replace(plainto_tsquery('english', %(text)s)::text, '&', '|')::tsquery as query)
     select id from fact, words
-     where text_search @@ words.query
+     where text_search @@ words.query and {IN_RANGE}
      order by ts_rank(text_search, words.query) desc
      limit %(limit)s
-"""
-
-DETAILS = """
-    select fact.id, fact.kind, fact.session_id, fact.offset_seconds, fact.text, frame.image_path
-      from fact left join frame on frame.id = fact.frame_id
-     where fact.id = any(%s)
 """
 
 
@@ -60,28 +58,28 @@ def fuse(rankings: list[list], k: int = FUSION_K) -> list[tuple]:
     return sorted(scores.items(), key=lambda pair: pair[1], reverse=True)
 
 
-def search(conn, question: str, limit: int = 5) -> list[dict]:
-    """Return the facts that best match a question, best first."""
+def search(
+    conn,
+    question: str,
+    limit: int = 5,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[dict]:
+    """Return the facts that best match a question, best first. start and end keep it to a stretch of time."""
     vector = llm.embed(conn, [question], "embed-question")[0]
+    values = {"vector": vector, "text": question, "limit": CANDIDATES, "start": start, "end": end}
 
-    by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING, {"vector": vector, "limit": CANDIDATES})]
-    by_keyword = [fact_id for (fact_id,) in conn.execute(BY_KEYWORD, {"text": question, "limit": CANDIDATES})]
+    by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING, values)]
+    by_keyword = [fact_id for (fact_id,) in conn.execute(BY_KEYWORD, values)]
 
     ranked = fuse([by_meaning, by_keyword])[:limit]
-
-    details = {
-        fact_id: {"kind": kind, "session_id": session_id, "offset_seconds": float(offset), "text": text,
-                  "image_path": image_path}
-        for fact_id, kind, session_id, offset, text, image_path
-        in conn.execute(DETAILS, ([fact_id for fact_id, _ in ranked],))
-    }
+    details = {fact["id"]: fact for fact in db.facts_by_id(conn, [fact_id for fact_id, _ in ranked])}
 
     return [
         {
-            "id": fact_id,
+            **details[fact_id],
             "score": score,
             "matched": [name for name, hits in (("meaning", by_meaning), ("keyword", by_keyword)) if fact_id in hits],
-            **details[fact_id],
         }
         for fact_id, score in ranked
     ]
@@ -93,29 +91,12 @@ def clock(seconds: float) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Search facts, or look up an object.")
-    parser.add_argument("question", nargs="?")
-    parser.add_argument("--object", help="show where an object with this name was last seen")
+    parser = argparse.ArgumentParser(description="Search the facts.")
+    parser.add_argument("question")
     parser.add_argument("--limit", type=int, default=5)
     args = parser.parse_args()
 
-    if not args.question and not args.object:
-        parser.error("give a question, or --object NAME")
-
     with db.connect() as conn:
-        if args.object:
-            sightings = db.last_seen(conn, args.object, args.limit)
-
-            for name, relation, anchor, seen_at, setting, session_id, offset, image_path in sightings:
-                print(f"{name}: {relation} {anchor}  [{setting}]  {seen_at.astimezone():%a %d %b %H:%M:%S}"
-                      f"  session {session_id} at {clock(offset)}")
-                print(f"   {image_path}")
-
-            if not sightings:
-                print(f"No object matching '{args.object}' has been seen.")
-
-            return 0
-
         results = search(conn, args.question, args.limit)
 
     if not results:

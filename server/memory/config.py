@@ -34,6 +34,10 @@ CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gpt-6-sol")
 # Measured at about $0.019 per minute of audio. OpenAI retires this model on 2027-02-26.
 TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-4o-transcribe-diarize")
 
+# Answers questions. It makes several calls per question, so it is the cheap model; the evals will show
+# whether a stronger one is worth the price.
+AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-6-luna")
+
 # Turns text into 1536 numbers so that texts with similar meaning land close together.
 # The vector columns in the database are sized for this model.
 EMBED_MODEL = "text-embedding-3-small"

@@ -239,21 +239,32 @@ def replace_facts(conn: psycopg.Connection, session_id: str, facts: list[dict], 
         )
 
 
-def last_seen(conn: psycopg.Connection, name: str, limit: int = 3) -> list[tuple]:
-    """Return the most recent sightings of an object whose name contains `name`, newest first.
+FACT_COLUMNS = (
+    "select fact.id, fact.kind, fact.at, fact.session_id, fact.offset_seconds, fact.text, frame.image_path"
+    "  from fact left join frame on frame.id = fact.frame_id"
+)
 
-    Each row is (object, relation, anchor, seen at, setting, session id, offset seconds, image path).
-    """
-    return conn.execute(
-        "select o.name, o.relation, o.anchor, f.captured_at, f.setting, f.session_id,"
-        "       extract(epoch from f.captured_at - s.started_at), f.image_path"
-        "  from frame_object o"
-        "  join frame f on f.id = o.frame_id"
-        "  join session s on s.id = f.session_id"
-        " where lower(o.name) like '%%' || lower(%s) || '%%'"
-        " order by f.captured_at desc limit %s",
-        (name, limit),
-    ).fetchall()
+
+def fact_rows(rows) -> list[dict]:
+    return [
+        {"id": fact_id, "kind": kind, "at": at, "session_id": session_id, "offset_seconds": float(offset),
+         "text": text, "image_path": image_path}
+        for fact_id, kind, at, session_id, offset, text, image_path in rows
+    ]
+
+
+def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
+    """Return the facts with these ids, each with when it happened and its frame's image, if it has one."""
+    return fact_rows(conn.execute(f"{FACT_COLUMNS} where fact.id = any(%s)", (fact_ids,)))
+
+
+def timeline(conn: psycopg.Connection, start, end) -> list[dict]:
+    """Return what happened between two times, in order: every moment and every passage of speech."""
+    return fact_rows(conn.execute(
+        f"{FACT_COLUMNS} where fact.kind in ('moment', 'speech') and fact.at between %s and %s"
+        " order by fact.at, fact.id",
+        (start, end),
+    ))
 
 
 # --- Cost ---
