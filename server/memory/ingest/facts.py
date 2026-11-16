@@ -5,7 +5,6 @@
 
 import argparse
 import sys
-from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -35,25 +34,9 @@ class Stretch(BaseModel):
     said: list[str] = Field(description="One entry per passage, in order; empty if nothing was said")
 
 
-def part_of_day(at: datetime) -> str:
-    """Return the weekday and part of the day in local time, e.g. 'Tuesday evening'."""
-    local = at.astimezone()
-
-    if 5 <= local.hour < 12:
-        part = "morning"
-    elif 12 <= local.hour < 17:
-        part = "afternoon"
-    elif 17 <= local.hour < 22:
-        part = "evening"
-    else:
-        part = "night"
-
-    return f"{local:%A} {part}"
-
-
-def context(at: datetime, place: str | None) -> str:
-    """Return where and when as a short phrase, e.g. 'Home, Tuesday evening'."""
-    return ", ".join(part for part in (place, part_of_day(at)) if part)
+def at_place(place: str | None) -> str:
+    """Return ' At Home.' for a named place, or nothing."""
+    return f" At {place}." if place else ""
 
 
 def first_sentence(text: str) -> str:
@@ -70,19 +53,19 @@ def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
     previous_texts: set = set()
 
     for frame in frames:
-        where_when = context(frame["at"], place)
+        where = at_place(place)
         scene = first_sentence(frame["summary"])
         base = {"frame_id": frame["id"], "at": frame["at"], "offset_seconds": frame["offset_seconds"]}
 
-        facts.append({**base, "kind": "moment", "text": f"{frame['summary']} {where_when}."})
+        facts.append({**base, "kind": "moment", "text": f"{frame['summary']}{where}"})
 
         for name, location in frame["objects"]:
             if (name, location) not in previous_objects:
-                facts.append({**base, "kind": "object", "text": f"{name}: {location}. {where_when}. {scene}"})
+                facts.append({**base, "kind": "object", "text": f"{name}: {location}.{where} {scene}"})
 
         for text, surface in frame["texts"]:
             if (text, surface) not in previous_texts:
-                facts.append({**base, "kind": "text", "text": f'Text on {surface}: "{text}". {where_when}. {scene}'})
+                facts.append({**base, "kind": "text", "text": f'Text on {surface}: "{text}".{where} {scene}'})
 
         previous_objects = set(frame["objects"])
         previous_texts = set(frame["texts"])
@@ -123,7 +106,7 @@ def speech_fact(passage: list[dict], place: str | None, kind: str, text: str) ->
         "at": first["at"],
         "offset_seconds": first["start"],
         "kind": kind,
-        "text": f"{context(first['at'], place)}. {text}",
+        "text": f"{text}{at_place(place)}",
     }
 
 
@@ -173,7 +156,7 @@ def summary_facts(conn, frames: list[dict], groups: list[list[dict]], place: str
             "at": at,
             "offset_seconds": offset,
             "kind": "summary",
-            "text": f"{context(at, place)}. {stretch.happened}",
+            "text": f"{stretch.happened}{at_place(place)}",
         })
 
         for passage, said in zip(stretch_groups, stretch.said):

@@ -16,7 +16,7 @@ from pathlib import Path
 import psycopg
 
 from memory import db
-from memory.config import DATA_DIR
+from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
 from memory.places import parse_location
 from memory.ingest.fingerprint import (
@@ -28,7 +28,7 @@ from memory.ingest.fingerprint import (
     indexes_to_keep,
 )
 
-DEFAULT_SECONDS_PER_FRAME = 2.0
+MAX_FRAMES_PER_MINUTE = 60
 
 
 class IngestError(Exception):
@@ -45,25 +45,38 @@ def run(command: list[str], cwd: Path | None = None) -> bytes:
     return result.stdout
 
 
-def probe(video: Path) -> tuple[datetime, float, bool, tuple[float, float] | None]:
-    """Return the recording's start time, length, whether it has sound, and location."""
-    info = json.loads(
-        run(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(video)])
-    )
-    duration = float(info["format"].get("duration", 0))
-    has_audio = any(stream["codec_type"] == "audio" for stream in info["streams"])
+def video_info(video: Path) -> dict:
+    """Return what ffprobe reports about a video."""
+    return json.loads(run(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(video)]))
 
+
+def duration(info: dict) -> float:
+    """Return the video's length in seconds."""
+    return float(info["format"].get("duration", 0))
+
+
+def has_sound(info: dict) -> bool:
+    """Return whether the video has an audio track."""
+    return any(stream["codec_type"] == "audio" for stream in info["streams"])
+
+
+def location(info: dict) -> tuple[float, float] | None:
+    """Return (lat, lon) if the video says where it was recorded."""
     tags = info["format"].get("tags", {})
-    location = parse_location(tags.get("com.apple.quicktime.location.ISO6709") or tags.get("location"))
 
-    created = tags.get("creation_time")
+    return parse_location(tags.get("com.apple.quicktime.location.ISO6709") or tags.get("location"))
+
+
+def start_time(info: dict, video: Path) -> datetime:
+    """Return when the recording started, from its creation tag or the file's date."""
+    created = info["format"].get("tags", {}).get("creation_time")
+
     if created:
-        started = datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone()
-    else:
-        ended = datetime.fromtimestamp(video.stat().st_mtime).astimezone()
-        started = ended - timedelta(seconds=duration)
+        return datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone()
 
-    return started, duration, has_audio, location
+    ended = datetime.fromtimestamp(video.stat().st_mtime).astimezone()
+
+    return ended - timedelta(seconds=duration(info))
 
 
 EDGES = "convolution='" + ":".join(["0 -1 0 -1 4 -1 0 -1 0"] * 4) + "'"
@@ -180,8 +193,8 @@ def write_page(
 </style>
 <h1>Session {html.escape(manifest["id"])}</h1>
 <p>From {html.escape(manifest["video"])}, {clock(manifest["duration_seconds"])} long.
-Kept {manifest["frames_kept"]} of {manifest["frames_sampled"]} frames, one for every
-{manifest["seconds_per_frame"]:g} seconds. {manifest.get("frames_blurry", 0)} were too blurry and the rest
+Kept {manifest["frames_kept"]} of {manifest["frames_sampled"]} frames, sampled at
+{manifest["frames_per_minute"]:g} a minute. {manifest.get("frames_blurry", 0)} were too blurry and the rest
 looked the same as the frame before.</p>
 {audio}
 <div class="spoken">
@@ -207,7 +220,7 @@ def refresh_page(conn, session_dir: Path) -> None:
 def ingest(
     video: Path,
     data_dir: Path = DATA_DIR,
-    seconds_per_frame: float = DEFAULT_SECONDS_PER_FRAME,
+    frames_per_minute: float = FRAMES_PER_MINUTE,
     max_distance: int = DEFAULT_MAX_DISTANCE,
     max_blur: float = DEFAULT_MAX_BLUR,
     replace: bool = False,
@@ -216,7 +229,12 @@ def ingest(
     if not video.is_file():
         raise IngestError(f"no such file: {video}")
 
-    started, duration, has_audio, location = probe(video)
+    if not 0 <= frames_per_minute <= MAX_FRAMES_PER_MINUTE:
+        raise IngestError(f"frames per minute must be between 0 and {MAX_FRAMES_PER_MINUTE}")
+
+    info = video_info(video)
+    started = start_time(info, video)
+    place = location(info)
     session_id = started.strftime("%Y-%m-%dT%H-%M-%S")
     session_dir = data_dir / "sessions" / session_id
     if session_dir.exists():
@@ -225,7 +243,13 @@ def ingest(
         shutil.rmtree(session_dir)
 
     frames_dir = session_dir / "frames"
-    fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame)
+    seconds_per_frame = 60 / frames_per_minute if frames_per_minute else 0.0
+
+    if frames_per_minute:
+        fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame)
+    else:
+        frames_dir.mkdir(parents=True)
+        fingerprints, blur = [], []
 
     slots = sharpest_per_slot(blur, CANDIDATES_PER_SLOT, max_blur)
     sharp = [index for index in slots if index is not None]
@@ -247,7 +271,7 @@ def ingest(
             "blur": round(blur[index], 3),
         })
 
-    if has_audio:
+    if has_sound(info):
         extract_audio(video, session_dir / "audio.wav")
 
     manifest = {
@@ -255,14 +279,14 @@ def ingest(
         "source": "recording",
         "video": video.name,
         "started_at": started.isoformat(),
-        "duration_seconds": duration,
-        "lat": location[0] if location else None,
-        "lon": location[1] if location else None,
-        "seconds_per_frame": seconds_per_frame,
+        "duration_seconds": duration(info),
+        "lat": place[0] if place else None,
+        "lon": place[1] if place else None,
+        "frames_per_minute": frames_per_minute,
         "frames_sampled": len(slots),
         "frames_blurry": len(slots) - len(sharp),
         "frames_kept": len(frames),
-        "audio": "audio.wav" if has_audio else None,
+        "audio": "audio.wav" if has_sound(info) else None,
         "frames": frames,
     }
 
@@ -275,7 +299,10 @@ def ingest(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Turn a recorded video into a session folder.")
     parser.add_argument("video", type=Path)
-    parser.add_argument("--seconds-per-frame", type=float, default=DEFAULT_SECONDS_PER_FRAME)
+    parser.add_argument(
+        "--frames-per-minute", type=float, default=FRAMES_PER_MINUTE,
+        help=f"how many pictures to take each minute, 0 to {MAX_FRAMES_PER_MINUTE}; 0 keeps sound only",
+    )
     parser.add_argument(
         "--max-distance", type=int, default=DEFAULT_MAX_DISTANCE,
         help="frames differing in this many fingerprint bits or fewer are dropped (0 to 64)",
@@ -290,7 +317,7 @@ def main() -> int:
     try:
         session_dir = ingest(
             args.video,
-            seconds_per_frame=args.seconds_per_frame,
+            frames_per_minute=args.frames_per_minute,
             max_distance=args.max_distance,
             max_blur=args.max_blur,
             replace=args.replace,

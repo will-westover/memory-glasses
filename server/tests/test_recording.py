@@ -6,7 +6,7 @@ from memory.ingest.recording import ingest
 
 
 def make_video(path: Path) -> None:
-    """Make a 16-second test video with sound: 8 seconds of colour bars, then 8 seconds of a different pattern."""
+    """Make a 16-second test video with sound and two different scenes."""
     subprocess.run(
         [
             "ffmpeg", "-v", "error",

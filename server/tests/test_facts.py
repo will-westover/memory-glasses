@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from memory.ingest.facts import context, frame_facts, passages, stretches
+from memory.ingest.facts import frame_facts, passages, stretches
 
 ZONE = timezone(timedelta(hours=-7))
 EVENING = datetime(2026, 11, 10, 19, 54, tzinfo=ZONE)
@@ -13,12 +13,6 @@ def line(start, end, text, speaker="A"):
 def frame(frame_id, offset, objects=(), texts=()):
     return {"id": frame_id, "at": EVENING, "offset_seconds": offset, "summary": "Making coffee. Steam rises.",
             "objects": list(objects), "texts": list(texts)}
-
-
-def test_context_leaves_out_what_is_unknown():
-    weekday_part = context(EVENING, None)
-
-    assert context(EVENING, "Home") == f"Home, {weekday_part}"
 
 
 def test_short_lines_are_joined_into_one_passage():
@@ -39,8 +33,7 @@ def test_each_object_becomes_its_own_fact_with_context():
     object_facts = [fact["text"] for fact in facts if fact["kind"] == "object"]
 
     assert len(object_facts) == 2
-    assert object_facts[0].startswith("bottle: on counter. Home, ")
-    assert object_facts[0].endswith("Making coffee.")
+    assert object_facts[0] == "bottle: on counter. At Home. Making coffee."
 
 
 def test_an_object_that_stays_put_is_not_repeated():
