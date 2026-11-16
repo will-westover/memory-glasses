@@ -55,7 +55,9 @@ PLAIN_NOTES = """
 
 You are given the facts that one search found for the question. You cannot search again."""
 
-ISO_TIME = "ISO 8601, e.g. 2026-11-11T19:54:00"
+LONG_STRETCH = "This stretch is long, so it is summarised. Ask for a shorter stretch to see every moment."
+
+ISO_TIME ="ISO 8601, e.g. 2026-11-11T19:54:00"
 
 TOOLS = [
     {
@@ -144,30 +146,38 @@ def fact_line(fact: dict) -> str:
     return f"[{fact['id']}] {fact['at'].astimezone():%a %d %b %Y %H:%M:%S}  {fact['kind']}: {fact['text']}"
 
 
-def run_tool(conn, name: str, arguments: dict, seen: dict) -> str:
-    """Run one tool call and return its result as text."""
-    try:
-        start = parse_time(arguments.get("start"))
-        end = parse_time(arguments.get("end"))
-    except ValueError:
-        return f"error: start and end must be {ISO_TIME}"
-
-    note = ""
-
-    if name == "search":
-        facts = search(conn, arguments["query"], SEARCH_RESULTS, start, end)
-    else:
-        facts = fit(db.timeline(conn, start, end))
-
-        if facts and facts[0]["kind"] == "summary":
-            note = "This stretch is long, so it is summarised. Ask for a shorter stretch to see every moment.\n"
-
-    seen.update({fact["id"]: fact for fact in facts})
-
+def fact_lines(facts: list[dict]) -> str:
+    """Return facts as the text the model reads."""
     if not facts:
         return "Nothing was recorded that matches."
 
-    return note + "\n".join(fact_line(fact) for fact in facts)
+    return "\n".join(fact_line(fact) for fact in facts)
+
+
+def find_facts(conn, name: str, arguments: dict) -> list[dict]:
+    """Return the facts one tool call asks for."""
+    start = parse_time(arguments.get("start"))
+    end = parse_time(arguments.get("end"))
+
+    if name == "search":
+        return search(conn, arguments["query"], SEARCH_RESULTS, start, end)
+
+    return fit(db.timeline(conn, start, end))
+
+
+def run_tool(conn, name: str, arguments: dict, seen: dict) -> str:
+    """Run one tool call, remember the facts it returned, and return them as text."""
+    try:
+        facts = find_facts(conn, name, arguments)
+    except ValueError:
+        return f"error: start and end must be {ISO_TIME}"
+
+    seen.update({fact["id"]: fact for fact in facts})
+
+    if name == "timeline" and facts and facts[0]["kind"] == "summary":
+        return f"{LONG_STRETCH}\n{fact_lines(facts)}"
+
+    return fact_lines(facts)
 
 
 def check_sources(cited: list[int], seen: dict) -> list[dict]:
@@ -224,12 +234,11 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
 
     facts = search(conn, question, PLAIN_RESULTS)
     seen = {fact["id"]: fact for fact in facts}
-    listing = "\n".join(fact_line(fact) for fact in facts) or "Nothing was recorded that matches."
 
     response = llm.client().responses.parse(
         model=model,
         instructions=instructions(conn, PLAIN_NOTES),
-        input=f"Question: {question}\n\nFacts:\n{listing}",
+        input=f"Question: {question}\n\nFacts:\n{fact_lines(facts)}",
         text_format=Answer,
         reasoning={"effort": "low"},
     )
@@ -251,6 +260,36 @@ def finish(answer: Answer, seen: dict, calls: list, usd: float, model_calls: int
     }
 
 
+def print_sources(sources: list[dict]) -> None:
+    if sources:
+        print("\nSources:")
+
+    for fact in sources:
+        print(f"  [{fact['id']}] {fact['at'].astimezone():%a %d %b %H:%M:%S}, {clock(fact['offset_seconds'])} into"
+              f" {fact['session_id']}\n      {fact['text']}")
+
+        if fact["image_path"]:
+            print(f"      {fact['image_path']}")
+
+
+def print_calls(calls: list[tuple]) -> None:
+    if calls:
+        print("\nTool calls:")
+
+    for name, arguments in calls:
+        given = ", ".join(f"{key}={value!r}" for key, value in arguments.items() if value is not None)
+        print(f"  {name}({given})")
+
+
+def print_result(result: dict) -> None:
+    print(result["answer"] if result["found"] else f"(not found) {result['answer']}")
+
+    print_sources(result["sources"])
+    print_calls(result["calls"])
+
+    print(f"\n{result['model_calls']} model calls, {result['seconds']:.1f} s, ${result['usd']:.5f}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Answer a question from what the glasses recorded.")
     parser.add_argument("question")
@@ -261,26 +300,7 @@ def main() -> int:
     with db.connect() as conn:
         result = (ask_plain if args.plain else ask_agent)(conn, args.question, args.model)
 
-    print(result["answer"] if result["found"] else f"(not found) {result['answer']}")
-
-    if result["sources"]:
-        print("\nSources:")
-
-    for fact in result["sources"]:
-        print(f"  [{fact['id']}] {fact['at'].astimezone():%a %d %b %H:%M:%S}, {clock(fact['offset_seconds'])} into"
-              f" {fact['session_id']}\n      {fact['text']}")
-
-        if fact["image_path"]:
-            print(f"      {fact['image_path']}")
-
-    if result["calls"]:
-        print("\nTool calls:")
-
-    for name, arguments in result["calls"]:
-        given = ", ".join(f"{key}={value!r}" for key, value in arguments.items() if value is not None)
-        print(f"  {name}({given})")
-
-    print(f"\n{result['model_calls']} model calls, {result['seconds']:.1f} s, ${result['usd']:.5f}")
+    print_result(result)
 
     return 0
 

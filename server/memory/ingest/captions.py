@@ -79,8 +79,19 @@ def caption_image(path: Path, model: str = CAPTION_MODEL):
     return response.output_parsed, response.usage
 
 
+def save_result(conn, totals: dict, frame_id: int, caption: Caption, usage, model: str) -> None:
+    """Store one frame's caption and its cost, and add it to the run's totals."""
+    with conn.transaction():
+        db.save_caption(conn, frame_id, caption)
+        totals["usd"] += llm.log_cost(conn, "caption", model, usage, frame_id)
+
+    totals["frames"] += 1
+    totals["input_tokens"] += usage.input_tokens
+    totals["output_tokens"] += usage.output_tokens
+
+
 def caption_session(conn, session_id: str, limit: int | None = None, model: str = CAPTION_MODEL) -> dict:
-    """Caption the session's frames that have no caption yet."""
+    """Caption the session's frames that have no caption yet, several at a time."""
     frames = db.frames_without_caption(conn, session_id, limit)
     started = time.monotonic()
     totals = {"frames": 0, "failed": 0, "usd": 0.0, "input_tokens": 0, "output_tokens": 0}
@@ -98,14 +109,7 @@ def caption_session(conn, session_id: str, limit: int | None = None, model: str 
                 print(f"  failed {Path(path).name}: {error}", file=sys.stderr)
                 continue
 
-            with conn.transaction():
-                db.save_caption(conn, frame_id, caption)
-                totals["usd"] += llm.log_cost(conn, "caption", model, usage, frame_id)
-
-            totals["frames"] += 1
-            totals["input_tokens"] += usage.input_tokens
-            totals["output_tokens"] += usage.output_tokens
-
+            save_result(conn, totals, frame_id, caption, usage, model)
             print(f"  {Path(path).name}  {caption.summary}")
 
     totals["seconds"] = time.monotonic() - started
@@ -113,15 +117,34 @@ def caption_session(conn, session_id: str, limit: int | None = None, model: str 
     return totals
 
 
-def main() -> int:
+def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Caption a session's frames.")
     parser.add_argument("session_id")
     parser.add_argument("--limit", type=int, help="caption at most this many frames")
     parser.add_argument("--redo", action="store_true", help="pay to caption every frame again")
     parser.add_argument("--model", default=CAPTION_MODEL)
-    args = parser.parse_args()
 
+    return parser.parse_args()
+
+
+def print_report(totals: dict, remaining: int, model: str, session_dir: Path) -> None:
+    print(f"\nCaptioned {totals['frames']} frames in {totals['seconds']:.0f} s with {model}.")
+
+    if totals["frames"]:
+        print(f"Tokens: {totals['input_tokens']:,} in, {totals['output_tokens']:,} out.")
+        print(f"Cost: ${totals['usd']:.4f} (${totals['usd'] / totals['frames']:.5f} per frame).")
+
+    if totals["failed"]:
+        print(f"{totals['failed']} failed; run again to retry them.")
+
+    print(f"{remaining} frames still without a caption.")
+    print(f"Look at: {session_dir / 'index.html'}")
+
+
+def main() -> int:
+    args = parse_arguments()
     session_dir = DATA_DIR / "sessions" / args.session_id
+
     if not (session_dir / "manifest.json").exists():
         print(f"error: no session at {session_dir}", file=sys.stderr)
         return 1
@@ -136,14 +159,7 @@ def main() -> int:
 
         remaining = len(db.frames_without_caption(conn, args.session_id))
 
-    print(f"\nCaptioned {totals['frames']} frames in {totals['seconds']:.0f} s with {args.model}.")
-    if totals["frames"]:
-        print(f"Tokens: {totals['input_tokens']:,} in, {totals['output_tokens']:,} out.")
-        print(f"Cost: ${totals['usd']:.4f} (${totals['usd'] / totals['frames']:.5f} per frame).")
-    if totals["failed"]:
-        print(f"{totals['failed']} failed; run again to retry them.")
-    print(f"{remaining} frames still without a caption.")
-    print(f"Look at: {session_dir / 'index.html'}")
+    print_report(totals, remaining, args.model, session_dir)
 
     return 0
 

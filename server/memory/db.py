@@ -261,6 +261,17 @@ def step_cost(conn: psycopg.Connection, step: str) -> float:
     return float(usd)
 
 
+def print_sessions(rows: list[tuple]) -> None:
+    print(f"{'session':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
+
+    for session_id, source, _, duration, frames, has_sound in rows:
+        length = f"{int(duration) // 60}:{int(duration) % 60:02d}"
+        print(f"{session_id:<21} {source:<10} {length:>7} {frames:>7}  {'yes' if has_sound else 'no'}")
+
+    if not rows:
+        print("(no sessions yet)")
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "list"
 
@@ -276,15 +287,7 @@ def main() -> int:
             count = save_session(conn, Path(sys.argv[2]))
             print(f"Saved {count} frames.")
         elif command == "list":
-            rows = list_sessions(conn)
-
-            print(f"{'session':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
-            for session_id, source, _, duration, frames, has_sound in rows:
-                length = f"{int(duration) // 60}:{int(duration) % 60:02d}"
-                print(f"{session_id:<21} {source:<10} {length:>7} {frames:>7}  {'yes' if has_sound else 'no'}")
-
-            if not rows:
-                print("(no sessions yet)")
+            print_sessions(list_sessions(conn))
         else:
             print(__doc__, file=sys.stderr)
             return 1

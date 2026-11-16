@@ -45,6 +45,17 @@ def transcribe(path: Path, model: str = TRANSCRIBE_MODEL):
     return response.segments, response.usage
 
 
+def print_report(lines: list[tuple], seconds: float, usage, usd: float, session_dir: Path) -> None:
+    for offset, speaker, text in lines:
+        print(f"  {clock(offset):>5}  {speaker or '?'}: {text}")
+
+    speakers = {speaker for _, speaker, _ in lines}
+
+    print(f"\n{len(lines)} lines from {len(speakers)} speakers in {seconds:.0f} s with {TRANSCRIBE_MODEL}.")
+    print(f"Tokens: {usage.input_tokens:,} in, {usage.output_tokens:,} out. Cost: ${usd:.4f}.")
+    print(f"Look at: {session_dir / 'index.html'}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Transcribe a session's audio.")
     parser.add_argument("session_id")
@@ -74,13 +85,7 @@ def main() -> int:
         lines = db.transcript(conn, args.session_id)
         refresh_page(conn, session_dir)
 
-    for offset, speaker, text in lines:
-        print(f"  {clock(offset):>5}  {speaker or '?'}: {text}")
-
-    speakers = {speaker for _, speaker, _ in lines}
-    print(f"\n{len(lines)} lines from {len(speakers)} speakers in {seconds:.0f} s with {TRANSCRIBE_MODEL}.")
-    print(f"Tokens: {usage.input_tokens:,} in, {usage.output_tokens:,} out. Cost: ${usd:.4f}.")
-    print(f"Look at: {session_dir / 'index.html'}")
+    print_report(lines, seconds, usage, usd, session_dir)
 
     return 0
 

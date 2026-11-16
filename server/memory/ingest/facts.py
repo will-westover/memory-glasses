@@ -140,6 +140,21 @@ def summarise(conn, frames: list[dict], groups: list[list[dict]]) -> Stretch:
     return response.output_parsed
 
 
+def summary_fact(frames: list[dict], groups: list[list[dict]], place: str | None, happened: str) -> dict:
+    """Return a summary fact placed at the earliest frame or passage of a stretch."""
+    starts = [(frame["offset_seconds"], frame["at"]) for frame in frames]
+    starts += [(passage[0]["start"], passage[0]["at"]) for passage in groups]
+    offset, at = min(starts)
+
+    return {
+        "frame_id": None,
+        "at": at,
+        "offset_seconds": offset,
+        "kind": "summary",
+        "text": f"{happened}{at_place(place)}",
+    }
+
+
 def summary_facts(conn, frames: list[dict], groups: list[list[dict]], place: str | None) -> list[dict]:
     """Return a summary fact for each stretch and a 'said' fact for each passage in it."""
     facts = []
@@ -147,22 +162,20 @@ def summary_facts(conn, frames: list[dict], groups: list[list[dict]], place: str
     for stretch_frames, stretch_groups in stretches(frames, groups):
         stretch = summarise(conn, stretch_frames, stretch_groups)
 
-        starts = [(frame["offset_seconds"], frame["at"]) for frame in stretch_frames]
-        starts += [(passage[0]["start"], passage[0]["at"]) for passage in stretch_groups]
-        offset, at = min(starts)
-
-        facts.append({
-            "frame_id": None,
-            "at": at,
-            "offset_seconds": offset,
-            "kind": "summary",
-            "text": f"{stretch.happened}{at_place(place)}",
-        })
-
-        for passage, said in zip(stretch_groups, stretch.said):
-            facts.append(speech_fact(passage, place, "said", said))
+        facts.append(summary_fact(stretch_frames, stretch_groups, place, stretch.happened))
+        facts += [speech_fact(passage, place, "said", said) for passage, said in zip(stretch_groups, stretch.said)]
 
     return facts
+
+
+def count_kinds(facts: list[dict]) -> dict[str, int]:
+    """Return how many facts there are of each kind."""
+    counts: dict[str, int] = {}
+
+    for fact in facts:
+        counts[fact["kind"]] = counts.get(fact["kind"], 0) + 1
+
+    return counts
 
 
 def build_facts(conn, session_id: str) -> dict[str, int]:
@@ -182,11 +195,7 @@ def build_facts(conn, session_id: str) -> dict[str, int]:
     with conn.transaction():
         db.replace_facts(conn, session_id, facts, vectors)
 
-    counts: dict[str, int] = {}
-    for fact in facts:
-        counts[fact["kind"]] = counts.get(fact["kind"], 0) + 1
-
-    return counts
+    return count_kinds(facts)
 
 
 def main() -> int:

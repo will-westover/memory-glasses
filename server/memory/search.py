@@ -77,6 +77,16 @@ def clock(seconds: float) -> str:
     return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
 
 
+def print_results(results: list[dict]) -> None:
+    for position, result in enumerate(results, start=1):
+        matched = " + ".join(result["matched"])
+
+        print(f"{position}. {result['kind']:<6} {clock(result['offset_seconds']):>5}  [{matched}]  {result['text']}")
+
+        if result["image_path"]:
+            print(f"   {result['image_path']}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Search the facts.")
     parser.add_argument("question")
@@ -90,13 +100,7 @@ def main() -> int:
         print("Nothing to search yet. Run the captions, transcript and facts steps first.")
         return 0
 
-    for position, result in enumerate(results, start=1):
-        matched = " + ".join(result["matched"])
-
-        print(f"{position}. {result['kind']:<6} {clock(result['offset_seconds']):>5}  [{matched}]  {result['text']}")
-
-        if result["image_path"]:
-            print(f"   {result['image_path']}")
+    print_results(results)
 
     return 0
 
