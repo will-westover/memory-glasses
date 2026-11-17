@@ -214,7 +214,7 @@ def save_upload(upload: UploadFile, target) -> None:
         shutil.copyfileobj(upload.file, out, length=1024 * 1024)
 
 
-def run_upload(upload_id, video, extras: dict, frames_per_minute: float, room_id: int | None = None) -> None:
+def run_upload(upload_id, video, extras: dict, frames_per_minute: float, room_id: int | None, source: str) -> None:
     """Process an uploaded recording, keeping its status up to date."""
     with db.connect() as conn:
         def step(name: str) -> None:
@@ -222,7 +222,8 @@ def run_upload(upload_id, video, extras: dict, frames_per_minute: float, room_id
             conn.commit()
 
         try:
-            moment_id = pipeline.process(video, frames_per_minute, extras, room_id=room_id, on_step=step)
+            moment_id = pipeline.process(video, frames_per_minute, extras, room_id=room_id, source=source,
+                                         on_step=step)
             db.update_upload(conn, upload_id, status="ready", step=None, moment_id=moment_id)
             shutil.rmtree(video.parent, ignore_errors=True)
         except Exception as error:
@@ -239,6 +240,7 @@ def upload_moment(
     mesh: UploadFile | None = File(None),
     world_map: UploadFile | None = File(None),
     room_id: int | None = Form(None),
+    source: str = Form("iphone", pattern="^(iphone|glasses|video)$"),
     conn: psycopg.Connection = Depends(connection),
 ) -> dict:
     """Receive a recording and its extra files, and process it in the background."""
@@ -258,7 +260,7 @@ def upload_moment(
             extras[EXTRA_FILES[field]] = folder / EXTRA_FILES[field]
             save_upload(upload, extras[EXTRA_FILES[field]])
 
-    tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute, room_id)
+    tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute, room_id, source)
 
     return {"id": upload_id, "status": "processing"}
 
@@ -385,6 +387,14 @@ def moment_mesh(moment_id: str) -> FileResponse:
     return FileResponse(mesh, media_type="model/obj")
 
 
+def check_higher(moment_id: str, frames_per_minute: float) -> None:
+    """Refuse a rate that isn't higher than the moment's current one: frames already paid for are kept."""
+    current = manifest_of(moment_id).get("frames_per_minute") or 0
+
+    if not current < frames_per_minute <= MAX_FRAMES_PER_MINUTE:
+        raise HTTPException(422, f"choose more than {current:g} and at most {MAX_FRAMES_PER_MINUTE} frames a minute")
+
+
 @app.get("/moments/{moment_id}/reprocess-estimate")
 def reprocess_estimate(moment_id: str, frames_per_minute: float,
                        conn: psycopg.Connection = Depends(connection)) -> dict:
@@ -394,8 +404,7 @@ def reprocess_estimate(moment_id: str, frames_per_minute: float,
     if path is None:
         raise HTTPException(404, "this moment's video wasn't kept, so it can't be reprocessed")
 
-    if not 1 <= frames_per_minute <= MAX_FRAMES_PER_MINUTE:
-        raise HTTPException(422, f"frames per minute must be between 1 and {MAX_FRAMES_PER_MINUTE}")
+    check_higher(moment_id, frames_per_minute)
 
     planned = planned_frames(path, frames_per_minute, kept_frames(MOMENTS_DIR / moment_id))
     new = sum(1 for frame in planned if not frame["reused"])
@@ -411,6 +420,7 @@ def reprocess(moment_id: str, body: Rate, tasks: BackgroundTasks,
     if video_path(moment_id) is None:
         raise HTTPException(404, "this moment's video wasn't kept, so it can't be reprocessed")
 
+    check_higher(moment_id, body.frames_per_minute)
     upload_id = db.new_upload(conn, body.frames_per_minute)
     db.update_upload(conn, upload_id, moment_id=moment_id, step="Waiting")
     conn.commit()

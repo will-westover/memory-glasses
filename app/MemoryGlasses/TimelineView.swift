@@ -96,8 +96,15 @@ struct MomentRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(moment.startedAt.formatted(date: .omitted, time: .shortened))
-                    .font(.body.weight(.medium))
+                HStack(spacing: 6) {
+                    Text(moment.startedAt.formatted(date: .omitted, time: .shortened))
+                        .font(.body.weight(.medium))
+
+                    Image(systemName: sourceIcon(moment.source).symbol)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(sourceIcon(moment.source).label)
+                }
 
                 Text(details)
                     .font(.subheadline)

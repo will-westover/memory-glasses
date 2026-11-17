@@ -16,44 +16,47 @@ struct RateControl: View {
     let current: Double
     let finished: () async -> Void
 
-    @State private var rate = 30.0
+    @State private var rate = 60.0
     @State private var estimate: ReprocessEstimate?
     @State private var checking = false
     @State private var working: String?
     @State private var problem: String?
 
+    private var canAdd: Bool { current < 60 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionTitle("Frames per minute")
 
-            HStack {
-                Text("\(Int(rate)) a minute")
-                    .font(.subheadline.weight(.medium))
+            Text("\(Int(current)) a minute")
+                .font(.subheadline.weight(.medium))
 
-                if Int(rate) == Int(current) {
-                    Text("current")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Slider(value: $rate, in: 1...60, step: 1) { editing in
-                if !editing { Task { await check() } }
-            }
-            .disabled(working != nil)
-
-            if let working {
+            if !canAdd {
+                Text("This moment already has the most frames.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if let working {
                 Label(working, systemImage: "hourglass")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-            } else if checking {
-                ProgressView()
-            } else if let estimate, Int(rate) != Int(current) {
-                Text(summary(estimate))
+            } else {
+                Text("Add more frames to look closer. Frames already described are kept, so a moment can only go up.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
-                Button("Reprocess at \(Int(rate)) a minute") { Task { await reprocess() } }
+                Slider(value: $rate, in: (current + 1)...60, step: 1) { editing in
+                    if !editing { Task { await check() } }
+                }
+
+                if checking {
+                    ProgressView()
+                } else if let estimate {
+                    Text(summary(estimate))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button("Add frames: \(Int(rate)) a minute") { Task { await reprocess() } }
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.capsule)
             }
@@ -64,23 +67,14 @@ struct RateControl: View {
                     .foregroundStyle(.red)
             }
         }
-        .onAppear { rate = current }
+        .task { if canAdd { rate = min(60, current * 2); await check() } }
     }
 
     private func summary(_ estimate: ReprocessEstimate) -> String {
-        if estimate.newFrames == 0 {
-            return "\(estimate.frames) frames, all already described. Free."
-        }
-
-        return "\(estimate.frames) frames: \(estimate.newFrames) new, \(estimate.keptCaptions) kept. About \(dollars(estimate.usd))."
+        "\(estimate.newFrames) new frames, about \(dollars(estimate.usd)). \(estimate.keptCaptions) kept."
     }
 
     private func check() async {
-        guard Int(rate) != Int(current) else {
-            estimate = nil
-            return
-        }
-
         checking = true
         problem = nil
 
@@ -120,7 +114,7 @@ struct RateControl: View {
                 return
             case "failed":
                 working = nil
-                problem = upload.error ?? "Reprocessing failed."
+                problem = upload.error ?? "Adding frames failed."
                 return
             default:
                 working = (upload.step ?? "Waiting") + "…"

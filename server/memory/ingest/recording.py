@@ -246,7 +246,7 @@ def keep_video(video: Path, folder: Path) -> str:
 
 
 def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frames_per_minute: float,
-                 max_distance: int, max_blur: float, extras: dict[str, Path], reuse: list[dict]) -> None:
+                 max_distance: int, max_blur: float, extras: dict[str, Path], reuse: list[dict], source: str) -> None:
     """Fill a folder with the moment's video, kept frames, audio, extra files, manifest and page."""
     started = start_time(info, video)
     place = location(info)
@@ -276,7 +276,7 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frame
 
     manifest = {
         "id": moment_id,
-        "source": "recording",
+        "source": source,
         "video": video.name,
         "video_file": video_file,
         "video_bytes": video.stat().st_size,
@@ -403,6 +403,7 @@ def ingest(
     replace: bool = False,
     extras: dict[str, Path] | None = None,
     reuse_frames: bool = False,
+    source: str | None = None,
 ) -> Path:
     """Turn a video into a moment folder and return the folder's path. extras are files kept alongside it."""
     if not video.is_file():
@@ -421,10 +422,12 @@ def ingest(
 
     shutil.rmtree(build_dir, ignore_errors=True)
     reuse = kept_frames(moment_dir) if reuse_frames else []
+    source = source or json.loads((moment_dir / "manifest.json").read_text()).get("source", "video") \
+        if (moment_dir / "manifest.json").is_file() else source or "video"
 
     try:
         build_moment(video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur, extras or {},
-                     reuse)
+                     reuse, source)
     except Exception:
         shutil.rmtree(build_dir, ignore_errors=True)
         raise

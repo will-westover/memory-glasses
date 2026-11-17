@@ -2,6 +2,7 @@ import Foundation
 
 struct MomentSummary: Decodable, Identifiable, Hashable {
     let id: String
+    let source: String
     let startedAt: Date
     let durationSeconds: Double
     let frames: Int
@@ -284,4 +285,12 @@ extension Fact {
     }
 
     var isSpeech: Bool { kind == "speech" || kind == "said" }
+}
+
+func sourceIcon(_ source: String) -> (symbol: String, label: String) {
+    switch source {
+    case "iphone": ("iphone", "Recorded on iPhone")
+    case "glasses": ("eyeglasses", "Recorded on the glasses")
+    default: ("film", "Imported video")
+    }
 }

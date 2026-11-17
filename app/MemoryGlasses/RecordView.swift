@@ -20,7 +20,7 @@ struct RecordView: View {
     @Environment(\.dismiss) private var dismiss
 
     @StateObject private var recorder = Recorder()
-    @AppStorage("recordFramesPerMinute") private var framesPerMinute = 30.0
+    @State private var framesPerMinute = 30.0
 
     var body: some View {
         ZStack {
@@ -36,6 +36,11 @@ struct RecordView: View {
         }
         .background(.black)
         .onAppear { recorder.startCamera() }
+        .task {
+            if let saved: GlassesSettings = try? await API.current.get("/settings") {
+                framesPerMinute = saved.framesPerMinute
+            }
+        }
         .onDisappear { recorder.stopCamera() }
     }
 
@@ -81,16 +86,7 @@ struct RecordView: View {
         case .ready, .recording:
             VStack(spacing: 18) {
                 if recorder.stage == .ready {
-                    HStack {
-                        Text("\(Int(framesPerMinute)) frames a minute")
-                            .font(.subheadline.weight(.medium))
-                        Spacer()
-                        Stepper("", value: $framesPerMinute, in: 1...60, step: 5)
-                            .labelsHidden()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    pill("\(Int(framesPerMinute)) frames a minute, from Glasses settings", systemImage: "photo.stack")
                 }
 
                 recordButton

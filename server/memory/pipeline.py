@@ -17,12 +17,12 @@ STEPS = ("Picking frames", "Describing frames", "Transcribing", "Finding faces",
 
 
 def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: dict[str, Path] | None = None,
-            replace: bool = False, reuse_frames: bool = False, room_id: int | None = None,
+            replace: bool = False, reuse_frames: bool = False, room_id: int | None = None, source: str | None = None,
             on_step: Callable[[str], None] = lambda step: None) -> str:
     """Turn a video into a searchable moment and return its id."""
     on_step(STEPS[0])
     moment_dir = recording.ingest(video, frames_per_minute=frames_per_minute, replace=replace, extras=extras,
-                                  reuse_frames=reuse_frames)
+                                  reuse_frames=reuse_frames, source=source)
     moment_id = moment_dir.name
 
     with db.connect() as conn:
