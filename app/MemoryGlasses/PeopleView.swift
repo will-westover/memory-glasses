@@ -14,6 +14,7 @@ struct Person: Decodable, Identifiable, Hashable {
 struct PersonTag: Decodable, Hashable {
     let id: Int
     let name: String?
+    let face: String?
 }
 
 struct PersonName: Encodable {
@@ -190,21 +191,29 @@ struct PeopleChips: View {
 
     var body: some View {
         if !people.isEmpty {
-            NavigationLink {
-                PeopleView()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "person.fill")
-                        .font(.caption)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(people, id: \.self) { person in
+                        NavigationLink {
+                            PeopleView()
+                        } label: {
+                            HStack(spacing: 8) {
+                                FaceImage(path: person.face, size: 28)
 
-                    Text(people.map { $0.name ?? "Unnamed person" }.joined(separator: ", "))
-                        .font(.subheadline.weight(.medium))
+                                Text(person.name ?? "Unnamed person")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(person.name == nil ? .secondary : .primary)
+                            }
+                            .padding(.leading, 4)
+                            .padding(.trailing, 12)
+                            .padding(.vertical, 4)
+                            .background(Color(.secondarySystemBackground), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color(.secondarySystemBackground), in: Capsule())
             }
-            .buttonStyle(.plain)
+            .scrollClipDisabled()
         }
     }
 }

@@ -97,7 +97,10 @@ def frame_json(frame: dict) -> dict:
         "summary": frame["summary"],
         "objects": [{"name": name, "location": location} for name, location in frame["objects"]],
         "texts": [{"text": text, "surface": surface} for text, surface in frame["texts"]],
-        "people": frame["people"],
+        "people": [
+            {"id": person["id"], "name": person["name"], "face": f"/faces/{person['face_id']}"}
+            for person in frame["people"]
+        ],
     }
 
 
