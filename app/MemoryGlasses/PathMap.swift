@@ -14,7 +14,7 @@ struct PathMap: View {
                     var line = Path()
 
                     for (position, point) in points.enumerated() {
-                        let at = fit.place(point[1], point[2])
+                        let at = fit.place(point[1], point[3])
                         position == 0 ? line.move(to: at) : line.addLine(to: at)
                     }
 
@@ -70,7 +70,7 @@ struct Fit {
 
     init(points: [[Double]], size: CGSize, margin: Double = 28) {
         let xs = points.map { $0[1] }
-        let zs = points.map { $0[2] }
+        let zs = points.map { $0[3] }
 
         minX = xs.min() ?? 0
         minZ = zs.min() ?? 0

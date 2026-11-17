@@ -123,6 +123,7 @@ struct MomentView: View {
     @State private var index = 0
     @State private var playingFrom: Double?
     @State private var path: [[Double]] = []
+    @State private var showingRoom = false
 
     var body: some View {
         Group {
@@ -142,6 +143,9 @@ struct MomentView: View {
         .task { await load() }
         .sheet(isPresented: Binding(get: { playingFrom != nil }, set: { if !$0 { playingFrom = nil } })) {
             MomentVideo(momentId: link.id, start: playingFrom ?? 0)
+        }
+        .fullScreenCover(isPresented: $showingRoom) {
+            RoomView(momentId: link.id, frames: detail?.frames ?? [], path: path) { picked in index = picked }
         }
     }
 
@@ -183,7 +187,18 @@ struct MomentView: View {
             VStack(alignment: .leading, spacing: 28) {
                 if path.count > 1 {
                     VStack(alignment: .leading, spacing: 10) {
-                        SectionTitle("Where you went")
+                        HStack {
+                            SectionTitle("Where you went")
+                            Spacer()
+
+                            if detail.hasMesh {
+                                Button { showingRoom = true } label: {
+                                    Label("View in 3D", systemImage: "cube.transparent")
+                                        .font(.subheadline.weight(.medium))
+                                }
+                            }
+                        }
+
                         PathMap(points: path, frames: detail.frames, index: $index)
                     }
                 }

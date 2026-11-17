@@ -67,6 +67,7 @@ struct MomentDetail: Decodable {
     let summaries: [Fact]
     let hasVideo: Bool
     let framesPerMinute: Double?
+    let hasMesh: Bool
 }
 
 struct Answer: Codable {

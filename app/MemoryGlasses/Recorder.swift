@@ -57,6 +57,10 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         let configuration = ARWorldTrackingConfiguration()
         configuration.providesAudioData = true
 
+        if hasLidar {
+            configuration.sceneReconstruction = .meshWithClassification
+        }
+
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         locationManager.requestWhenInUseAuthorization()
         locationManager.startUpdatingLocation()
@@ -108,9 +112,20 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
 
             let posesFile = self.writePoses()
 
+            let meshFile = self.hasLidar ? self.writeMesh() : nil
+
             writer.finishWriting {
-                DispatchQueue.main.async {
-                    Task { await self.upload(framesPerMinute: framesPerMinute, extras: posesFile.map { [("poses", $0)] } ?? []) }
+                self.session.getCurrentWorldMap { map, _ in
+                    let mapFile = map.flatMap { self.writeWorldMap($0) }
+                    var extras: [(field: String, url: URL)] = []
+
+                    if let posesFile { extras.append(("poses", posesFile)) }
+                    if let meshFile { extras.append(("mesh", meshFile)) }
+                    if let mapFile { extras.append(("world_map", mapFile)) }
+
+                    DispatchQueue.main.async {
+                        Task { await self.upload(framesPerMinute: framesPerMinute, extras: extras) }
+                    }
                 }
             }
         }
@@ -208,6 +223,51 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         return (try? data?.write(to: url)) != nil ? url : nil
     }
 
+    private func writeMesh() -> URL? {
+        let anchors = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
+
+        guard !anchors.isEmpty else { return nil }
+
+        let url = FileManager.default.temporaryDirectory.appending(path: "mesh-\(UUID().uuidString).obj")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+
+        guard let out = try? FileHandle(forWritingTo: url) else { return nil }
+        defer { try? out.close() }
+
+        var vertexBase = 1
+
+        for anchor in anchors {
+            let geometry = anchor.geometry
+            var text = ""
+
+            for index in 0..<geometry.vertices.count {
+                let local = geometry.vertices.value(at: index)
+                let world = anchor.transform * SIMD4<Float>(local.x, local.y, local.z, 1)
+                text += "v \(world.x) \(world.y) \(world.z)\n"
+            }
+
+            for index in 0..<geometry.faces.count {
+                let face = geometry.faces.indices(of: index).map { $0 + vertexBase }
+                text += "f \(face[0]) \(face[1]) \(face[2])\n"
+            }
+
+            out.write(Data(text.utf8))
+            vertexBase += geometry.vertices.count
+        }
+
+        return url
+    }
+
+    private func writeWorldMap(_ map: ARWorldMap) -> URL? {
+        guard let data = try? NSKeyedArchiver.archivedData(withRootObject: map, requiringSecureCoding: true) else {
+            return nil
+        }
+
+        let url = FileManager.default.temporaryDirectory.appending(path: "world-\(UUID().uuidString).map")
+
+        return (try? data.write(to: url)) != nil ? url : nil
+    }
+
     func session(_ session: ARSession, didOutputAudioSampleBuffer audioSampleBuffer: CMSampleBuffer) {
         guard isRecording, firstTime != nil, let audioInput, audioInput.isReadyForMoreMediaData else { return }
 
@@ -249,6 +309,26 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
             stage = .uploaded
         } catch {
             stage = .failed("Upload failed: \(error.localizedDescription). The recording is still on the phone.")
+        }
+    }
+}
+
+extension ARGeometrySource {
+    func value(at index: Int) -> SIMD3<Float> {
+        let pointer = buffer.contents().advanced(by: offset + stride * index)
+
+        let (x, y, z) = pointer.assumingMemoryBound(to: (Float, Float, Float).self).pointee
+
+        return SIMD3<Float>(x, y, z)
+    }
+}
+
+extension ARGeometryElement {
+    func indices(of face: Int) -> [Int] {
+        let pointer = buffer.contents().advanced(by: face * indexCountPerPrimitive * bytesPerIndex)
+
+        return (0..<indexCountPerPrimitive).map { corner in
+            Int(pointer.advanced(by: corner * bytesPerIndex).assumingMemoryBound(to: UInt32.self).pointee)
         }
     }
 }

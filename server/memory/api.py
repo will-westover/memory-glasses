@@ -165,6 +165,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "summaries": [fact_json(fact) for fact in db.summaries(conn, moment_id)],
         "has_video": has_video(moment_id),
         "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
+        "has_mesh": (MOMENTS_DIR / moment_id / "mesh.obj").is_file(),
     }
 
 
@@ -318,13 +319,24 @@ def run_reprocess(upload_id, moment_id: str, frames_per_minute: float) -> None:
 
 @app.get("/moments/{moment_id}/path")
 def moment_path(moment_id: str) -> dict:
-    """Return where the phone went during a moment, from above: [seconds, x, z] in metres."""
+    """Return where the phone went during a moment: [seconds, x, y, z, yaw] in metres and radians."""
     poses_file = (MOMENTS_DIR / moment_id / "poses.json").resolve()
 
     if not poses_file.is_relative_to(MOMENTS_DIR) or not poses_file.is_file():
         return {"points": []}
 
-    return {"points": [[t, x, z] for t, x, _, z, _ in thin(load_poses(poses_file))]}
+    return {"points": thin(load_poses(poses_file))}
+
+
+@app.get("/moments/{moment_id}/mesh")
+def moment_mesh(moment_id: str) -> FileResponse:
+    """Return the room mesh the phone's lidar captured during a moment, as OBJ."""
+    mesh = (MOMENTS_DIR / moment_id / "mesh.obj").resolve()
+
+    if not mesh.is_relative_to(MOMENTS_DIR) or not mesh.is_file():
+        raise HTTPException(404, "no room mesh for this moment")
+
+    return FileResponse(mesh, media_type="model/obj")
 
 
 @app.get("/moments/{moment_id}/reprocess-estimate")
