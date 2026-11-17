@@ -2,14 +2,16 @@ import SwiftUI
 
 @main
 struct MemoryGlassesApp: App {
+    @State private var store = ConversationStore()
+
     var body: some Scene {
         WindowGroup {
             TabView {
-                TimelineView()
-                    .tabItem { Label("Timeline", systemImage: "clock") }
-
                 AskView()
                     .tabItem { Label("Ask", systemImage: "bubble.left.and.text.bubble.right") }
+
+                TimelineView()
+                    .tabItem { Label("Timeline", systemImage: "clock") }
 
                 StatsView()
                     .tabItem { Label("Stats", systemImage: "chart.bar") }
@@ -17,6 +19,8 @@ struct MemoryGlassesApp: App {
                 GlassesView()
                     .tabItem { Label("Glasses", systemImage: "eyeglasses") }
             }
+            .tint(.primary)
+            .environment(store)
         }
     }
 }
@@ -29,16 +33,17 @@ struct FrameImage: View {
     private static let cache = NSCache<NSString, UIImage>()
 
     var body: some View {
-        ZStack {
-            Rectangle().fill(.quaternary)
-
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
+        Rectangle()
+            .fill(Color(.tertiarySystemFill))
+            .overlay {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                }
             }
-        }
-        .task(id: path) { await load() }
+            .clipped()
+            .task(id: path) { await load() }
     }
 
     private func load() async {
@@ -67,6 +72,22 @@ struct ServerProblem: View {
             Text(message)
         } actions: {
             Button("Try again") { Task { await retry() } }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
         }
+    }
+}
+
+struct SectionTitle: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.secondary)
     }
 }

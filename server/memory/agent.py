@@ -45,7 +45,8 @@ AGENT_NOTES = """
 
 You have two tools. search finds facts by what they are about. timeline lists what happened between two times,
 in order: use it for questions about a stretch of time, or about what came before or after something. Call them
-until you can answer. If a search finds nothing relevant, try other words before giving up."""
+until you can answer. If a search finds nothing relevant, try other words before giving up. Earlier messages
+in the conversation can tell you what a follow-up question refers to, but answer only from the facts."""
 
 PLAIN_NOTES = """
 
@@ -183,7 +184,17 @@ def check_sources(cited: list[int], seen: dict) -> list[dict]:
     return [seen[fact_id] for fact_id in dict.fromkeys(cited) if fact_id in seen]
 
 
-def ask_agent(conn, question: str, model: str = AGENT_MODEL) -> dict:
+def conversation(history: list[tuple[str, str]], question: str) -> list[dict]:
+    """Return earlier questions and answers, then the new question, as model input."""
+    messages = []
+
+    for asked, answered in history:
+        messages += [{"role": "user", "content": asked}, {"role": "assistant", "content": answered}]
+
+    return messages + [{"role": "user", "content": question}]
+
+
+def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = ()) -> dict:
     """Answer a question by letting the model call the tools."""
     llm.require_price(model)
     started = time.monotonic()
@@ -193,7 +204,7 @@ def ask_agent(conn, question: str, model: str = AGENT_MODEL) -> dict:
     calls = []
     usd = 0.0
 
-    send = [{"role": "user", "content": question}]
+    send = conversation(list(history), question)
     previous_id = None
 
     for round_number in range(MAX_ROUNDS + 1):

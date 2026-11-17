@@ -1,154 +1,91 @@
 import SwiftUI
 
-struct Exchange: Identifiable {
-    let id = UUID()
-    let question: String
-    var answer: Answer?
-    var problem: String?
-}
-
 struct AskView: View {
-    @State private var exchanges: [Exchange] = []
-    @State private var draft = ""
-    @State private var asking = false
+    @Environment(ConversationStore.self) private var store
+
+    @State private var path: [UUID] = []
+    @State private var search = ""
 
     var body: some View {
-        NavigationStack {
-            ScrollViewReader { scroll in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        if exchanges.isEmpty {
-                            ContentUnavailableView(
-                                "Ask about anything you saw or heard",
-                                systemImage: "bubble.left.and.text.bubble.right",
-                                description: Text("What a sign said, what someone told you, what you were doing.")
-                            )
-                            .padding(.top, 80)
-                        }
+        NavigationStack(path: $path) {
+            let groups = store.groups(matching: search)
 
-                        ForEach(exchanges) { ExchangeView(exchange: $0).id($0.id) }
+            chats(groups)
+                .searchable(text: $search, prompt: "Search chats")
+                .navigationTitle("Ask")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: newChat) { Image(systemName: "square.and.pencil") }
+                            .accessibilityLabel("New chat")
                     }
-                    .padding()
                 }
-                .onChange(of: exchanges.count) {
-                    withAnimation { scroll.scrollTo(exchanges.last?.id, anchor: .bottom) }
+                .navigationDestination(for: UUID.self) { id in
+                    ChatView(id: id, newChat: newChat)
                 }
-            }
-            .navigationTitle("Ask")
-            .safeAreaInset(edge: .bottom) { questionBar }
+                .onAppear { store.removeEmpty() }
         }
     }
 
-    private var questionBar: some View {
-        HStack(spacing: 8) {
-            TextField("Ask a question", text: $draft, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...4)
-                .onSubmit(ask)
-
-            Button(action: ask) {
-                Image(systemName: "arrow.up.circle.fill").font(.title)
+    @ViewBuilder
+    private func chats(_ groups: [ConversationGroup]) -> some View {
+        if groups.isEmpty {
+            emptyList
+        } else {
+            List {
+                ForEach(groups) { group in
+                    Section {
+                        ForEach(group.conversations) { conversation in
+                            NavigationLink(value: conversation.id) { ConversationRow(conversation: conversation) }
+                        }
+                        .onDelete { offsets in store.delete(offsets.map { group.conversations[$0].id }) }
+                    } header: {
+                        Text(group.title)
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .textCase(nil)
+                    }
+                }
             }
-            .disabled(asking || draft.trimmingCharacters(in: .whitespaces).isEmpty)
-            .accessibilityLabel("Ask")
+            .listStyle(.plain)
         }
-        .padding()
-        .background(.bar)
     }
 
-    private func ask() {
-        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !question.isEmpty, !asking else { return }
-
-        draft = ""
-        asking = true
-        exchanges.append(Exchange(question: question))
-        let index = exchanges.count - 1
-
-        Task {
-            do {
-                exchanges[index].answer = try await API.current.send(
-                    "/ask", method: "POST", body: Question(question: question, plain: false)
-                )
-            } catch {
-                exchanges[index].problem = error.localizedDescription
+    @ViewBuilder
+    private var emptyList: some View {
+        if search.isEmpty {
+            ContentUnavailableView {
+                Label("No chats yet", systemImage: "bubble.left.and.text.bubble.right")
+            } description: {
+                Text("Ask about anything you saw or heard.")
+            } actions: {
+                Button("New chat", action: newChat)
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
             }
-
-            asking = false
+        } else {
+            ContentUnavailableView.search(text: search)
         }
+    }
+
+    private func newChat() {
+        path = [store.start()]
     }
 }
 
-struct ExchangeView: View {
-    let exchange: Exchange
+struct ConversationRow: View {
+    let conversation: Conversation
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(exchange.question)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+        VStack(alignment: .leading, spacing: 3) {
+            Text(conversation.title)
+                .font(.body.weight(.medium))
+                .lineLimit(1)
 
-            if let answer = exchange.answer {
-                AnswerView(answer: answer)
-            } else if let problem = exchange.problem {
-                Label(problem, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-            } else {
-                ProgressView("Looking through your memories…")
-            }
-        }
-    }
-}
-
-struct AnswerView: View {
-    let answer: Answer
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !answer.found {
-                Label("Not in your recordings", systemImage: "questionmark.circle")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.orange)
-            }
-
-            Text(answer.answer)
-
-            ForEach(answer.sources) { SourceRow(fact: $0) }
-
-            Text("\(String(format: "%.1f", answer.seconds)) s · \(dollars(answer.usd))")
-                .font(.caption)
+            Text(conversation.preview)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-    }
-}
-
-struct SourceRow: View {
-    let fact: Fact
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            if fact.image != nil {
-                FrameImage(path: fact.image)
-                    .frame(width: 72, height: 54)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(fact.at.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Text(fact.text)
-                    .font(.footnote)
-                    .lineLimit(3)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 4)
     }
 }

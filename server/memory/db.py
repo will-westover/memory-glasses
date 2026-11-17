@@ -290,6 +290,13 @@ def summaries(conn: psycopg.Connection, session_id: str) -> list[dict]:
     ))
 
 
+def covers(conn: psycopg.Connection) -> dict[str, str]:
+    """Return the first frame's image path for each session."""
+    rows = conn.execute("select distinct on (session_id) session_id, image_path from frame order by session_id, captured_at")
+
+    return dict(rows.fetchall())
+
+
 def costs(conn: psycopg.Connection) -> list[dict]:
     """Return the calls, tokens and dollars logged for each pipeline step."""
     rows = conn.execute(

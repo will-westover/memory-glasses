@@ -19,9 +19,15 @@ from memory.places import place_for
 SESSIONS_DIR = (DATA_DIR / "sessions").resolve()
 
 
+class Exchange(BaseModel):
+    question: str
+    answer: str
+
+
 class Question(BaseModel):
     question: str = Field(min_length=1)
     plain: bool = False
+    history: list[Exchange] = Field(default=[], max_length=10)
 
 
 class Settings(BaseModel):
@@ -92,6 +98,7 @@ def latest_eval() -> dict | None:
 def sessions(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List every session, newest first."""
     places = db.places(conn)
+    covers = db.covers(conn)
 
     return [
         {
@@ -102,6 +109,7 @@ def sessions(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
             "frames": frames,
             "has_sound": has_sound,
             "place": place_for(lat, lon, places),
+            "cover": image_url(covers.get(session_id)),
         }
         for session_id, source, started_at, duration, frames, has_sound, lat, lon in db.list_sessions(conn)
     ]
@@ -135,7 +143,10 @@ def image(path: str) -> FileResponse:
 @app.post("/ask")
 def ask(body: Question, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Answer a question, with the facts the answer rests on."""
-    result = (ask_plain if body.plain else ask_agent)(conn, body.question)
+    if body.plain:
+        result = ask_plain(conn, body.question)
+    else:
+        result = ask_agent(conn, body.question, history=[(item.question, item.answer) for item in body.history])
 
     return {
         "answer": result["answer"],

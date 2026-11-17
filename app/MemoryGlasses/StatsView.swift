@@ -4,29 +4,33 @@ struct StatsView: View {
     @State private var stats: Stats?
     @State private var problem: String?
 
+    private let stepNames = [
+        "caption": "Describing frames",
+        "transcript": "Transcribing speech",
+        "summary": "Summaries",
+        "embed": "Embedding facts",
+        "embed-question": "Embedding questions",
+        "agent": "Answering",
+        "rag": "Plain search",
+        "judge": "Grading tests",
+    ]
+
     var body: some View {
         NavigationStack {
             Group {
                 if let stats {
-                    List {
-                        Section("Stored") {
-                            LabeledContent("Recordings", value: "\(stats.counts.sessions)")
-                            LabeledContent("Moments", value: "\(stats.counts.frames)")
-                            LabeledContent("Facts", value: "\(stats.counts.facts)")
-                        }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 32) {
+                            spend(stats)
+                            stored(stats.counts)
 
-                        Section("Spend") {
-                            LabeledContent("Total", value: dollars(stats.totalUsd))
-                                .fontWeight(.semibold)
-
-                            ForEach(stats.costs) { cost in
-                                LabeledContent("\(cost.step) (\(cost.calls) calls)", value: dollars(cost.usd))
+                            if let eval = stats.eval {
+                                EvalSection(eval: eval)
                             }
-                        }
 
-                        if let eval = stats.eval {
-                            EvalSection(eval: eval)
+                            steps(stats.costs)
                         }
+                        .padding(20)
                     }
                     .refreshable { await load() }
                 } else if let problem {
@@ -40,6 +44,49 @@ struct StatsView: View {
         }
     }
 
+    private func spend(_ stats: Stats) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(dollars(stats.totalUsd))
+                .font(.system(size: 44, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+
+            Text("spent on models so far")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func stored(_ counts: Counts) -> some View {
+        HStack(spacing: 12) {
+            Tile(value: counts.sessions, label: "Recordings")
+            Tile(value: counts.frames, label: "Moments")
+            Tile(value: counts.facts, label: "Facts")
+        }
+    }
+
+    private func steps(_ costs: [StepCost]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle("By step")
+
+            ForEach(costs) { cost in
+                HStack {
+                    Text(stepNames[cost.step] ?? cost.step.capitalized)
+
+                    Text("\(cost.calls)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+
+                    Spacer()
+
+                    Text(dollars(cost.usd))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                .font(.subheadline)
+            }
+        }
+    }
+
     private func load() async {
         do {
             stats = try await API.current.get("/stats")
@@ -50,43 +97,68 @@ struct StatsView: View {
     }
 }
 
+struct Tile: View {
+    let value: Int
+    let label: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(value)")
+                .font(.title2.weight(.semibold))
+                .monospacedDigit()
+
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
 struct EvalSection: View {
     let eval: EvalRun
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionTitle("Accuracy on the test questions")
+
             ForEach(eval.scores.keys.sorted(), id: \.self) { mode in
                 if let scores = eval.scores[mode] {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) {
                             Text(mode == "plain" ? "Plain search" : "Agent")
-                                .font(.headline)
+                                .font(.subheadline.weight(.medium))
 
                             Spacer()
 
                             Text(scores.score.formatted(.percent.precision(.fractionLength(0))))
-                                .font(.title3.weight(.semibold).monospacedDigit())
+                                .font(.subheadline.weight(.semibold))
+                                .monospacedDigit()
                         }
 
-                        ProgressView(value: scores.score)
+                        Capsule()
+                            .fill(Color(.tertiarySystemFill))
+                            .frame(height: 6)
+                            .overlay(alignment: .leading) {
+                                GeometryReader { space in
+                                    Capsule()
+                                        .fill(Color.primary)
+                                        .frame(width: space.size.width * scores.score)
+                                }
+                            }
 
-                        Text(details(scores))
+                        Text("\(scores.questions) questions · \(dollars(scores.usd)) per answer")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 4)
                 }
             }
-        } header: {
-            Text("Latest test")
-        } footer: {
-            Text("Answered by \(eval.model), graded by \(eval.judge). Run \(eval.run).")
+
+            Text("Answered by \(eval.model), graded by \(eval.judge).")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
-    }
-
-    private func details(_ scores: Scores) -> String {
-        let supported = scores.supported.formatted(.percent.precision(.fractionLength(0)))
-
-        return "\(scores.questions) questions · \(supported) backed by sources · \(dollars(scores.usd)) each"
     }
 }

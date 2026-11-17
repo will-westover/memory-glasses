@@ -7,6 +7,7 @@ struct SessionSummary: Decodable, Identifiable, Hashable {
     let frames: Int
     let hasSound: Bool
     let place: String?
+    let cover: String?
 }
 
 struct SeenObject: Decodable, Hashable {
@@ -35,7 +36,7 @@ struct SpokenLine: Decodable, Hashable {
     let text: String
 }
 
-struct Fact: Decodable, Identifiable {
+struct Fact: Codable, Identifiable {
     let id: Int
     let kind: String
     let at: Date
@@ -52,7 +53,7 @@ struct SessionDetail: Decodable {
     let summaries: [Fact]
 }
 
-struct Answer: Decodable {
+struct Answer: Codable {
     let answer: String
     let found: Bool
     let sources: [Fact]
@@ -102,9 +103,15 @@ struct GlassesSettings: Codable {
     var framesPerMinute: Double
 }
 
+struct PastExchange: Encodable {
+    let question: String
+    let answer: String
+}
+
 struct Question: Encodable {
     let question: String
     let plain: Bool
+    let history: [PastExchange]
 }
 
 enum APIError: LocalizedError {
@@ -214,7 +221,11 @@ func clock(_ seconds: Double) -> String {
 }
 
 func dollars(_ amount: Double) -> String {
-    if amount > 0 && amount < 0.0001 {
+    if amount == 0 {
+        return "$0"
+    }
+
+    if amount < 0.0001 {
         return "under $0.0001"
     }
 
