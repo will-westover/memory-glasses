@@ -1,7 +1,7 @@
 from memory.agent import check_sources, fit
 
 
-def fact(fact_id: int, kind: str = "moment") -> dict:
+def fact(fact_id: int, kind: str = "frame") -> dict:
     return {"id": fact_id, "kind": kind}
 
 

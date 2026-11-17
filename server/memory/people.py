@@ -42,7 +42,7 @@ def main() -> int:
             print(f"{person['id']:>4}  {person['name'] or '(unnamed)':<20} {person['faces']:>4} faces"
                   f"  last seen {person['last_seen'].astimezone():%a %d %b %H:%M}")
 
-    print("Rebuild facts for a session to use new names: uv run python -m memory.ingest.facts <session id>")
+    print("Rebuild facts for a moment to use new names: uv run python -m memory.ingest.facts <moment id>")
 
     return 0
 

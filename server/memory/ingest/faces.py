@@ -1,6 +1,6 @@
-"""Find faces in a session's frames and group them into people.
+"""Find faces in a moment's frames and group them into people.
 
-    uv run python -m memory.ingest.faces <session id>
+    uv run python -m memory.ingest.faces <moment id>
 """
 
 import argparse
@@ -93,12 +93,12 @@ def vector(embedding: np.ndarray) -> str:
     return "[" + ",".join(f"{value:.6f}" for value in embedding) + "]"
 
 
-def find_faces(conn, session_id: str) -> dict[str, int]:
-    """Replace the session's faces and assign each one to a person, creating people as needed."""
+def find_faces(conn, moment_id: str) -> dict[str, int]:
+    """Replace the moment's faces and assign each one to a person, creating people as needed."""
     detector, recognizer = load_models()
-    frames = db.frame_images(conn, session_id)
+    frames = db.frame_images(conn, moment_id)
 
-    db.clear_faces(conn, session_id)
+    db.clear_faces(conn, moment_id)
     people = db.person_centres(conn)
     counts = {"frames": len(frames), "faces": 0, "new_people": 0, "skipped": 0}
 
@@ -129,12 +129,12 @@ def find_faces(conn, session_id: str) -> dict[str, int]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Find and group the faces in a session.")
-    parser.add_argument("session_id")
+    parser = argparse.ArgumentParser(description="Find and group the faces in a moment.")
+    parser.add_argument("moment_id")
     args = parser.parse_args()
 
     with db.connect() as conn:
-        counts = find_faces(conn, args.session_id)
+        counts = find_faces(conn, args.moment_id)
 
     print(f"Found {counts['faces']} faces in {counts['frames']} frames; {counts['new_people']} new people;"
           f" {counts['skipped']} side views matched no one and were left out.")

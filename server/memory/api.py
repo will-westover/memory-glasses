@@ -21,7 +21,7 @@ from memory.ingest.facts import build_facts
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
 
-SESSIONS_DIR = (DATA_DIR / "sessions").resolve()
+MOMENTS_DIR = (DATA_DIR / "moments").resolve()
 MAX_CLIP_SECONDS = 120
 
 
@@ -71,7 +71,7 @@ app = FastAPI(title="Memory Glasses", dependencies=[Depends(check_token)])
 
 def image_url(image_path: str | None) -> str | None:
     """Return the URL the app loads a frame from."""
-    return f"/images/{image_path.removeprefix('sessions/')}" if image_path else None
+    return f"/images/{image_path.removeprefix('moments/')}" if image_path else None
 
 
 def fact_json(fact: dict) -> dict:
@@ -80,7 +80,7 @@ def fact_json(fact: dict) -> dict:
         "id": fact["id"],
         "kind": fact["kind"],
         "at": fact["at"],
-        "session_id": fact["session_id"],
+        "moment_id": fact["moment_id"],
         "offset_seconds": fact["offset_seconds"],
         "text": fact["text"],
         "image": image_url(fact["image_path"]),
@@ -113,38 +113,38 @@ def latest_eval() -> dict | None:
     return {"run": runs[-1].stem, "model": run["model"], "judge": run["judge"], "scores": run["scores"]}
 
 
-@app.get("/sessions")
-def sessions(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
-    """List every session, newest first."""
+@app.get("/moments")
+def moments(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
+    """List every moment, newest first."""
     places = db.places(conn)
     covers = db.covers(conn)
 
     return [
         {
-            "id": session_id,
+            "id": moment_id,
             "source": source,
             "started_at": started_at,
             "duration_seconds": duration,
             "frames": frames,
             "has_sound": has_sound,
             "place": place_for(lat, lon, places),
-            "cover": image_url(covers.get(session_id)),
+            "cover": image_url(covers.get(moment_id)),
         }
-        for session_id, source, started_at, duration, frames, has_sound, lat, lon in db.list_sessions(conn)
+        for moment_id, source, started_at, duration, frames, has_sound, lat, lon in db.list_moments(conn)
     ]
 
 
-@app.get("/sessions/{session_id}")
-def session(session_id: str, conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Return one session's frames, transcript and summaries for the timeline."""
-    if not db.session_info(conn, session_id):
-        raise HTTPException(404, "no such session")
+@app.get("/moments/{moment_id}")
+def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return one moment's frames, transcript and summaries for the timeline."""
+    if not db.moment_info(conn, moment_id):
+        raise HTTPException(404, "no such moment")
 
     return {
-        "id": session_id,
-        "frames": [frame_json(frame) for frame in db.captioned_frames(conn, session_id)],
-        "transcript": db.transcript_lines(conn, session_id),
-        "summaries": [fact_json(fact) for fact in db.summaries(conn, session_id)],
+        "id": moment_id,
+        "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
+        "transcript": db.transcript_lines(conn, moment_id),
+        "summaries": [fact_json(fact) for fact in db.summaries(conn, moment_id)],
     }
 
 
@@ -168,16 +168,16 @@ def audio_clip(path, start: float, end: float) -> bytes:
     return out.getvalue()
 
 
-@app.get("/sessions/{session_id}/audio")
-def audio(session_id: str, start: float, end: float) -> Response:
-    """Return what was heard between two offsets in a session, as WAV."""
+@app.get("/moments/{moment_id}/audio")
+def audio(moment_id: str, start: float, end: float) -> Response:
+    """Return what was heard between two offsets in a moment, as WAV."""
     if not 0 <= start < end or end - start > MAX_CLIP_SECONDS:
         raise HTTPException(422, f"start and end must be 0 or more and at most {MAX_CLIP_SECONDS} s apart")
 
-    file = (SESSIONS_DIR / session_id / "audio.wav").resolve()
+    file = (MOMENTS_DIR / moment_id / "audio.wav").resolve()
 
-    if not file.is_relative_to(SESSIONS_DIR) or not file.is_file():
-        raise HTTPException(404, "no sound for this session")
+    if not file.is_relative_to(MOMENTS_DIR) or not file.is_file():
+        raise HTTPException(404, "no sound for this moment")
 
     return Response(audio_clip(file, start, end), media_type="audio/wav")
 
@@ -185,9 +185,9 @@ def audio(session_id: str, start: float, end: float) -> Response:
 @app.get("/images/{path:path}")
 def image(path: str) -> FileResponse:
     """Serve one frame's JPEG."""
-    file = (SESSIONS_DIR / path).resolve()
+    file = (MOMENTS_DIR / path).resolve()
 
-    if not file.is_relative_to(SESSIONS_DIR) or file.suffix != ".jpg" or not file.is_file():
+    if not file.is_relative_to(MOMENTS_DIR) or file.suffix != ".jpg" or not file.is_file():
         raise HTTPException(404, "no such image")
 
     return FileResponse(file, media_type="image/jpeg")
@@ -290,11 +290,11 @@ def delete_conversation(conversation_id: UUID, conn: psycopg.Connection = Depend
 FACE_MARGIN = 0.35
 
 
-def rebuild_facts(session_ids: list[str]) -> None:
-    """Rebuild the facts of sessions after a person's name changed."""
+def rebuild_facts(moment_ids: list[str]) -> None:
+    """Rebuild the facts of moments after a person's name changed."""
     with db.connect() as conn:
-        for session_id in session_ids:
-            build_facts(conn, session_id)
+        for moment_id in moment_ids:
+            build_facts(conn, moment_id)
 
 
 def person_json(person: dict) -> dict:
@@ -318,7 +318,7 @@ def name_person(person_id: int, body: PersonName, tasks: BackgroundTasks,
         raise HTTPException(404, "no such person")
 
     conn.commit()
-    tasks.add_task(rebuild_facts, db.person_sessions(conn, person_id))
+    tasks.add_task(rebuild_facts, db.person_moments(conn, person_id))
 
     return {"id": person_id, "name": name}
 
@@ -327,13 +327,13 @@ def name_person(person_id: int, body: PersonName, tasks: BackgroundTasks,
 def merge_person(person_id: int, body: Merge, tasks: BackgroundTasks,
                  conn: psycopg.Connection = Depends(connection)) -> dict:
     """Treat two people as the same person."""
-    if person_id == body.into or not db.person_sessions(conn, body.into):
+    if person_id == body.into or not db.person_moments(conn, body.into):
         raise HTTPException(422, "merge into a different person who exists")
 
-    sessions = db.person_sessions(conn, person_id)
+    moments = db.person_moments(conn, person_id)
     db.merge_people(conn, person_id, body.into)
     conn.commit()
-    tasks.add_task(rebuild_facts, sessions)
+    tasks.add_task(rebuild_facts, moments)
 
     return {"merged": person_id, "into": body.into}
 
@@ -341,13 +341,13 @@ def merge_person(person_id: int, body: Merge, tasks: BackgroundTasks,
 @app.delete("/people/{person_id}")
 def forget_person(person_id: int, tasks: BackgroundTasks, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Delete a person and every face of them."""
-    sessions = db.person_sessions(conn, person_id)
+    moments = db.person_moments(conn, person_id)
 
     if not db.forget_person(conn, person_id):
         raise HTTPException(404, "no such person")
 
     conn.commit()
-    tasks.add_task(rebuild_facts, sessions)
+    tasks.add_task(rebuild_facts, moments)
 
     return {"forgotten": person_id}
 

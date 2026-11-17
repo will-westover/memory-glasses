@@ -25,9 +25,9 @@ def test_two_scenes_become_two_frames(tmp_path):
     video = tmp_path / "walk.mp4"
     make_video(video)
 
-    session_dir = ingest(video, data_dir=tmp_path / "data")
+    moment_dir = ingest(video, data_dir=tmp_path / "data")
 
-    manifest = json.loads((session_dir / "manifest.json").read_text())
+    manifest = json.loads((moment_dir / "manifest.json").read_text())
     assert manifest["frames_sampled"] == 8
     assert manifest["frames_kept"] == 2
     assert manifest["frames_blurry"] == 0
@@ -36,7 +36,7 @@ def test_two_scenes_become_two_frames(tmp_path):
     assert 0 <= first < 2 and 8 <= second < 10
     assert (manifest["lat"], manifest["lon"]) == (40.2518, -111.6493)
 
-    on_disk = sorted(path.name for path in (session_dir / "frames").glob("*.jpg"))
+    on_disk = sorted(path.name for path in (moment_dir / "frames").glob("*.jpg"))
     assert on_disk == [Path(frame["file"]).name for frame in manifest["frames"]]
-    assert (session_dir / "audio.wav").stat().st_size > 0
-    assert (session_dir / "index.html").exists()
+    assert (moment_dir / "audio.wav").stat().st_size > 0
+    assert (moment_dir / "index.html").exists()

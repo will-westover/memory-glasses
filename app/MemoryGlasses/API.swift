@@ -1,6 +1,6 @@
 import Foundation
 
-struct SessionSummary: Decodable, Identifiable, Hashable {
+struct MomentSummary: Decodable, Identifiable, Hashable {
     let id: String
     let startedAt: Date
     let durationSeconds: Double
@@ -42,13 +42,13 @@ struct Fact: Codable, Identifiable, Hashable {
     let id: Int
     let kind: String
     let at: Date
-    let sessionId: String
+    let momentId: String
     let offsetSeconds: Double
     let text: String
     let image: String?
 }
 
-struct SessionDetail: Decodable {
+struct MomentDetail: Decodable {
     let id: String
     let frames: [Frame]
     let transcript: [SpokenLine]
@@ -65,7 +65,7 @@ struct Answer: Codable {
 }
 
 struct Counts: Decodable {
-    let sessions: Int
+    let moments: Int
     let frames: Int
     let facts: Int
 }
@@ -221,8 +221,8 @@ struct API {
         try await data(for: request(path))
     }
 
-    func audio(session: String, from start: Double, to end: Double) async throws -> Data {
-        try await data(for: request("/sessions/\(session)/audio?start=\(start)&end=\(end)"))
+    func audio(moment: String, from start: Double, to end: Double) async throws -> Data {
+        try await data(for: request("/moments/\(moment)/audio?start=\(start)&end=\(end)"))
     }
 }
 
@@ -242,15 +242,15 @@ func dollars(_ amount: Double) -> String {
     return amount < 0.01 ? String(format: "$%.4f", amount) : String(format: "$%.2f", amount)
 }
 
-struct SessionLink: Hashable {
+struct MomentLink: Hashable {
     let id: String
     let startedAt: Date
     var focus: Double? = nil
 }
 
 extension Fact {
-    var session: SessionLink {
-        SessionLink(id: sessionId, startedAt: at.addingTimeInterval(-offsetSeconds), focus: offsetSeconds)
+    var moment: MomentLink {
+        MomentLink(id: momentId, startedAt: at.addingTimeInterval(-offsetSeconds), focus: offsetSeconds)
     }
 
     var isSpeech: Bool { kind == "speech" || kind == "said" }

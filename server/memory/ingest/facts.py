@@ -1,4 +1,4 @@
-"""Turn a session's captions and transcript into small facts and summaries, each embedded."""
+"""Turn a moment's captions and transcript into small facts and summaries, each embedded."""
 
 import argparse
 import sys
@@ -14,7 +14,7 @@ PASSAGE_WORDS = 60
 PASSAGE_GAP_SECONDS = 8.0
 PARALLEL_CALLS = 8
 
-KINDS = ("moment", "person", "object", "text", "speech", "said", "summary")
+KINDS = ("frame", "person", "object", "text", "speech", "said", "summary")
 
 SUMMARY_INSTRUCTIONS = """\
 You are given about a minute of what someone's camera glasses recorded: what the wearer saw, as timed
@@ -50,7 +50,7 @@ def first_sentence(text: str) -> str:
 
 
 def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
-    """Return a moment fact for each frame, and a fact for each new object and piece of text in it."""
+    """Return a frame fact for each frame, and a fact for each new object and piece of text in it."""
     facts = []
     previous_objects: set = set()
     previous_texts: set = set()
@@ -64,7 +64,7 @@ def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
         names = sorted({person["name"] for person in frame.get("people", []) if person["name"]})
         with_people = f" With {', '.join(names)}." if names else ""
 
-        facts.append({**base, "kind": "moment", "text": f"{frame['summary']}{with_people}{where}"})
+        facts.append({**base, "kind": "frame", "text": f"{frame['summary']}{with_people}{where}"})
 
         for name in names:
             if name not in previous_people:
@@ -205,15 +205,15 @@ def count_kinds(facts: list[dict]) -> dict[str, int]:
     return counts
 
 
-def build_facts(conn, session_id: str) -> dict[str, int]:
-    """Rebuild and embed every fact for a session. Return how many of each kind were made."""
+def build_facts(conn, moment_id: str) -> dict[str, int]:
+    """Rebuild and embed every fact for a moment. Return how many of each kind were made."""
     llm.require_price(SUMMARY_MODEL)
 
-    _, lat, lon = db.session_info(conn, session_id)
+    _, lat, lon = db.moment_info(conn, moment_id)
     place = place_for(lat, lon, db.places(conn))
 
-    frames = db.captioned_frames(conn, session_id)
-    groups = passages(db.transcript_lines(conn, session_id))
+    frames = db.captioned_frames(conn, moment_id)
+    groups = passages(db.transcript_lines(conn, moment_id))
 
     facts = frame_facts(frames, place)
     facts += [speech_fact(passage, place, "speech", spoken(passage)) for passage in groups]
@@ -222,18 +222,18 @@ def build_facts(conn, session_id: str) -> dict[str, int]:
     vectors = llm.embed(conn, [fact["text"] for fact in facts], "embed") if facts else []
 
     with conn.transaction():
-        db.replace_facts(conn, session_id, facts, vectors)
+        db.replace_facts(conn, moment_id, facts, vectors)
 
     return count_kinds(facts)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build and embed a session's facts.")
-    parser.add_argument("session_id")
+    parser = argparse.ArgumentParser(description="Build and embed a moment's facts.")
+    parser.add_argument("moment_id")
     args = parser.parse_args()
 
     with db.connect() as conn:
-        counts = build_facts(conn, args.session_id)
+        counts = build_facts(conn, args.moment_id)
         usd = db.step_cost(conn, "embed") + db.step_cost(conn, "summary")
 
     if not counts:

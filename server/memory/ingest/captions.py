@@ -1,4 +1,4 @@
-"""Describe each kept frame of a session with a model."""
+"""Describe each kept frame of a moment with a model."""
 
 import argparse
 import base64
@@ -85,11 +85,11 @@ def save_result(conn, totals: dict, frame_id: int, caption: Caption, usage, mode
     totals["output_tokens"] += usage.output_tokens
 
 
-def caption_session(conn, session_id: str, limit: int | None = None, model: str = CAPTION_MODEL) -> dict:
-    """Caption the session's frames that have no caption yet, several at a time."""
+def caption_moment(conn, moment_id: str, limit: int | None = None, model: str = CAPTION_MODEL) -> dict:
+    """Caption the moment's frames that have no caption yet, several at a time."""
     llm.require_price(model)
 
-    frames = db.frames_without_caption(conn, session_id, limit)
+    frames = db.frames_without_caption(conn, moment_id, limit)
     started = time.monotonic()
     totals = {"frames": 0, "failed": 0, "usd": 0.0, "input_tokens": 0, "output_tokens": 0}
 
@@ -115,8 +115,8 @@ def caption_session(conn, session_id: str, limit: int | None = None, model: str 
 
 
 def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Caption a session's frames.")
-    parser.add_argument("session_id")
+    parser = argparse.ArgumentParser(description="Caption a moment's frames.")
+    parser.add_argument("moment_id")
     parser.add_argument("--limit", type=int, help="caption at most this many frames")
     parser.add_argument("--redo", action="store_true", help="pay to caption every frame again")
     parser.add_argument("--model", default=CAPTION_MODEL)
@@ -124,7 +124,7 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def print_report(totals: dict, remaining: int, model: str, session_dir: Path) -> None:
+def print_report(totals: dict, remaining: int, model: str, moment_dir: Path) -> None:
     print(f"\nCaptioned {totals['frames']} frames in {totals['seconds']:.0f} s with {model}.")
 
     if totals["frames"]:
@@ -135,28 +135,28 @@ def print_report(totals: dict, remaining: int, model: str, session_dir: Path) ->
         print(f"{totals['failed']} failed; run again to retry them.")
 
     print(f"{remaining} frames still without a caption.")
-    print(f"Look at: {session_dir / 'index.html'}")
+    print(f"Look at: {moment_dir / 'index.html'}")
 
 
 def main() -> int:
     args = parse_arguments()
-    session_dir = DATA_DIR / "sessions" / args.session_id
+    moment_dir = DATA_DIR / "moments" / args.moment_id
 
-    if not (session_dir / "manifest.json").exists():
-        print(f"error: no session at {session_dir}", file=sys.stderr)
+    if not (moment_dir / "manifest.json").exists():
+        print(f"error: no moment at {moment_dir}", file=sys.stderr)
         return 1
 
     with db.connect() as conn:
         if args.redo:
-            db.clear_captions(conn, args.session_id)
+            db.clear_captions(conn, args.moment_id)
 
-        totals = caption_session(conn, args.session_id, args.limit, args.model)
+        totals = caption_moment(conn, args.moment_id, args.limit, args.model)
 
-        refresh_page(conn, session_dir)
+        refresh_page(conn, moment_dir)
 
-        remaining = len(db.frames_without_caption(conn, args.session_id))
+        remaining = len(db.frames_without_caption(conn, args.moment_id))
 
-    print_report(totals, remaining, args.model, session_dir)
+    print_report(totals, remaining, args.model, moment_dir)
 
     return 0
 

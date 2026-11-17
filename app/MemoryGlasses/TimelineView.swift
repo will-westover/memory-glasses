@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct TimelineView: View {
-    @State private var sessions: [SessionSummary] = []
+    @State private var moments: [MomentSummary] = []
     @State private var problem: String?
     @State private var loaded = false
 
@@ -10,15 +10,15 @@ struct TimelineView: View {
             Group {
                 if let problem {
                     ServerProblem(message: problem, retry: load)
-                } else if loaded && sessions.isEmpty {
+                } else if loaded && moments.isEmpty {
                     ContentUnavailableView("Nothing recorded yet", systemImage: "clock")
                 } else {
                     List {
                         ForEach(days, id: \.self) { day in
                             Section {
-                                ForEach(sessions.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }) { session in
-                                    NavigationLink(value: SessionLink(id: session.id, startedAt: session.startedAt)) {
-                                        SessionRow(session: session)
+                                ForEach(moments.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }) { moment in
+                                    NavigationLink(value: MomentLink(id: moment.id, startedAt: moment.startedAt)) {
+                                        MomentRow(moment: moment)
                                     }
                                 }
                             } header: {
@@ -34,21 +34,21 @@ struct TimelineView: View {
                 }
             }
             .navigationTitle("Timeline")
-            .navigationDestination(for: SessionLink.self) { SessionView(link: $0) }
-            .navigationDestination(for: Fact.self) { MomentView(fact: $0) }
+            .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
+            .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
             .task { await load() }
         }
     }
 
     private var days: [Date] {
-        let starts = sessions.map { Calendar.current.startOfDay(for: $0.startedAt) }
+        let starts = moments.map { Calendar.current.startOfDay(for: $0.startedAt) }
 
         return Array(Set(starts)).sorted(by: >)
     }
 
     private func load() async {
         do {
-            sessions = try await API.current.get("/sessions")
+            moments = try await API.current.get("/moments")
             problem = nil
         } catch {
             problem = error.localizedDescription
@@ -58,17 +58,17 @@ struct TimelineView: View {
     }
 }
 
-struct SessionRow: View {
-    let session: SessionSummary
+struct MomentRow: View {
+    let moment: MomentSummary
 
     var body: some View {
         HStack(spacing: 14) {
-            FrameImage(path: session.cover)
+            FrameImage(path: moment.cover)
                 .frame(width: 56, height: 56)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(session.startedAt.formatted(date: .omitted, time: .shortened))
+                Text(moment.startedAt.formatted(date: .omitted, time: .shortened))
                     .font(.body.weight(.medium))
 
                 Text(details)
@@ -80,16 +80,16 @@ struct SessionRow: View {
     }
 
     private var details: String {
-        let parts = [session.place, clock(session.durationSeconds), "\(session.frames) moments"]
+        let parts = [moment.place, clock(moment.durationSeconds), "\(moment.frames) frames"]
 
         return parts.compactMap { $0 }.joined(separator: " · ")
     }
 }
 
-struct SessionView: View {
-    let link: SessionLink
+struct MomentView: View {
+    let link: MomentLink
 
-    @State private var detail: SessionDetail?
+    @State private var detail: MomentDetail?
     @State private var problem: String?
     @State private var showTranscript = false
     @State private var index = 0
@@ -112,7 +112,7 @@ struct SessionView: View {
         .task { await load() }
     }
 
-    private func content(_ detail: SessionDetail) -> some View {
+    private func content(_ detail: MomentDetail) -> some View {
         VStack(alignment: .leading, spacing: 28) {
             if !detail.frames.isEmpty {
                 let frame = detail.frames[min(index, detail.frames.count - 1)]
@@ -131,7 +131,7 @@ struct SessionView: View {
                             .font(.subheadline)
                             .lineSpacing(2)
 
-                        NavigationLink(value: moment(frame)) {
+                        NavigationLink(value: frameFact(frame)) {
                             Label("Listen and see details", systemImage: "waveform")
                                 .font(.subheadline.weight(.medium))
                         }
@@ -157,8 +157,8 @@ struct SessionView: View {
         }
     }
 
-    private func moment(_ frame: Frame) -> Fact {
-        Fact(id: -frame.id, kind: "moment", at: frame.at, sessionId: link.id, offsetSeconds: frame.offsetSeconds,
+    private func frameFact(_ frame: Frame) -> Fact {
+        Fact(id: -frame.id, kind: "frame", at: frame.at, momentId: link.id, offsetSeconds: frame.offsetSeconds,
              text: frame.summary, image: frame.image)
     }
 
@@ -185,7 +185,7 @@ struct SessionView: View {
 
     private func load() async {
         do {
-            let loaded: SessionDetail = try await API.current.get("/sessions/\(link.id)")
+            let loaded: MomentDetail = try await API.current.get("/moments/\(link.id)")
 
             if let focus = link.focus {
                 index = loaded.frames.indices.min {

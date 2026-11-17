@@ -10,7 +10,7 @@ import psycopg
 from memory.config import DATABASE_URL, SERVER_DIR, STRETCH_SECONDS, clock
 
 MIGRATIONS_DIR = SERVER_DIR / "migrations"
-USAGE = "usage: python -m memory.db list | save <session folder>"
+USAGE = "usage: python -m memory.db list | save <moment folder>"
 
 
 def connect() -> psycopg.Connection:
@@ -42,23 +42,23 @@ def migrate(conn: psycopg.Connection) -> list[str]:
     return ran
 
 
-def save_session(conn: psycopg.Connection, session_dir: Path) -> dict:
-    """Store a session folder's manifest, keeping the captions of frames that are unchanged."""
-    manifest = json.loads((session_dir / "manifest.json").read_text())
-    session_id = manifest["id"]
-    folder = f"sessions/{session_id}"
+def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
+    """Store a moment folder's manifest, keeping the captions of frames that are unchanged."""
+    manifest = json.loads((moment_dir / "manifest.json").read_text())
+    moment_id = manifest["id"]
+    folder = f"moments/{moment_id}"
 
     wanted = {(f"{folder}/{frame['file']}", frame["fingerprint"]): frame["captured_at"] for frame in manifest["frames"]}
 
     with conn.transaction():
         conn.execute(
-            "insert into session (id, source, started_at, duration_seconds, audio_path, lat, lon)"
+            "insert into moment (id, source, started_at, duration_seconds, audio_path, lat, lon)"
             " values (%(id)s, %(source)s, %(started_at)s, %(duration)s, %(audio)s, %(lat)s, %(lon)s)"
             " on conflict (id) do update set source = excluded.source, started_at = excluded.started_at,"
             " duration_seconds = excluded.duration_seconds, audio_path = excluded.audio_path,"
             " lat = excluded.lat, lon = excluded.lon",
             {
-                "id": session_id,
+                "id": moment_id,
                 "source": manifest["source"],
                 "started_at": manifest["started_at"],
                 "duration": manifest["duration_seconds"],
@@ -71,8 +71,8 @@ def save_session(conn: psycopg.Connection, session_dir: Path) -> dict:
         stored = {
             (image_path, fingerprint): (frame_id, captioned)
             for frame_id, image_path, fingerprint, captioned in conn.execute(
-                "select id, image_path, fingerprint, captioned_at is not null from frame where session_id = %s",
-                (session_id,),
+                "select id, image_path, fingerprint, captioned_at is not null from frame where moment_id = %s",
+                (moment_id,),
             )
         }
 
@@ -86,8 +86,8 @@ def save_session(conn: psycopg.Connection, session_dir: Path) -> dict:
             )
 
             cursor.executemany(
-                "insert into frame (session_id, captured_at, image_path, fingerprint) values (%s, %s, %s, %s)",
-                [(session_id, wanted[key], *key) for key in wanted.keys() - stored.keys()],
+                "insert into frame (moment_id, captured_at, image_path, fingerprint) values (%s, %s, %s, %s)",
+                [(moment_id, wanted[key], *key) for key in wanted.keys() - stored.keys()],
             )
 
     return {
@@ -98,27 +98,27 @@ def save_session(conn: psycopg.Connection, session_dir: Path) -> dict:
     }
 
 
-def list_sessions(conn: psycopg.Connection) -> list[tuple]:
-    """Return every session, newest first."""
+def list_moments(conn: psycopg.Connection) -> list[tuple]:
+    """Return every moment, newest first."""
     return conn.execute(
         "select s.id, s.source, s.started_at, s.duration_seconds, count(f.id), s.audio_path is not null,"
         "       s.lat, s.lon"
-        " from session s left join frame f on f.session_id = s.id"
+        " from moment s left join frame f on f.moment_id = s.id"
         " group by s.id order by s.started_at desc"
     ).fetchall()
 
 
-def session_info(conn: psycopg.Connection, session_id: str) -> tuple:
-    """Return (started_at, lat, lon) for a session."""
-    return conn.execute("select started_at, lat, lon from session where id = %s", (session_id,)).fetchone()
+def moment_info(conn: psycopg.Connection, moment_id: str) -> tuple:
+    """Return (started_at, lat, lon) for a moment."""
+    return conn.execute("select started_at, lat, lon from moment where id = %s", (moment_id,)).fetchone()
 
 
-def frames_without_caption(conn: psycopg.Connection, session_id: str, limit: int | None = None) -> list[tuple]:
+def frames_without_caption(conn: psycopg.Connection, moment_id: str, limit: int | None = None) -> list[tuple]:
     """Return (frame id, image path) for frames with no caption."""
     return conn.execute(
-        "select id, image_path from frame where session_id = %s and captioned_at is null"
+        "select id, image_path from frame where moment_id = %s and captioned_at is null"
         " order by captured_at limit %s",
-        (session_id, limit),
+        (moment_id, limit),
     ).fetchall()
 
 
@@ -144,13 +144,13 @@ def save_caption(conn: psycopg.Connection, frame_id: int, caption) -> None:
         )
 
 
-def clear_captions(conn: psycopg.Connection, session_id: str) -> None:
-    """Mark every frame of a session as not captioned."""
-    conn.execute("update frame set captioned_at = null where session_id = %s", (session_id,))
+def clear_captions(conn: psycopg.Connection, moment_id: str) -> None:
+    """Mark every frame of a moment as not captioned."""
+    conn.execute("update frame set captioned_at = null where moment_id = %s", (moment_id,))
 
 
-def captioned_frames(conn: psycopg.Connection, session_id: str) -> list[dict]:
-    """Return every captioned frame of a session, oldest first."""
+def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
+    """Return every captioned frame of a moment, oldest first."""
     rows = conn.execute(
         "select f.id, f.image_path, f.captured_at, extract(epoch from f.captured_at - s.started_at),"
         "       f.summary,"
@@ -160,10 +160,10 @@ def captioned_frames(conn: psycopg.Connection, session_id: str) -> list[dict]:
         "          from frame_text t where t.frame_id = f.id)"
         "       ,(select coalesce(json_agg(distinct jsonb_build_object('id', p.id, 'name', p.name)), '[]')"
         "          from face fc join person p on p.id = fc.person_id where fc.frame_id = f.id)"
-        "  from frame f join session s on s.id = f.session_id"
-        " where f.session_id = %s and f.captioned_at is not null"
+        "  from frame f join moment s on s.id = f.moment_id"
+        " where f.moment_id = %s and f.captioned_at is not null"
         " order by f.captured_at",
-        (session_id,),
+        (moment_id,),
     ).fetchall()
 
     return [
@@ -181,37 +181,37 @@ def captioned_frames(conn: psycopg.Connection, session_id: str) -> list[dict]:
     ]
 
 
-def save_transcript(conn: psycopg.Connection, session_id: str, segments) -> None:
-    """Store a session's transcript, replacing any earlier one."""
-    conn.execute("delete from audio_segment where session_id = %s", (session_id,))
+def save_transcript(conn: psycopg.Connection, moment_id: str, segments) -> None:
+    """Store a moment's transcript, replacing any earlier one."""
+    conn.execute("delete from audio_segment where moment_id = %s", (moment_id,))
 
     with conn.cursor() as cursor:
         cursor.executemany(
-            "insert into audio_segment (session_id, start_at, end_at, offset_seconds, speaker, text)"
+            "insert into audio_segment (moment_id, start_at, end_at, offset_seconds, speaker, text)"
             " select id, started_at + make_interval(secs => %s), started_at + make_interval(secs => %s), %s, %s, %s"
-            " from session where id = %s",
+            " from moment where id = %s",
             [
-                (segment.start, segment.end, segment.start, segment.speaker, segment.text.strip(), session_id)
+                (segment.start, segment.end, segment.start, segment.speaker, segment.text.strip(), moment_id)
                 for segment in segments
                 if segment.text.strip()
             ],
         )
 
 
-def transcript(conn: psycopg.Connection, session_id: str) -> list[tuple]:
+def transcript(conn: psycopg.Connection, moment_id: str) -> list[tuple]:
     """Return the transcript as (offset seconds, speaker, text)."""
     return conn.execute(
-        "select offset_seconds, speaker, text from audio_segment where session_id = %s order by start_at",
-        (session_id,),
+        "select offset_seconds, speaker, text from audio_segment where moment_id = %s order by start_at",
+        (moment_id,),
     ).fetchall()
 
 
-def transcript_lines(conn: psycopg.Connection, session_id: str) -> list[dict]:
+def transcript_lines(conn: psycopg.Connection, moment_id: str) -> list[dict]:
     """Return the transcript lines with start and end offsets."""
     rows = conn.execute(
         "select start_at, offset_seconds, offset_seconds + extract(epoch from end_at - start_at), speaker, text"
-        " from audio_segment where session_id = %s order by start_at",
-        (session_id,),
+        " from audio_segment where moment_id = %s order by start_at",
+        (moment_id,),
     ).fetchall()
 
     return [
@@ -234,32 +234,32 @@ def save_place(conn: psycopg.Connection, name: str, lat: float, lon: float, radi
     )
 
 
-def replace_facts(conn: psycopg.Connection, session_id: str, facts: list[dict], vectors: list[str]) -> None:
-    """Store a session's facts, replacing any earlier ones."""
-    conn.execute("delete from fact where session_id = %s", (session_id,))
+def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], vectors: list[str]) -> None:
+    """Store a moment's facts, replacing any earlier ones."""
+    conn.execute("delete from fact where moment_id = %s", (moment_id,))
 
     with conn.cursor() as cursor:
         cursor.executemany(
-            "insert into fact (session_id, frame_id, kind, at, offset_seconds, text, embedding)"
+            "insert into fact (moment_id, frame_id, kind, at, offset_seconds, text, embedding)"
             " values (%s, %s, %s, %s, %s, %s, %s::vector)",
             [
-                (session_id, fact["frame_id"], fact["kind"], fact["at"], fact["offset_seconds"], fact["text"], vector)
+                (moment_id, fact["frame_id"], fact["kind"], fact["at"], fact["offset_seconds"], fact["text"], vector)
                 for fact, vector in zip(facts, vectors)
             ],
         )
 
 
 FACT_COLUMNS = (
-    "select fact.id, fact.kind, fact.at, fact.session_id, fact.offset_seconds, fact.text, frame.image_path"
+    "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds, fact.text, frame.image_path"
     "  from fact left join frame on frame.id = fact.frame_id"
 )
 
 
 def fact_rows(rows) -> list[dict]:
     return [
-        {"id": fact_id, "kind": kind, "at": at, "session_id": session_id, "offset_seconds": float(offset),
+        {"id": fact_id, "kind": kind, "at": at, "moment_id": moment_id, "offset_seconds": float(offset),
          "text": text, "image_path": image_path}
-        for fact_id, kind, at, session_id, offset, text, image_path in rows
+        for fact_id, kind, at, moment_id, offset, text, image_path in rows
     ]
 
 
@@ -269,10 +269,10 @@ def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
 
 
 def timeline(conn: psycopg.Connection, start, end) -> list[dict]:
-    """Return the moments, speech and summaries between two times, in order."""
+    """Return the frames, speech and summaries between two times, in order."""
     return fact_rows(conn.execute(
         f"{FACT_COLUMNS} where fact.at <= %(end)s and ("
-        "    (fact.kind in ('moment', 'speech') and fact.at >= %(start)s)"
+        "    (fact.kind in ('frame', 'speech') and fact.at >= %(start)s)"
         " or (fact.kind = 'summary' and fact.at > %(summary_start)s))"
         " order by fact.at, fact.id",
         {"start": start, "end": end, "summary_start": start - timedelta(seconds=STRETCH_SECONDS)},
@@ -286,16 +286,16 @@ def step_cost(conn: psycopg.Connection, step: str) -> float:
     return float(usd)
 
 
-def summaries(conn: psycopg.Connection, session_id: str) -> list[dict]:
-    """Return a session's summary facts, in order."""
+def summaries(conn: psycopg.Connection, moment_id: str) -> list[dict]:
+    """Return a moment's summary facts, in order."""
     return fact_rows(conn.execute(
-        f"{FACT_COLUMNS} where fact.session_id = %s and fact.kind = 'summary' order by fact.at", (session_id,)
+        f"{FACT_COLUMNS} where fact.moment_id = %s and fact.kind = 'summary' order by fact.at", (moment_id,)
     ))
 
 
 def covers(conn: psycopg.Connection) -> dict[str, str]:
-    """Return the first frame's image path for each session."""
-    rows = conn.execute("select distinct on (session_id) session_id, image_path from frame order by session_id, captured_at")
+    """Return the first frame's image path for each moment."""
+    rows = conn.execute("select distinct on (moment_id) moment_id, image_path from frame order by moment_id, captured_at")
 
     return dict(rows.fetchall())
 
@@ -314,12 +314,12 @@ def costs(conn: psycopg.Connection) -> list[dict]:
 
 
 def counts(conn: psycopg.Connection) -> dict:
-    """Return how many sessions, frames and facts are stored."""
-    sessions, frames, facts = conn.execute(
-        "select (select count(*) from session), (select count(*) from frame), (select count(*) from fact)"
+    """Return how many moments, frames and facts are stored."""
+    moments, frames, facts = conn.execute(
+        "select (select count(*) from moment), (select count(*) from frame), (select count(*) from fact)"
     ).fetchone()
 
-    return {"sessions": sessions, "frames": frames, "facts": facts}
+    return {"moments": moments, "frames": frames, "facts": facts}
 
 
 def setting(conn: psycopg.Connection, name: str, default):
@@ -366,16 +366,16 @@ def conversation_turns(conn: psycopg.Connection, conversation_id) -> list[dict] 
     ).fetchall()
 
     sources = conn.execute(
-        "select s.turn_id, s.fact_id, s.kind, s.at, s.session_id, s.offset_seconds, s.text, s.image_path"
+        "select s.turn_id, s.fact_id, s.kind, s.at, s.moment_id, s.offset_seconds, s.text, s.image_path"
         "  from turn_source s join turn t on t.id = s.turn_id"
         " where t.conversation_id = %s order by s.turn_id, s.position",
         (conversation_id,),
     ).fetchall()
 
     by_turn: dict = {}
-    for turn_id, fact_id, kind, at, session_id, offset, text, image_path in sources:
+    for turn_id, fact_id, kind, at, moment_id, offset, text, image_path in sources:
         by_turn.setdefault(turn_id, []).append({
-            "id": fact_id, "kind": kind, "at": at, "session_id": session_id,
+            "id": fact_id, "kind": kind, "at": at, "moment_id": moment_id,
             "offset_seconds": float(offset), "text": text, "image_path": image_path,
         })
 
@@ -411,10 +411,10 @@ def save_turn(conn: psycopg.Connection, conversation_id, question: str, result: 
 
         with conn.cursor() as cursor:
             cursor.executemany(
-                "insert into turn_source (turn_id, position, fact_id, kind, at, session_id, offset_seconds, text,"
+                "insert into turn_source (turn_id, position, fact_id, kind, at, moment_id, offset_seconds, text,"
                 " image_path) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 [
-                    (turn_id, position, fact["id"], fact["kind"], fact["at"], fact["session_id"],
+                    (turn_id, position, fact["id"], fact["kind"], fact["at"], fact["moment_id"],
                      fact["offset_seconds"], fact["text"], fact["image_path"])
                     for position, fact in enumerate(result["sources"] if result else [])
                 ],
@@ -430,16 +430,16 @@ def delete_conversation(conn: psycopg.Connection, conversation_id) -> bool:
     return conn.execute("delete from conversation where id = %s", (conversation_id,)).rowcount > 0
 
 
-def frame_images(conn: psycopg.Connection, session_id: str) -> list[tuple]:
-    """Return (frame id, image path) for every frame of a session, oldest first."""
+def frame_images(conn: psycopg.Connection, moment_id: str) -> list[tuple]:
+    """Return (frame id, image path) for every frame of a moment, oldest first."""
     return conn.execute(
-        "select id, image_path from frame where session_id = %s order by captured_at", (session_id,)
+        "select id, image_path from frame where moment_id = %s order by captured_at", (moment_id,)
     ).fetchall()
 
 
-def clear_faces(conn: psycopg.Connection, session_id: str) -> None:
-    """Delete the faces found in a session's frames."""
-    conn.execute("delete from face where frame_id in (select id from frame where session_id = %s)", (session_id,))
+def clear_faces(conn: psycopg.Connection, moment_id: str) -> None:
+    """Delete the faces found in a moment's frames."""
+    conn.execute("delete from face where frame_id in (select id from frame where moment_id = %s)", (moment_id,))
 
 
 def person_centres(conn: psycopg.Connection) -> dict:
@@ -486,14 +486,14 @@ def people(conn: psycopg.Connection) -> list[dict]:
     ]
 
 
-def person_sessions(conn: psycopg.Connection, person_id: int) -> list[str]:
-    """Return the sessions a person appears in."""
+def person_moments(conn: psycopg.Connection, person_id: int) -> list[str]:
+    """Return the moments a person appears in."""
     rows = conn.execute(
-        "select distinct fr.session_id from face f join frame fr on fr.id = f.frame_id where f.person_id = %s",
+        "select distinct fr.moment_id from face f join frame fr on fr.id = f.frame_id where f.person_id = %s",
         (person_id,),
     )
 
-    return [session_id for (session_id,) in rows]
+    return [moment_id for (moment_id,) in rows]
 
 
 def name_person(conn: psycopg.Connection, person_id: int, name: str | None) -> bool:
@@ -523,14 +523,14 @@ def face_crop(conn: psycopg.Connection, face_id: int) -> tuple | None:
     ).fetchone()
 
 
-def print_sessions(rows: list[tuple]) -> None:
-    print(f"{'session':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
+def print_moments(rows: list[tuple]) -> None:
+    print(f"{'moment':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
 
-    for session_id, source, _, duration, frames, has_sound, _, _ in rows:
-        print(f"{session_id:<21} {source:<10} {clock(duration):>7} {frames:>7}  {'yes' if has_sound else 'no'}")
+    for moment_id, source, _, duration, frames, has_sound, _, _ in rows:
+        print(f"{moment_id:<21} {source:<10} {clock(duration):>7} {frames:>7}  {'yes' if has_sound else 'no'}")
 
     if not rows:
-        print("(no sessions yet)")
+        print("(no moments yet)")
 
 
 def main() -> int:
@@ -545,10 +545,10 @@ def main() -> int:
 
     with conn:
         if command == "save" and len(sys.argv) == 3:
-            saved = save_session(conn, Path(sys.argv[2]))
+            saved = save_moment(conn, Path(sys.argv[2]))
             print(f"Saved {saved['frames']} frames. {saved['captions_kept']} captions kept, {saved['captions_lost']} lost.")
         elif command == "list":
-            print_sessions(list_sessions(conn))
+            print_moments(list_moments(conn))
         else:
             print(USAGE, file=sys.stderr)
             return 1

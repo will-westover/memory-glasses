@@ -22,8 +22,8 @@ struct AskView: View {
                 .navigationDestination(for: UUID.self) { id in
                     ChatView(id: id, newChat: newChat)
                 }
-                .navigationDestination(for: Fact.self) { MomentView(fact: $0) }
-                .navigationDestination(for: SessionLink.self) { SessionView(link: $0) }
+                .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
+                .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
                 .task { await store.refresh() }
         }
     }

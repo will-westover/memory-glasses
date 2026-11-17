@@ -1,14 +1,14 @@
 import AVFoundation
 import SwiftUI
 
-struct MomentView: View {
+struct FrameView: View {
     static let saidWindow = 30.0
     static let listenBefore = 3.0
     static let listenFor = 30.0
 
     let fact: Fact
 
-    @State private var detail: SessionDetail?
+    @State private var detail: MomentDetail?
     @State private var problem: String?
     @State private var index = 0
     @State private var player: AVAudioPlayer?
@@ -36,7 +36,7 @@ struct MomentView: View {
         .onDisappear { player?.stop() }
     }
 
-    private func content(_ detail: SessionDetail) -> some View {
+    private func content(_ detail: MomentDetail) -> some View {
         let frame = detail.frames[min(index, detail.frames.count - 1)]
 
         return VStack(alignment: .leading, spacing: 24) {
@@ -58,7 +58,7 @@ struct MomentView: View {
 
                 seen(frame)
 
-                NavigationLink(value: SessionLink(id: fact.sessionId, startedAt: fact.session.startedAt,
+                NavigationLink(value: MomentLink(id: fact.momentId, startedAt: fact.moment.startedAt,
                                                   focus: frame.offsetSeconds)) {
                     Label("Open in Timeline", systemImage: "clock")
                         .font(.subheadline.weight(.medium))
@@ -145,7 +145,7 @@ struct MomentView: View {
         audioState = "Loading…"
 
         do {
-            let data = try await API.current.audio(session: fact.sessionId, from: start, to: start + Self.listenFor)
+            let data = try await API.current.audio(moment: fact.momentId, from: start, to: start + Self.listenFor)
             try AVAudioSession.sharedInstance().setCategory(.playback)
 
             let loaded = try AVAudioPlayer(data: data)
@@ -159,7 +159,7 @@ struct MomentView: View {
 
     private func load() async {
         do {
-            let loaded: SessionDetail = try await API.current.get("/sessions/\(fact.sessionId)")
+            let loaded: MomentDetail = try await API.current.get("/moments/\(fact.momentId)")
 
             index = startIndex(in: loaded.frames)
             detail = loaded

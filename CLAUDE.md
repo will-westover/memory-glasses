@@ -15,12 +15,14 @@ graded part is the LLM software: embeddings, structured output, tool calling, an
 Recording -> kept frames and audio -> captions and transcript -> small facts, each embedded with its context,
 in Postgres (pgvector) -> agent with search tools -> judge and cost log. An iPhone app sits on top, and the glasses firmware comes last.
 
+Words: a **moment** is one recording, start to finish; a **frame** is one photo kept from it.
+
 ## Build plan
 
 Each part runs by itself and ends with something to look at. Parts 1 to 8 work from a recorded video.
 
-1. **Recording to session** (done): a video becomes kept frames, audio and a page showing them.
-2. **Database** (done): sessions and frames stored in Postgres.
+1. **Recording to moment** (done): a video becomes kept frames, audio and a page showing them.
+2. **Database** (done): moments and frames stored in Postgres.
 3. **Captions** (done): each frame gets a summary, objects with where each one is, and text seen.
 4. **Speech-to-text** (done): the audio becomes timed transcript lines.
 5. **Facts and search** (done): captions and speech become facts, plus model-written summaries of each
@@ -29,10 +31,10 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
    timeline; `--plain` is one search and one call, the baseline the evals compare it with.
 7. **Evals** (done): `memory.evals` asks every test question in both modes; a judge model grades each
    answer, and the run reports scores, whether the right fact was retrieved, and cost.
-8. **API** (done): `memory/api.py` (FastAPI) serves sessions, a session's timeline, frame images, ask,
+8. **API** (done): `memory/api.py` (FastAPI) serves moments, a moment's timeline, frame images, ask,
    stats and settings.
 9. **iPhone app** (done): SwiftUI in `app/`, with Ask (chats saved on the server, with follow-ups), Timeline,
-   Stats and Glasses screens. Tapping a source opens its Moment: the photo, nearby photos, what was said, audio. Build and run
+   Stats and Glasses screens. Tapping a source opens its frame: the photo, nearby frames, what was said, audio. Build and run
    it in the iOS Simulator with the server running on port 8000.
 10. **Glasses firmware**: the glasses upload frames and audio. Start with a test that takes one photo, since
     Rust has to call Espressif's C camera driver.
@@ -61,7 +63,7 @@ Everything else is your call.
 - Every step runs from `server/` as `uv run python -m <module>`; `--help` lists its options.
 - Pipeline for one video, in order: `memory.ingest.recording <video>` (`--replace` to rebuild; captions of
   unchanged frames are kept), then `memory.ingest.captions`, `.transcript`, `.faces` and `.facts` with the
-  session id.
+  moment id.
   Then `memory.agent "question"` (add `--plain` for the baseline), or `memory.search "question"` to see the
   raw facts.
 - Eval questions: `server/evals/questions.json` (the NASA clip) and the ignored

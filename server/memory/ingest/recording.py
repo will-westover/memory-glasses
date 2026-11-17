@@ -1,4 +1,4 @@
-"""Turn a recorded video into a session folder of kept frames, audio and a page to check them."""
+"""Turn a recorded video into a moment folder of kept frames, audio and a page to check them."""
 
 import argparse
 import html
@@ -29,7 +29,7 @@ MAX_FRAMES_PER_MINUTE = 60
 
 
 class IngestError(Exception):
-    """The recording could not be turned into a session."""
+    """The recording could not be turned into a moment."""
 
 
 def run(command: list[str], cwd: Path | None = None) -> bytes:
@@ -156,7 +156,7 @@ def caption_html(caption: dict | None) -> str:
 
 
 def write_page(
-    session_dir: Path,
+    moment_dir: Path,
     manifest: dict,
     captions: dict[str, dict] | None = None,
     transcript: list[tuple] | None = None,
@@ -180,7 +180,7 @@ def write_page(
 
     page = f"""<!doctype html>
 <meta charset="utf-8">
-<title>Session {html.escape(manifest["id"])}</title>
+<title>Moment {html.escape(manifest["id"])}</title>
 <style>
   body {{ font: 15px system-ui; margin: 24px; background: #111; color: #eee; }}
   .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }}
@@ -193,7 +193,7 @@ def write_page(
   .spoken p {{ margin: 4px 0; }}
   .spoken .dim {{ color: #999; font-size: 13px; margin-right: 6px; }}
 </style>
-<h1>Session {html.escape(manifest["id"])}</h1>
+<h1>Moment {html.escape(manifest["id"])}</h1>
 <p>From {html.escape(manifest["video"])}, {clock(manifest["duration_seconds"])} long.
 Kept {manifest["frames_kept"]} of {manifest["frames_sampled"]} frames, sampled at
 {manifest["frames_per_minute"]:g} a minute. {manifest.get("frames_blurry", 0)} were too blurry and the rest
@@ -207,21 +207,21 @@ looked the same as the frame before.</p>
 </div>
 """
 
-    (session_dir / "index.html").write_text(page)
+    (moment_dir / "index.html").write_text(page)
 
 
-def refresh_page(conn, session_dir: Path) -> None:
-    """Rewrite a session's index.html from the database."""
-    manifest = json.loads((session_dir / "manifest.json").read_text())
+def refresh_page(conn, moment_dir: Path) -> None:
+    """Rewrite a moment's index.html from the database."""
+    manifest = json.loads((moment_dir / "manifest.json").read_text())
 
     captions = {Path(frame["image_path"]).name: frame for frame in db.captioned_frames(conn, manifest["id"])}
 
-    write_page(session_dir, manifest, captions, db.transcript(conn, manifest["id"]))
+    write_page(moment_dir, manifest, captions, db.transcript(conn, manifest["id"]))
 
 
-def build_session(video: Path, info: dict, build_dir: Path, session_id: str,
+def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str,
                   frames_per_minute: float, max_distance: int, max_blur: float) -> None:
-    """Fill a folder with the session's kept frames, audio, manifest and page."""
+    """Fill a folder with the moment's kept frames, audio, manifest and page."""
     started = start_time(info, video)
     place = location(info)
     frames_dir = build_dir / "frames"
@@ -237,7 +237,7 @@ def build_session(video: Path, info: dict, build_dir: Path, session_id: str,
         extract_audio(video, build_dir / "audio.wav")
 
     manifest = {
-        "id": session_id,
+        "id": moment_id,
         "source": "recording",
         "video": video.name,
         "started_at": started.isoformat(),
@@ -297,7 +297,7 @@ def ingest(
     max_blur: float = DEFAULT_MAX_BLUR,
     replace: bool = False,
 ) -> Path:
-    """Turn a video into a session folder and return the folder's path."""
+    """Turn a video into a moment folder and return the folder's path."""
     if not video.is_file():
         raise IngestError(f"no such file: {video}")
 
@@ -305,29 +305,29 @@ def ingest(
         raise IngestError(f"frames per minute must be between 0 and {MAX_FRAMES_PER_MINUTE}")
 
     info = video_info(video)
-    session_id = start_time(info, video).strftime("%Y-%m-%dT%H-%M-%S")
-    session_dir = data_dir / "sessions" / session_id
-    build_dir = data_dir / "sessions" / f"{session_id}.building"
+    moment_id = start_time(info, video).strftime("%Y-%m-%dT%H-%M-%S")
+    moment_dir = data_dir / "moments" / moment_id
+    build_dir = data_dir / "moments" / f"{moment_id}.building"
 
-    if session_dir.exists() and not replace:
-        raise IngestError(f"{session_dir} already exists. Pass --replace to build it again.")
+    if moment_dir.exists() and not replace:
+        raise IngestError(f"{moment_dir} already exists. Pass --replace to build it again.")
 
     shutil.rmtree(build_dir, ignore_errors=True)
 
     try:
-        build_session(video, info, build_dir, session_id, frames_per_minute, max_distance, max_blur)
+        build_moment(video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur)
     except Exception:
         shutil.rmtree(build_dir, ignore_errors=True)
         raise
 
-    shutil.rmtree(session_dir, ignore_errors=True)
-    build_dir.rename(session_dir)
+    shutil.rmtree(moment_dir, ignore_errors=True)
+    build_dir.rename(moment_dir)
 
-    return session_dir
+    return moment_dir
 
 
 def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Turn a recorded video into a session folder.")
+    parser = argparse.ArgumentParser(description="Turn a recorded video into a moment folder.")
     parser.add_argument("video", type=Path)
     parser.add_argument(
         "--frames-per-minute", type=float,
@@ -339,26 +339,26 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--max-blur", type=float, default=DEFAULT_MAX_BLUR,
-        help="a moment is dropped when its sharpest frame scores above this; raise it to keep more",
+        help="a slot is dropped when its sharpest frame scores above this; raise it to keep more",
     )
-    parser.add_argument("--replace", action="store_true", help="rebuild the session if it already exists")
+    parser.add_argument("--replace", action="store_true", help="rebuild the moment if it already exists")
 
     return parser.parse_args()
 
 
-def print_report(session_dir: Path) -> None:
-    manifest = json.loads((session_dir / "manifest.json").read_text())
+def print_report(moment_dir: Path) -> None:
+    manifest = json.loads((moment_dir / "manifest.json").read_text())
 
     print(f"Kept {manifest['frames_kept']} of {manifest['frames_sampled']} frames"
           f" ({manifest['frames_blurry']} too blurry).")
     print(f"Sound: {'audio.wav' if manifest['audio'] else 'none'}")
-    print(f"Look at: {session_dir / 'index.html'}")
+    print(f"Look at: {moment_dir / 'index.html'}")
 
 
-def save_to_database(session_dir: Path) -> None:
+def save_to_database(moment_dir: Path) -> None:
     try:
         with db.connect() as conn:
-            saved = db.save_session(conn, session_dir)
+            saved = db.save_moment(conn, moment_dir)
 
         print(f"Saved to the database. {saved['captions_kept']} captions kept, {saved['captions_lost']} lost.")
 
@@ -381,7 +381,7 @@ def main() -> int:
     args = parse_arguments()
 
     try:
-        session_dir = ingest(
+        moment_dir = ingest(
             args.video,
             frames_per_minute=saved_rate() if args.frames_per_minute is None else args.frames_per_minute,
             max_distance=args.max_distance,
@@ -392,8 +392,8 @@ def main() -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
-    print_report(session_dir)
-    save_to_database(session_dir)
+    print_report(moment_dir)
+    save_to_database(moment_dir)
 
     return 0
 

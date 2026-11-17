@@ -61,7 +61,7 @@ def main() -> int:
     with db.connect() as conn:
         if args.command == "add":
             db.save_place(conn, args.name, args.lat, args.lon, args.radius)
-            print(f"Saved {args.name}. Rebuild a session's facts to use it.")
+            print(f"Saved {args.name}. Rebuild a moment's facts to use it.")
 
         for name, lat, lon, radius_m in db.places(conn):
             print(f"{name:<20} {lat:>10.5f} {lon:>11.5f}  {radius_m:.0f} m")

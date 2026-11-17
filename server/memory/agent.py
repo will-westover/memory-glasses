@@ -21,11 +21,11 @@ PLAIN_RESULTS = 10
 
 TIMELINE_LIMIT = 60
 
-RECENT_SESSIONS = 20
+RECENT_MOMENTS = 20
 
 INSTRUCTIONS = """\
 You answer questions for someone who wears camera glasses. The glasses record what the wearer sees and hears,
-and that record is kept as facts: moments (what was happening), objects and where each one was, text that was
+and that record is kept as facts: frames (what was happening in each photo), objects and where each one was, text that was
 readable, speech, summaries of what happened and what was said, and which people the wearer has named
 were in view. Each fact starts with its number in [brackets] and the time it was recorded. "I" and "me"
 in a question mean the wearer. Speakers are labelled with letters, not names.
@@ -53,7 +53,7 @@ PLAIN_NOTES = """
 
 You are given the facts that one search found for the question. You cannot search again."""
 
-LONG_STRETCH = "This stretch is long, so it is summarised. Ask for a shorter stretch to see every moment."
+LONG_STRETCH = "This stretch is long, so it is summarised. Ask for a shorter stretch to see every frame."
 
 ISO_TIME = "ISO 8601, e.g. 2026-11-11T19:54:00"
 
@@ -77,7 +77,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "timeline",
-        "description": "List what happened between two times, in order: each moment and what was said.",
+        "description": "List what happened between two times, in order: each frame and what was said.",
         "strict": True,
         "parameters": {
             "type": "object",
@@ -103,7 +103,7 @@ def instructions(conn, notes: str) -> str:
     places = db.places(conn)
     lines = []
 
-    for _, _, started_at, duration, _, _, lat, lon in db.list_sessions(conn)[:RECENT_SESSIONS]:
+    for _, _, started_at, duration, _, _, lat, lon in db.list_moments(conn)[:RECENT_MOMENTS]:
         place = place_for(lat, lon, places)
 
         start = started_at.astimezone()
@@ -127,7 +127,7 @@ def parse_time(text: str | None) -> datetime | None:
 
 
 def fit(facts: list[dict], limit: int = TIMELINE_LIMIT) -> list[dict]:
-    """Return the moments and speech if they fit in `limit`, otherwise the summaries of that stretch."""
+    """Return the frames and speech if they fit in `limit`, otherwise the summaries of that stretch."""
     detail = [fact for fact in facts if fact["kind"] != "summary"]
 
     if len(detail) <= limit:
@@ -281,7 +281,7 @@ def print_sources(sources: list[dict]) -> None:
 
     for fact in sources:
         print(f"  [{fact['id']}] {fact['at'].astimezone():%a %d %b %H:%M:%S}, {clock(fact['offset_seconds'])} into"
-              f" {fact['session_id']}\n      {fact['text']}")
+              f" {fact['moment_id']}\n      {fact['text']}")
 
         if fact["image_path"]:
             print(f"      {fact['image_path']}")
