@@ -57,8 +57,7 @@ struct RateControl: View {
                 }
 
                 Button("Add frames: \(Int(rate)) a minute") { Task { await reprocess() } }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
+                    .buttonStyle(FilledButton())
             }
 
             if let problem {

@@ -67,8 +67,7 @@ struct AskView: View {
                 Text("Ask about anything you saw or heard.")
             } actions: {
                 Button("New chat", action: newChat)
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
+                    .buttonStyle(FilledButton())
             }
         } else {
             ContentUnavailableView.search(text: search)

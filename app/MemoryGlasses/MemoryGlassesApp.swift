@@ -103,3 +103,25 @@ struct SectionTitle: View {
             .foregroundStyle(.secondary)
     }
 }
+
+struct FilledButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        FilledLabel(label: configuration.label, pressed: configuration.isPressed)
+    }
+}
+
+struct FilledLabel<Content: View>: View {
+    let label: Content
+    let pressed: Bool
+
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(Color(.systemBackground))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(Color.primary.opacity(enabled ? (pressed ? 0.7 : 1) : 0.3), in: Capsule())
+    }
+}

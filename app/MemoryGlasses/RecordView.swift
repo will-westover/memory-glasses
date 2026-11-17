@@ -99,8 +99,7 @@ struct RecordView: View {
             VStack(spacing: 12) {
                 status("Uploaded. It's being processed and will appear on the Timeline.", progress: nil)
                 Button("Done") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
+                    .buttonStyle(FilledButton())
             }
         case .failed(let message):
             VStack(spacing: 12) {
