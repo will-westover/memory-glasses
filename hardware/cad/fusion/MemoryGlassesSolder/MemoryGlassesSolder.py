@@ -92,6 +92,11 @@ BOARD_LABELS = [
     ("D4", 9.2, -0.7), ("D5", 9.2, -3.25),
     ("GND", 38.0, 14.6), ("VCC", 38.0, 12.1), ("SCL", 38.0, 9.5), ("SDA", 38.0, 7.0),
 ]
+WIRE_LENGTH_LABELS = [
+    (("red", "black", "yellow", "green"), "Cut red, black, yellow, green: 230 mm each", -12.0, 23.0, 44.0, 2.0, 1.4),
+    (("white", "blue"), "Cut white, blue: 260 mm each", 6.0, -15.4, 24.0, 2.0, 1.4),
+    (("lead_red", "lead_black"), "Battery's own leads (add a short wire if red won't reach)", 44.0, -29.5, 50.0, 2.0, 1.4),
+]
 PART_LABELS = [
     ("USB at this end", -9.0, 17.0, 22.0, 2.5, 1.8),
     ("XIAO, back up", -15.0, -12.0, 17.0, 2.5, 1.8),
@@ -183,7 +188,7 @@ def add_text(sk, y, text, T, s_left, s_top, width, height, size):
     sk.sketchTexts.add(ti)
 
 
-def add_labels(comp, T, i, title, detail, y_back):
+def add_labels(comp, T, i, title, detail, y_back, wires):
     y = y_back + 7.0
     sk = comp.sketches.add(v1.plane_at_y(comp, y))
     sk.name = "Labels"
@@ -191,6 +196,9 @@ def add_labels(comp, T, i, title, detail, y_back):
         add_text(sk, y, text, T, sx, sz, 6.0, 2.0, 1.5)
     for text, sx, sz, width, height, size in PART_LABELS:
         add_text(sk, y, text, T, sx, sz, width, height, size)
+    for keys, text, sx, sz, width, height, size in WIRE_LENGTH_LABELS:
+        if any(key in wires for key in keys):
+            add_text(sk, y, text, T, sx, sz, width, height, size)
     add_text(sk, y, "STEP {} of {}: {}".format(i + 1, len(STEPS), title.upper()), T, -15.0, 47.0, 125.0, 6.0, 4.5)
     add_text(sk, y, detail, T, -15.0, 40.0, 125.0, 16.0, 2.6)
 
@@ -233,7 +241,7 @@ def build_steps(design, xiao, y_back):
         bf.finishEdit()
         for k, (_, label) in enumerate(entries):
             bf.bodies.item(k).name = label
-        add_labels(comp, T, i, title, detail, y_back)
+        add_labels(comp, T, i, title, detail, y_back, done_wires + new_wires)
 
         done_wires += new_wires
         done_joints += joints
