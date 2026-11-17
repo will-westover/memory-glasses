@@ -40,25 +40,12 @@ struct MomentView: View {
         let frame = detail.frames[min(index, detail.frames.count - 1)]
 
         return VStack(alignment: .leading, spacing: 24) {
-            TabView(selection: $index) {
-                ForEach(detail.frames.indices, id: \.self) { position in
-                    FrameImage(path: detail.frames[position].image)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .padding(.horizontal, 20)
-                        .tag(position)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .aspectRatio(4 / 3, contentMode: .fit)
+            PhotoPager(frames: detail.frames, index: $index)
 
             VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text("\(frame.at.formatted(date: .omitted, time: .standard)) · \(clock(frame.offsetSeconds)) in")
-                    Spacer()
-                    Text("\(index + 1) of \(detail.frames.count)")
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                Text("\(frame.at.formatted(date: .omitted, time: .standard)) · \(clock(frame.offsetSeconds)) in")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
 
                 Text(frame.summary)
                     .lineSpacing(3)

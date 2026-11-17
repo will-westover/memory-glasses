@@ -92,17 +92,14 @@ struct SessionView: View {
     @State private var detail: SessionDetail?
     @State private var problem: String?
     @State private var showTranscript = false
-    @State private var highlighted: Int?
+    @State private var index = 0
 
     var body: some View {
         Group {
             if let detail {
-                ScrollViewReader { scroll in
-                    ScrollView {
-                        content(detail)
-                            .padding(20)
-                    }
-                    .task { await focus(detail, scroll) }
+                ScrollView {
+                    content(detail)
+                        .padding(.vertical, 12)
                 }
             } else if let problem {
                 ServerProblem(message: problem, retry: load)
@@ -117,29 +114,44 @@ struct SessionView: View {
 
     private func content(_ detail: SessionDetail) -> some View {
         VStack(alignment: .leading, spacing: 28) {
-            if !detail.summaries.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionTitle("Summary")
+            if !detail.frames.isEmpty {
+                let frame = detail.frames[min(index, detail.frames.count - 1)]
 
-                    ForEach(detail.summaries) { Text($0.text).lineSpacing(3) }
-                }
-            }
+                VStack(alignment: .leading, spacing: 14) {
+                    PhotoPager(frames: detail.frames, index: $index)
 
-            if !detail.transcript.isEmpty {
-                transcript(detail.transcript)
-            }
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("\(clock(frame.offsetSeconds)) in")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
 
-            VStack(alignment: .leading, spacing: 24) {
-                SectionTitle("\(detail.frames.count) moments")
+                        Text(frame.summary)
+                            .font(.subheadline)
+                            .lineSpacing(2)
 
-                ForEach(detail.frames) { frame in
-                    NavigationLink(value: moment(frame)) {
-                        MomentRow(frame: frame, highlighted: highlighted == frame.id)
+                        NavigationLink(value: moment(frame)) {
+                            Label("Listen and see details", systemImage: "waveform")
+                                .font(.subheadline.weight(.medium))
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .id(frame.id)
+                    .padding(.horizontal, 20)
                 }
             }
+
+            VStack(alignment: .leading, spacing: 28) {
+                if !detail.summaries.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionTitle("Summary")
+
+                        ForEach(detail.summaries) { Text($0.text).lineSpacing(3) }
+                    }
+                }
+
+                if !detail.transcript.isEmpty {
+                    transcript(detail.transcript)
+                }
+            }
+            .padding(.horizontal, 20)
         }
     }
 
@@ -169,52 +181,20 @@ struct SessionView: View {
         }
     }
 
-    private func focus(_ detail: SessionDetail, _ scroll: ScrollViewProxy) async {
-        guard let offset = link.focus,
-              let nearest = detail.frames.min(by: { abs($0.offsetSeconds - offset) < abs($1.offsetSeconds - offset) })
-        else { return }
-
-        try? await Task.sleep(for: .milliseconds(300))
-        withAnimation(.snappy) { scroll.scrollTo(nearest.id, anchor: .center) }
-        highlighted = nearest.id
-
-        try? await Task.sleep(for: .seconds(2.5))
-        withAnimation(.easeOut(duration: 0.6)) { highlighted = nil }
-    }
-
     private func load() async {
         do {
-            detail = try await API.current.get("/sessions/\(link.id)")
+            let loaded: SessionDetail = try await API.current.get("/sessions/\(link.id)")
+
+            if let focus = link.focus {
+                index = loaded.frames.indices.min {
+                    abs(loaded.frames[$0].offsetSeconds - focus) < abs(loaded.frames[$1].offsetSeconds - focus)
+                } ?? 0
+            }
+
+            detail = loaded
             problem = nil
         } catch {
             problem = error.localizedDescription
         }
-    }
-}
-
-struct MomentRow: View {
-    let frame: Frame
-    let highlighted: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            FrameImage(path: frame.image)
-                .aspectRatio(4 / 3, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.accentColor, lineWidth: highlighted ? 4 : 0)
-                }
-
-            Text(clock(frame.offsetSeconds))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
-
-            Text(frame.summary)
-                .font(.subheadline)
-                .lineSpacing(2)
-                .multilineTextAlignment(.leading)
-        }
-        .contentShape(Rectangle())
     }
 }
