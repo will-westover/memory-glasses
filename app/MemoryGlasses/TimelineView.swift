@@ -2,8 +2,10 @@ import SwiftUI
 
 struct TimelineView: View {
     @State private var moments: [MomentSummary] = []
+    @State private var uploads: [UploadStatus] = []
     @State private var problem: String?
     @State private var loaded = false
+    @State private var recording = false
 
     var body: some View {
         NavigationStack {
@@ -14,6 +16,12 @@ struct TimelineView: View {
                     ContentUnavailableView("Nothing recorded yet", systemImage: "clock")
                 } else {
                     List {
+                        if !active.isEmpty {
+                            Section {
+                                ForEach(active) { UploadRow(upload: $0) }
+                            }
+                        }
+
                         ForEach(days, id: \.self) { day in
                             Section {
                                 ForEach(moments.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }) { moment in
@@ -34,9 +42,28 @@ struct TimelineView: View {
                 }
             }
             .navigationTitle("Timeline")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { recording = true } label: { Image(systemName: "record.circle") }
+                        .accessibilityLabel("Record a moment")
+                }
+            }
+            .fullScreenCover(isPresented: $recording, onDismiss: { Task { await load() } }) { RecordView() }
             .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
             .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
             .task { await load() }
+            .task(id: active.map(\.id)) { await watchUploads() }
+        }
+    }
+
+    private var active: [UploadStatus] {
+        uploads.filter { $0.status != "ready" && $0.receivedAt > .now.addingTimeInterval(-24 * 3600) }
+    }
+
+    private func watchUploads() async {
+        while !Task.isCancelled && active.contains(where: { $0.status == "processing" }) {
+            try? await Task.sleep(for: .seconds(4))
+            await load()
         }
     }
 
@@ -49,6 +76,7 @@ struct TimelineView: View {
     private func load() async {
         do {
             moments = try await API.current.get("/moments")
+            uploads = (try? await API.current.get("/uploads")) ?? []
             problem = nil
         } catch {
             problem = error.localizedDescription
@@ -93,6 +121,7 @@ struct MomentView: View {
     @State private var problem: String?
     @State private var showTranscript = false
     @State private var index = 0
+    @State private var playingFrom: Double?
 
     var body: some View {
         Group {
@@ -110,6 +139,9 @@ struct MomentView: View {
         .navigationTitle(link.startedAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .sheet(isPresented: Binding(get: { playingFrom != nil }, set: { if !$0 { playingFrom = nil } })) {
+            MomentVideo(momentId: link.id, start: playingFrom ?? 0)
+        }
     }
 
     private func content(_ detail: MomentDetail) -> some View {
@@ -121,6 +153,13 @@ struct MomentView: View {
                     PhotoPager(frames: detail.frames, index: $index)
 
                     VStack(alignment: .leading, spacing: 12) {
+                        if detail.hasVideo {
+                            Button { playingFrom = frame.offsetSeconds } label: {
+                                Label("Play video from here", systemImage: "play.fill")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                        }
+
                         Text("\(clock(frame.offsetSeconds)) in")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.tertiary)
@@ -198,5 +237,37 @@ struct MomentView: View {
         } catch {
             problem = error.localizedDescription
         }
+    }
+}
+
+struct UploadRow: View {
+    let upload: UploadStatus
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.tertiarySystemFill))
+
+                if upload.status == "failed" {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                } else {
+                    ProgressView()
+                }
+            }
+            .frame(width: 56, height: 56)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(upload.status == "failed" ? "Processing failed" : "New moment")
+                    .font(.body.weight(.medium))
+
+                Text(upload.status == "failed" ? (upload.error ?? "") : (upload.step ?? "Waiting") + "…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }

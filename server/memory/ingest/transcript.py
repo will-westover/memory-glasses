@@ -29,7 +29,7 @@ def transcribe(path: Path, model: str = TRANSCRIBE_MODEL):
     audio = small_mp3(path)
 
     if len(audio) > UPLOAD_LIMIT_BYTES:
-        raise SystemExit(f"error: {path.name} is too long to send in one request. Split the moment first.")
+        raise RuntimeError(f"{path.name} is too long to send in one request. Split the moment first.")
 
     response = llm.client().audio.transcriptions.create(
         model=model,
@@ -52,6 +52,29 @@ def print_report(lines: list[tuple], seconds: float, usage, usd: float, moment_d
     print(f"Look at: {moment_dir / 'index.html'}")
 
 
+def transcribe_moment(conn, moment_id: str, redo: bool = False) -> dict | None:
+    """Transcribe a moment's audio and store the lines. Return what it did, or None if there was nothing to do."""
+    moment_dir = DATA_DIR / "moments" / moment_id
+    audio_path = moment_dir / "audio.wav"
+
+    if not audio_path.exists() or (db.transcript(conn, moment_id) and not redo):
+        return None
+
+    llm.require_price(TRANSCRIBE_MODEL)
+
+    started = time.monotonic()
+    segments, usage = transcribe(audio_path)
+    seconds = time.monotonic() - started
+
+    with conn.transaction():
+        db.save_transcript(conn, moment_id, segments)
+        usd = llm.log_cost(conn, "transcript", TRANSCRIBE_MODEL, usage)
+
+    refresh_page(conn, moment_dir)
+
+    return {"lines": db.transcript(conn, moment_id), "seconds": seconds, "usage": usage, "usd": usd}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Transcribe a moment's audio.")
     parser.add_argument("moment_id")
@@ -59,31 +82,19 @@ def main() -> int:
     args = parser.parse_args()
 
     moment_dir = DATA_DIR / "moments" / args.moment_id
-    audio_path = moment_dir / "audio.wav"
 
-    if not audio_path.exists():
-        print(f"error: no audio at {audio_path}", file=sys.stderr)
+    if not (moment_dir / "audio.wav").exists():
+        print(f"error: no audio at {moment_dir / 'audio.wav'}", file=sys.stderr)
         return 1
 
     with db.connect() as conn:
-        if db.transcript(conn, args.moment_id) and not args.redo:
-            print("This moment already has a transcript. Pass --redo to transcribe it again.")
-            return 0
+        result = transcribe_moment(conn, args.moment_id, args.redo)
 
-        llm.require_price(TRANSCRIBE_MODEL)
+    if result is None:
+        print("This moment already has a transcript. Pass --redo to transcribe it again.")
+        return 0
 
-        started = time.monotonic()
-        segments, usage = transcribe(audio_path)
-        seconds = time.monotonic() - started
-
-        with conn.transaction():
-            db.save_transcript(conn, args.moment_id, segments)
-            usd = llm.log_cost(conn, "transcript", TRANSCRIBE_MODEL, usage)
-
-        lines = db.transcript(conn, args.moment_id)
-        refresh_page(conn, moment_dir)
-
-    print_report(lines, seconds, usage, usd, moment_dir)
+    print_report(result["lines"], result["seconds"], result["usage"], result["usd"], moment_dir)
 
     return 0
 

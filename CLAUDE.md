@@ -61,15 +61,12 @@ Everything else is your call.
 
 - Tests: `uv run pytest` in `server/`.
 - Every step runs from `server/` as `uv run python -m <module>`; `--help` lists its options.
-- Pipeline for one video, in order: `memory.ingest.recording <video>` (`--replace` to rebuild; captions of
-  unchanged frames are kept), then `memory.ingest.captions`, `.transcript`, `.faces` and `.facts` with the
-  moment id.
-  Then `memory.agent "question"` (add `--plain` for the baseline), or `memory.search "question"` to see the
-  raw facts.
-- Eval questions: `server/evals/questions.json` (the NASA clip) and the ignored
-  `data/evals/questions.json` (the user's own recordings). Runs are saved in `data/evals/runs/`.
-- API: `uv run uvicorn memory.api:app` in `server/`, then open `/docs`. Set `API_TOKEN` in `server/.env`
-  to require `Authorization: Bearer <token>`; add `--host 0.0.0.0` to reach it from a phone.
+- Process a video in one go: `memory.pipeline <video> [--frames-per-minute N]` (frames, captions, transcript,
+  faces, facts). The single steps still run on their own: `memory.ingest.recording`, `.captions`, `.transcript`,
+  `.faces`, `.facts`. The original video is kept in the moment folder. Then `memory.agent "question"` (add
+  `--plain` for the baseline), or `memory.search "question"` to see the raw facts.
+- The app records moments on an iPhone through ARKit and uploads them (`POST /moments`); they process in the
+  background. Recording needs a real iPhone; the Simulator has no camera tracking.
 - People: `memory.people list`, `name <id> "Sam"`, `merge <id> <into id>`, `forget <id>`, or the People screen in
   the app. Faces use OpenCV's YuNet and SFace models in the ignored `server/models/` (from github.com/opencv/opencv_zoo).
   The user has written consent from the people recorded.

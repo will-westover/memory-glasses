@@ -524,6 +524,35 @@ def face_crop(conn: psycopg.Connection, face_id: int) -> tuple | None:
     ).fetchone()
 
 
+def new_upload(conn: psycopg.Connection, frames_per_minute: float):
+    """Record a new upload and return its id."""
+    (upload_id,) = conn.execute(
+        "insert into upload (frames_per_minute) values (%s) returning id", (frames_per_minute,)
+    ).fetchone()
+
+    return upload_id
+
+
+def update_upload(conn: psycopg.Connection, upload_id, **fields) -> None:
+    """Change an upload's status, step, moment or error."""
+    names = ", ".join(f"{name} = %({name})s" for name in fields)
+    conn.execute(f"update upload set {names} where id = %(id)s", {**fields, "id": upload_id})
+
+
+def uploads(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
+    """Return the most recent uploads, newest first."""
+    rows = conn.execute(
+        "select id, received_at, status, step, moment_id, error from upload order by received_at desc limit %s",
+        (limit,),
+    )
+
+    return [
+        {"id": upload_id, "received_at": received_at, "status": status, "step": step, "moment_id": moment_id,
+         "error": error}
+        for upload_id, received_at, status, step, moment_id, error in rows
+    ]
+
+
 def print_moments(rows: list[tuple]) -> None:
     print(f"{'moment':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
 

@@ -9,6 +9,7 @@ dependencies = [
     "openai>=3.49.0",
     "opencv-python-headless>=5.0.0.93",
     "psycopg[binary]>=3.3.8",
+    "python-multipart>=0.0.34",
     "uvicorn>=0.54.0",
 ]
 

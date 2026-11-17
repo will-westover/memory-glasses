@@ -3,17 +3,18 @@
 import io
 import json
 import os
+import shutil
 import wave
 from uuid import UUID
 from collections.abc import Iterator
 
 import psycopg
 import cv2
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from memory import db
+from memory import db, pipeline
 from memory.agent import ask_agent, ask_plain
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
@@ -23,6 +24,8 @@ from memory.places import place_for
 
 MOMENTS_DIR = (DATA_DIR / "moments").resolve()
 MAX_CLIP_SECONDS = 120
+UPLOADS_DIR = DATA_DIR / "uploads"
+EXTRA_FILES = {"poses": "poses.json", "mesh": "mesh.obj", "world_map": "world.map"}
 
 
 class Exchange(BaseModel):
@@ -148,6 +151,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
         "transcript": db.transcript_lines(conn, moment_id),
         "summaries": [fact_json(fact) for fact in db.summaries(conn, moment_id)],
+        "has_video": has_video(moment_id),
     }
 
 
@@ -183,6 +187,94 @@ def audio(moment_id: str, start: float, end: float) -> Response:
         raise HTTPException(404, "no sound for this moment")
 
     return Response(audio_clip(file, start, end), media_type="audio/wav")
+
+
+def save_upload(upload: UploadFile, target) -> None:
+    """Write an uploaded file to disk without holding it all in memory."""
+    with open(target, "wb") as out:
+        shutil.copyfileobj(upload.file, out, length=1024 * 1024)
+
+
+def run_upload(upload_id, video, extras: dict, frames_per_minute: float) -> None:
+    """Process an uploaded recording, keeping its status up to date."""
+    with db.connect() as conn:
+        def step(name: str) -> None:
+            db.update_upload(conn, upload_id, step=name)
+            conn.commit()
+
+        try:
+            moment_id = pipeline.process(video, frames_per_minute, extras, on_step=step)
+            db.update_upload(conn, upload_id, status="ready", step=None, moment_id=moment_id)
+            shutil.rmtree(video.parent, ignore_errors=True)
+        except Exception as error:
+            conn.rollback()
+            db.update_upload(conn, upload_id, status="failed", error=str(error))
+
+
+@app.post("/moments")
+def upload_moment(
+    tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+    frames_per_minute: float = Form(FRAMES_PER_MINUTE, ge=0, le=MAX_FRAMES_PER_MINUTE),
+    poses: UploadFile | None = File(None),
+    mesh: UploadFile | None = File(None),
+    world_map: UploadFile | None = File(None),
+    conn: psycopg.Connection = Depends(connection),
+) -> dict:
+    """Receive a recording and its extra files, and process it in the background."""
+    upload_id = db.new_upload(conn, frames_per_minute)
+    conn.commit()
+
+    folder = UPLOADS_DIR / str(upload_id)
+    folder.mkdir(parents=True)
+
+    suffix = os.path.splitext(video.filename or "")[1].lower() or ".mov"
+    video_path = folder / f"video{suffix}"
+    save_upload(video, video_path)
+
+    extras = {}
+    for field, upload in (("poses", poses), ("mesh", mesh), ("world_map", world_map)):
+        if upload is not None:
+            extras[EXTRA_FILES[field]] = folder / EXTRA_FILES[field]
+            save_upload(upload, extras[EXTRA_FILES[field]])
+
+    tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute)
+
+    return {"id": upload_id, "status": "processing"}
+
+
+@app.get("/uploads")
+def uploads(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
+    """List recent uploads and how far along each is."""
+    return db.uploads(conn)
+
+
+def video_path(moment_id: str):
+    """Return the path of a moment's original video, or None if it wasn't kept."""
+    folder = (MOMENTS_DIR / moment_id).resolve()
+    manifest = folder / "manifest.json"
+
+    if not folder.is_relative_to(MOMENTS_DIR) or not manifest.is_file():
+        return None
+
+    video_file = json.loads(manifest.read_text()).get("video_file")
+
+    return folder / video_file if video_file and (folder / video_file).is_file() else None
+
+
+def has_video(moment_id: str) -> bool:
+    return video_path(moment_id) is not None
+
+
+@app.get("/moments/{moment_id}/video")
+def moment_video(moment_id: str) -> FileResponse:
+    """Stream a moment's original video."""
+    path = video_path(moment_id)
+
+    if path is None:
+        raise HTTPException(404, "no video for this moment")
+
+    return FileResponse(path, media_type="video/quicktime" if path.suffix == ".mov" else None)
 
 
 @app.get("/images/{path:path}")

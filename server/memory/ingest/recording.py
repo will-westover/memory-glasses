@@ -66,7 +66,8 @@ def location(info: dict) -> tuple[float, float] | None:
 
 def start_time(info: dict, video: Path) -> datetime:
     """Return when the recording started, from its creation tag or the file's date."""
-    created = info["format"].get("tags", {}).get("creation_time")
+    tags = info["format"].get("tags", {})
+    created = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")
 
     if created:
         return datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone()
@@ -219,9 +220,33 @@ def refresh_page(conn, moment_dir: Path) -> None:
     write_page(moment_dir, manifest, captions, db.transcript(conn, manifest["id"]))
 
 
-def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str,
-                  frames_per_minute: float, max_distance: int, max_blur: float) -> None:
-    """Fill a folder with the moment's kept frames, audio, manifest and page."""
+def keep_file(source: Path, target: Path) -> None:
+    """Put a copy of a file at target, as a hard link when both are on the same disk."""
+    try:
+        target.hardlink_to(source)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+PLAYABLE = {".mov", ".mp4", ".m4v"}
+
+
+def keep_video(video: Path, folder: Path) -> str:
+    """Keep the original video in the folder, converted to MP4 if phones can't play its format. Return its name."""
+    if video.suffix.lower() in PLAYABLE:
+        name = f"video{video.suffix.lower()}"
+        keep_file(video, folder / name)
+        return name
+
+    run(["ffmpeg", "-v", "error", "-i", str(video), "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+         "-c:a", "aac", "-movflags", "+faststart", str(folder / "video.mp4")])
+
+    return "video.mp4"
+
+
+def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frames_per_minute: float,
+                 max_distance: int, max_blur: float, extras: dict[str, Path]) -> None:
+    """Fill a folder with the moment's video, kept frames, audio, extra files, manifest and page."""
     started = start_time(info, video)
     place = location(info)
     frames_dir = build_dir / "frames"
@@ -236,10 +261,18 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str,
     if has_sound(info):
         extract_audio(video, build_dir / "audio.wav")
 
+    video_file = keep_video(video, build_dir)
+
+    for name, source in extras.items():
+        keep_file(source, build_dir / name)
+
     manifest = {
         "id": moment_id,
         "source": "recording",
         "video": video.name,
+        "video_file": video_file,
+        "video_bytes": video.stat().st_size,
+        "extras": sorted(extras),
         "started_at": started.isoformat(),
         "duration_seconds": duration(info),
         "lat": place[0] if place else None,
@@ -296,8 +329,9 @@ def ingest(
     max_distance: int = DEFAULT_MAX_DISTANCE,
     max_blur: float = DEFAULT_MAX_BLUR,
     replace: bool = False,
+    extras: dict[str, Path] | None = None,
 ) -> Path:
-    """Turn a video into a moment folder and return the folder's path."""
+    """Turn a video into a moment folder and return the folder's path. extras are files kept alongside it."""
     if not video.is_file():
         raise IngestError(f"no such file: {video}")
 
@@ -315,7 +349,7 @@ def ingest(
     shutil.rmtree(build_dir, ignore_errors=True)
 
     try:
-        build_moment(video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur)
+        build_moment(video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur, extras or {})
     except Exception:
         shutil.rmtree(build_dir, ignore_errors=True)
         raise

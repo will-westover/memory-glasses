@@ -1,0 +1,68 @@
+"""Run every step on a recording: frames, captions, transcript, faces and facts.
+
+    uv run python -m memory.pipeline path/to/video.mov --frames-per-minute 30
+"""
+
+import argparse
+import sys
+from collections.abc import Callable
+from pathlib import Path
+
+from memory import db
+from memory.config import FRAMES_PER_MINUTE
+from memory.ingest import captions, faces, facts, recording, transcript
+
+STEPS = ("Picking frames", "Describing frames", "Transcribing", "Finding faces", "Building facts")
+
+
+def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: dict[str, Path] | None = None,
+            replace: bool = False, on_step: Callable[[str], None] = lambda step: None) -> str:
+    """Turn a video into a searchable moment and return its id."""
+    on_step(STEPS[0])
+    moment_dir = recording.ingest(video, frames_per_minute=frames_per_minute, replace=replace, extras=extras)
+    moment_id = moment_dir.name
+
+    with db.connect() as conn:
+        db.save_moment(conn, moment_dir)
+        conn.commit()
+
+        on_step(STEPS[1])
+        captions.caption_moment(conn, moment_id)
+        conn.commit()
+
+        on_step(STEPS[2])
+        transcript.transcribe_moment(conn, moment_id)
+        conn.commit()
+
+        on_step(STEPS[3])
+        faces.find_faces(conn, moment_id)
+
+        on_step(STEPS[4])
+        facts.build_facts(conn, moment_id)
+        recording.refresh_page(conn, moment_dir)
+
+    return moment_id
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run every step on a recording.")
+    parser.add_argument("video", type=Path)
+    parser.add_argument("--frames-per-minute", type=float)
+    parser.add_argument("--replace", action="store_true", help="rebuild the moment if it already exists")
+    args = parser.parse_args()
+
+    rate = recording.saved_rate() if args.frames_per_minute is None else args.frames_per_minute
+
+    try:
+        moment_id = process(args.video, rate, replace=args.replace, on_step=lambda step: print(f"{step}…"))
+    except recording.IngestError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    print(f"Done: moment {moment_id}.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
