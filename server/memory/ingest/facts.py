@@ -49,7 +49,7 @@ def first_sentence(text: str) -> str:
     return head + "." if stop else text
 
 
-def frame_facts(frames: list[dict], place: str | None, room: str | None = None) -> list[dict]:
+def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
     """Return a frame fact for each frame, and a fact for each new object and piece of text in it."""
     facts = []
     previous_objects: set = set()
@@ -57,7 +57,7 @@ def frame_facts(frames: list[dict], place: str | None, room: str | None = None) 
     previous_people: set = set()
 
     for frame in frames:
-        where = at_place(place, room)
+        where = at_place(place, frame.get("room"))
         scene = first_sentence(frame["summary"])
         base = {"frame_id": frame["id"], "at": frame["at"], "offset_seconds": frame["offset_seconds"]}
 
@@ -215,8 +215,7 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     frames = db.captioned_frames(conn, moment_id)
     groups = passages(db.transcript_lines(conn, moment_id))
 
-    room = (db.moment_room(conn, moment_id) or {}).get("name")
-    facts = frame_facts(frames, place, room)
+    facts = frame_facts(frames, place)
     facts += [speech_fact(passage, place, "speech", spoken(passage)) for passage in groups]
     facts += summary_facts(conn, frames, groups, place)
 

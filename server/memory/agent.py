@@ -46,9 +46,9 @@ AGENT_NOTES = """
 
 You have three tools. search finds facts by what they are about. timeline lists what happened between two times,
 in order: use it for questions about a stretch of time, or about what came before or after something. nearby lists
-what was seen close to where one fact's frame was taken, across every moment in the same room: use it for
-questions about what was near something, or what was in the same spot another time. Facts from phone recordings
-say which room they were in and where, in metres. Call them
+what was seen close to where one fact's frame was taken, across every moment recorded in the same mapped place: use
+it for questions about what was near something, or what was in the same spot another time. Facts say which room
+they were in when it is known, and facts from phone recordings also say where, in metres. Call them
 until you can answer. If a search finds nothing relevant, try other words before giving up. Earlier messages
 in the conversation can tell you what a follow-up question refers to, but answer only from the facts."""
 
@@ -95,7 +95,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "nearby",
-        "description": "List what was seen near where a fact's frame was taken, in any moment in the same room.",
+        "description": "List what was seen near where a fact's frame was taken, in any moment recorded in the same mapped place.",
         "strict": True,
         "parameters": {
             "type": "object",

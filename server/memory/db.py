@@ -164,7 +164,7 @@ def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
     rows = conn.execute(
         "select f.id, f.image_path, f.captured_at, extract(epoch from f.captured_at - s.started_at),"
         "       case when f.x is null then null else json_build_array(f.x, f.y, f.z, f.yaw) end,"
-        "       f.summary,"
+        "       f.summary, r.name,"
         "       (select coalesce(json_agg(json_build_array(o.name, o.location)), '[]')"
         "          from frame_object o where o.frame_id = f.id),"
         "       (select coalesce(json_agg(json_build_array(t.text, t.surface)), '[]')"
@@ -172,7 +172,7 @@ def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
         "       ,(select coalesce(json_agg(distinct jsonb_build_object('id', p.id, 'name', p.name, 'face_id',"
         "          (select f2.id from face f2 where f2.person_id = p.id order by f2.w * f2.h * f2.score desc limit 1))), '[]')"
         "          from face fc join person p on p.id = fc.person_id where fc.frame_id = f.id)"
-        "  from frame f join moment s on s.id = f.moment_id"
+        "  from frame f join moment s on s.id = f.moment_id left join room r on r.id = f.room_id"
         " where f.moment_id = %s and f.captioned_at is not null"
         " order by f.captured_at",
         (moment_id,),
@@ -189,8 +189,9 @@ def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
             "texts": [tuple(item) for item in texts],
             "people": people,
             "position": pose,
+            "room": room,
         }
-        for frame_id, image_path, captured_at, offset, pose, summary, objects, texts, people in rows
+        for frame_id, image_path, captured_at, offset, pose, summary, room, objects, texts, people in rows
     ]
 
 
@@ -266,7 +267,7 @@ FACT_COLUMNS = (
     "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds, fact.text, frame.image_path,"
     "       frame.x, frame.z, room.name"
     "  from fact left join frame on frame.id = fact.frame_id"
-    "  join moment on moment.id = fact.moment_id left join room on room.id = moment.room_id"
+    "  join moment on moment.id = fact.moment_id left join room on room.id = frame.room_id"
 )
 
 
@@ -279,15 +280,16 @@ def fact_rows(rows) -> list[dict]:
 
 
 def nearby_facts(conn: psycopg.Connection, fact_id: int, metres: float, limit: int = 12) -> list[dict]:
-    """Return what was seen within `metres` of where a fact's frame was taken, in the same room, newest first."""
+    """Return what was seen within `metres` of where a fact's frame was taken, in the same mapped space, newest first."""
     return fact_rows(conn.execute(
         "with origin as ("
-        "    select frame.x, frame.z, frame.moment_id, moment.room_id from fact"
+        "    select frame.x, frame.z, frame.moment_id, moment.space_id, moment.in_space_map from fact"
         "      join frame on frame.id = fact.frame_id join moment on moment.id = frame.moment_id"
         "     where fact.id = %(id)s and frame.x is not null)"
         f" {FACT_COLUMNS}, origin"
         " where frame.x is not null and fact.id <> %(id)s and fact.kind in ('frame', 'object', 'text', 'person')"
-        "   and (moment.room_id = origin.room_id or frame.moment_id = origin.moment_id)"
+        "   and (frame.moment_id = origin.moment_id"
+        "        or (moment.space_id = origin.space_id and moment.in_space_map and origin.in_space_map))"
         "   and sqrt(power(frame.x - origin.x, 2) + power(frame.z - origin.z, 2)) <= %(metres)s"
         " order by fact.at desc limit %(limit)s",
         {"id": fact_id, "metres": metres, "limit": limit},
@@ -561,79 +563,167 @@ def captioned_images(conn: psycopg.Connection, moment_id: str) -> list[str]:
     return [image_path for (image_path,) in rows]
 
 
-def moment_room(conn: psycopg.Connection, moment_id: str) -> dict | None:
-    """Return the room a moment was recorded in, if known."""
+def moment_space(conn: psycopg.Connection, moment_id: str) -> dict | None:
+    """Return the space a moment was recorded in, if known, and whether it shares the space's map."""
     row = conn.execute(
-        "select r.id, r.name from moment m join room r on r.id = m.room_id where m.id = %s", (moment_id,)
+        "select s.id, s.name, m.in_space_map from moment m join space s on s.id = m.space_id where m.id = %s",
+        (moment_id,),
     ).fetchone()
 
-    return {"id": row[0], "name": row[1]} if row else None
+    return {"id": row[0], "name": row[1], "in_map": row[2]} if row else None
 
 
 def located_moments(conn: psycopg.Connection) -> list[dict]:
-    """Return every moment that has a location, newest first, with its room if known."""
+    """Return every moment that has a location, newest first, with its space if known."""
     rows = conn.execute(
-        "select m.id, m.source, m.started_at, m.duration_seconds, m.lat, m.lon, m.room_id, r.name"
-        "  from moment m left join room r on r.id = m.room_id"
+        "select m.id, m.source, m.started_at, m.duration_seconds, m.lat, m.lon, m.space_id, s.name"
+        "  from moment m left join space s on s.id = m.space_id"
         " where m.lat is not null order by m.started_at desc"
     )
 
     return [
         {"id": moment_id, "source": source, "started_at": started_at, "duration_seconds": duration, "lat": lat,
-         "lon": lon, "room": {"id": room_id, "name": name} if room_id else None}
-        for moment_id, source, started_at, duration, lat, lon, room_id, name in rows
+         "lon": lon, "space": {"id": space_id, "name": name} if space_id else None}
+        for moment_id, source, started_at, duration, lat, lon, space_id, name in rows
     ]
 
 
-def rooms(conn: psycopg.Connection) -> list[dict]:
-    """Return every room, most recently updated first, with how many moments were recorded in it."""
+def spaces(conn: psycopg.Connection) -> list[dict]:
+    """Return every space, most recently updated first, with its rooms and how many moments it has."""
     rows = conn.execute(
-        "select r.id, r.name, r.lat, r.lon, r.updated_at, count(m.id)"
-        "  from room r left join moment m on m.room_id = r.id"
-        " group by r.id order by r.updated_at desc"
+        "select s.id, s.name, s.lat, s.lon, s.updated_at, s.map_path is not null,"
+        "       (select count(*) from moment m where m.space_id = s.id),"
+        "       (select coalesce(json_agg(r.name order by r.name), '[]') from room r where r.space_id = s.id)"
+        "  from space s order by s.updated_at desc"
     )
 
     return [
-        {"id": room_id, "name": name, "lat": lat, "lon": lon, "updated_at": updated_at, "moments": moments}
-        for room_id, name, lat, lon, updated_at, moments in rows
+        {"id": space_id, "name": name, "lat": lat, "lon": lon, "updated_at": updated_at, "has_map": has_map,
+         "moments": moments, "rooms": rooms}
+        for space_id, name, lat, lon, updated_at, has_map, moments, rooms in rows
     ]
 
 
-def room_map(conn: psycopg.Connection, room_id: int) -> str | None:
-    """Return the path of a room's saved ARKit map."""
-    row = conn.execute("select map_path from room where id = %s", (room_id,)).fetchone()
+def space_map(conn: psycopg.Connection, space_id: int) -> str | None:
+    """Return the path of a space's saved ARKit map."""
+    row = conn.execute("select map_path from space where id = %s", (space_id,)).fetchone()
 
     return row[0] if row else None
 
 
-def save_room(conn: psycopg.Connection, room_id: int | None, map_path: str, lat, lon) -> int:
-    """Store a room's latest map, creating the room if room_id is None. Return its id."""
-    if room_id is not None and conn.execute(
-        "update room set map_path = %s, updated_at = now() where id = %s", (map_path, room_id)
-    ).rowcount:
-        return room_id
+def save_space(conn: psycopg.Connection, space_id: int | None, map_path: str | None, lat, lon) -> int:
+    """Create a space, or give an existing one a newer map. Return its id."""
+    if space_id is not None:
+        conn.execute("update space set map_path = coalesce(%s, map_path), updated_at = now() where id = %s",
+                     (map_path, space_id))
+        return space_id
 
     (new_id,) = conn.execute(
-        "insert into room (map_path, lat, lon) values (%s, %s, %s) returning id", (map_path, lat, lon)
+        "insert into space (map_path, lat, lon) values (%s, %s, %s) returning id", (map_path, lat, lon)
     ).fetchone()
 
     return new_id
 
 
-def set_moment_room(conn: psycopg.Connection, moment_id: str, room_id: int) -> None:
-    conn.execute("update moment set room_id = %s where id = %s", (room_id, moment_id))
+def set_moment_space(conn: psycopg.Connection, moment_id: str, space_id: int, in_map: bool) -> None:
+    conn.execute("update moment set space_id = %s, in_space_map = %s where id = %s", (space_id, in_map, moment_id))
 
 
-def name_room(conn: psycopg.Connection, room_id: int, name: str | None) -> bool:
-    """Set or clear a room's name. Return whether it exists."""
-    return conn.execute("update room set name = %s where id = %s", (name, room_id)).rowcount > 0
+def name_space(conn: psycopg.Connection, space_id: int, name: str | None, by_user: bool) -> bool:
+    """Set a space's name, unless a model is naming one the user already named. Return whether it changed."""
+    return conn.execute(
+        "update space set name = %s, named = named or %s where id = %s and (%s or not named)",
+        (name, by_user, space_id, by_user),
+    ).rowcount > 0
 
 
-def room_moments(conn: psycopg.Connection, room_id: int) -> list[str]:
-    """Return the moments recorded in a room, newest first."""
-    rows = conn.execute("select id from moment where room_id = %s order by started_at desc", (room_id,))
+def space_moments(conn: psycopg.Connection, space_id: int) -> list[str]:
+    """Return the moments recorded in a space, newest first."""
+    rows = conn.execute("select id from moment where space_id = %s order by started_at desc", (space_id,))
 
     return [moment_id for (moment_id,) in rows]
+
+
+def space_vectors(conn: psycopg.Connection) -> dict[int, str]:
+    """Return each space's average frame embedding, as pgvector text."""
+    rows = conn.execute(
+        "select m.space_id, avg(f.embedding)::text from fact f join moment m on m.id = f.moment_id"
+        " where f.kind = 'frame' and m.space_id is not null group by m.space_id"
+    )
+
+    return dict(rows.fetchall())
+
+
+def space_rooms(conn: psycopg.Connection, space_id: int) -> list[dict]:
+    """Return a space's rooms with how many frames were taken in each."""
+    rows = conn.execute(
+        "select r.id, r.name, r.description, r.named, (select count(*) from frame f where f.room_id = r.id)"
+        "  from room r where r.space_id = %s order by r.name",
+        (space_id,),
+    )
+
+    return [
+        {"id": room_id, "name": name, "description": description, "named": named, "frames": frames}
+        for room_id, name, description, named, frames in rows
+    ]
+
+
+def save_room(conn: psycopg.Connection, space_id: int, name: str, description: str | None) -> int:
+    """Return the id of the space's room with this name, creating it if needed."""
+    row = conn.execute(
+        "select id from room where space_id = %s and lower(name) = lower(%s)", (space_id, name)
+    ).fetchone()
+
+    if row:
+        conn.execute("update room set description = coalesce(description, %s) where id = %s", (description, row[0]))
+        return row[0]
+
+    (room_id,) = conn.execute(
+        "insert into room (space_id, name, description) values (%s, %s, %s) returning id", (space_id, name, description)
+    ).fetchone()
+
+    return room_id
+
+
+def room_examples(conn: psycopg.Connection, room_id: int, limit: int = 3) -> list[str]:
+    """Return the first sentences of a few frames taken in a room, spread over its moments."""
+    rows = conn.execute(
+        "select split_part(summary, '. ', 1) from frame where room_id = %s order by md5(id::text) limit %s",
+        (room_id, limit),
+    )
+
+    return [summary for (summary,) in rows]
+
+
+def set_frame_rooms(conn: psycopg.Connection, moment_id: str, rooms: dict[int, int]) -> None:
+    """Set the room of each of a moment's frames, clearing the rest."""
+    conn.execute("update frame set room_id = null where moment_id = %s", (moment_id,))
+
+    with conn.cursor() as cursor:
+        cursor.executemany("update frame set room_id = %s where id = %s", [(room, frame) for frame, room in rooms.items()])
+
+
+def mapped_frames(conn: psycopg.Connection, space_id: int, moment_id: str) -> list[tuple]:
+    """Return (x, z, room id) for frames of other moments that share the space's map and already have a room."""
+    return conn.execute(
+        "select f.x, f.z, f.room_id from frame f join moment m on m.id = f.moment_id"
+        " where m.space_id = %s and m.in_space_map and m.id <> %s and f.x is not null and f.room_id is not null",
+        (space_id, moment_id),
+    ).fetchall()
+
+
+def drop_empty(conn: psycopg.Connection) -> None:
+    """Delete rooms no frame is in, unless the user named them, and spaces with no moments."""
+    conn.execute("delete from room r where not r.named and not exists (select 1 from frame f where f.room_id = r.id)")
+    conn.execute("delete from space s where not exists (select 1 from moment m where m.space_id = s.id)")
+
+
+def name_room(conn: psycopg.Connection, room_id: int, name: str) -> int | None:
+    """Rename a room as the user asked. Return its space's id, or None if there is no such room."""
+    row = conn.execute("update room set name = %s, named = true where id = %s returning space_id",
+                       (name, room_id)).fetchone()
+
+    return row[0] if row else None
 
 
 def new_upload(conn: psycopg.Connection, frames_per_minute: float):

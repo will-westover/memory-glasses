@@ -67,11 +67,15 @@ Everything else is your call.
   `--plain` for the baseline), or `memory.search "question"` to see the raw facts.
 - The app records moments on an iPhone through ARKit and uploads them (`POST /moments`); they process in the
   background. Recording needs a real iPhone; the Simulator has no camera tracking. With a recording come
-  `poses.json` (where the phone was, 10 times a second), and on Pro phones `mesh.obj` (the lidar room) and
-  `world.map` (ARKit's map, used to recognise the room next time). Rooms are in `data/rooms/`.
+  `poses.json` (where the phone was, 10 times a second), and on Pro phones `mesh.obj` (the lidar scan) and
+  `world.map` (ARKit's map, used to recognise the place next time).
+- A **space** is a place such as an apartment or a lecture hall: the phone's map when it recognised it, else the
+  space whose frames look most alike (average embedding at least 0.75). Each frame gets a **room** from one model
+  call per moment that sees every frame, its position, the speech and the scan, then a vote of frames within 1.5 m.
+  `memory.spaces list`, `label <moment id>`, `rebuild`. Maps are in `data/spaces/`.
 - A moment can be reprocessed at another frames per minute from its kept video; frames are named by their time,
   so ones that already exist keep their captions.
-- The agent has three tools: search, timeline and nearby (what was seen near a frame, in the same room).
+- The agent has three tools: search, timeline and nearby (what was seen near a frame, in the same mapped space).
   `memory.evals --mode agent --mode no-nearby` compares it with and without nearby.
 - People: `memory.people list`, `name <id> "Sam"`, `merge <id> <into id>`, `forget <id>`, or the People screen in
   the app. Faces use OpenCV's YuNet and SFace models in the ignored `server/models/` (from github.com/opencv/opencv_zoo).

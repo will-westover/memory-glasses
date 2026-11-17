@@ -36,12 +36,12 @@ struct GlassesView: View {
                     }
 
                     NavigationLink {
-                        RoomsView()
+                        PlacesView()
                     } label: {
-                        Label("Rooms", systemImage: "house")
+                        Label("Places and rooms", systemImage: "house")
                     }
                 } footer: {
-                    Text("Name the people and rooms the glasses have seen, so answers can say who was there and where.")
+                    Text("Name the people, places and rooms the glasses have seen, so answers can say who was there and where.")
                 }
 
                 Section {

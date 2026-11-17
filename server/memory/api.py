@@ -14,7 +14,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from memory import db, pipeline, rooms
+from memory import db, pipeline, spaces
 from memory.agent import ask_agent, ask_plain
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
@@ -45,7 +45,7 @@ class ChatQuestion(BaseModel):
     question: str = Field(min_length=1)
 
 
-class RoomName(BaseModel):
+class NewName(BaseModel):
     name: str | None = Field(default=None, max_length=60)
 
 
@@ -120,6 +120,7 @@ def frame_json(frame: dict) -> dict:
             for person in frame["people"]
         ],
         "position": position_json(frame["position"]),
+        "room": frame["room"],
     }
 
 
@@ -170,7 +171,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "has_video": has_video(moment_id),
         "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
         "has_mesh": (MOMENTS_DIR / moment_id / "mesh.obj").is_file(),
-        "room": db.moment_room(conn, moment_id),
+        "space": db.moment_space(conn, moment_id),
     }
 
 
@@ -214,7 +215,7 @@ def save_upload(upload: UploadFile, target) -> None:
         shutil.copyfileobj(upload.file, out, length=1024 * 1024)
 
 
-def run_upload(upload_id, video, extras: dict, frames_per_minute: float, room_id: int | None, source: str) -> None:
+def run_upload(upload_id, video, extras: dict, frames_per_minute: float, space_id: int | None, source: str) -> None:
     """Process an uploaded recording, keeping its status up to date."""
     with db.connect() as conn:
         def step(name: str) -> None:
@@ -222,7 +223,7 @@ def run_upload(upload_id, video, extras: dict, frames_per_minute: float, room_id
             conn.commit()
 
         try:
-            moment_id = pipeline.process(video, frames_per_minute, extras, room_id=room_id, source=source,
+            moment_id = pipeline.process(video, frames_per_minute, extras, space_id=space_id, source=source,
                                          on_step=step)
             db.update_upload(conn, upload_id, status="ready", step=None, moment_id=moment_id)
             shutil.rmtree(video.parent, ignore_errors=True)
@@ -239,7 +240,7 @@ def upload_moment(
     poses: UploadFile | None = File(None),
     mesh: UploadFile | None = File(None),
     world_map: UploadFile | None = File(None),
-    room_id: int | None = Form(None),
+    space_id: int | None = Form(None),
     source: str = Form("iphone", pattern="^(iphone|glasses|video)$"),
     conn: psycopg.Connection = Depends(connection),
 ) -> dict:
@@ -260,7 +261,7 @@ def upload_moment(
             extras[EXTRA_FILES[field]] = folder / EXTRA_FILES[field]
             save_upload(upload, extras[EXTRA_FILES[field]])
 
-    tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute, room_id, source)
+    tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute, space_id, source)
 
     return {"id": upload_id, "status": "processing"}
 
@@ -325,34 +326,48 @@ def run_reprocess(upload_id, moment_id: str, frames_per_minute: float) -> None:
             db.update_upload(conn, upload_id, status="failed", error=str(error))
 
 
-@app.get("/rooms")
-def list_rooms(lat: float | None = None, lon: float | None = None,
-               conn: psycopg.Connection = Depends(connection)) -> list[dict]:
-    """List rooms near a location (or all of them), most recently updated first."""
-    return rooms.nearby(conn, lat, lon)
+@app.get("/spaces")
+def list_spaces(lat: float | None = None, lon: float | None = None,
+                conn: psycopg.Connection = Depends(connection)) -> list[dict]:
+    """List spaces near a location (or all of them), most recently updated first."""
+    return spaces.nearby(conn, lat, lon)
 
 
 @app.get("/world")
 def world(conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Return every room and every moment that has a location, to place on a map."""
+    """Return every space and every moment that has a location, to place on a map."""
     covers = db.covers(conn)
 
     return {
-        "rooms": [room for room in db.rooms(conn) if room["lat"] is not None],
+        "spaces": [space for space in db.spaces(conn) if space["lat"] is not None],
         "moments": [{**moment, "cover": image_url(covers.get(moment["id"]))} for moment in db.located_moments(conn)],
     }
 
 
-@app.get("/rooms/{room_id}/scene")
-def room_scene(room_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Return every moment recorded in a room with its path and frames, all in the room's shared coordinates."""
+@app.get("/spaces/{space_id}")
+def space(space_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return a space's rooms and the moments recorded in it."""
+    found = next((space for space in db.spaces(conn) if space["id"] == space_id), None)
+
+    if found is None:
+        raise HTTPException(404, "no such space")
+
+    return {**found, "rooms": db.space_rooms(conn, space_id), "moment_ids": db.space_moments(conn, space_id)}
+
+
+@app.get("/spaces/{space_id}/scene")
+def space_scene(space_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return every moment that shares a space's map, with its path and frames, in the map's coordinates."""
     moments = []
     mesh_moment = None
 
-    for moment_id in db.room_moments(conn, room_id):
+    for moment_id in db.space_moments(conn, space_id):
         poses_file = MOMENTS_DIR / moment_id / "poses.json"
-        started_at, _, _ = db.moment_info(conn, moment_id)
 
+        if not (db.moment_space(conn, moment_id) or {}).get("in_map"):
+            continue
+
+        started_at, _, _ = db.moment_info(conn, moment_id)
         moments.append({
             "id": moment_id,
             "started_at": started_at,
@@ -363,40 +378,50 @@ def room_scene(room_id: int, conn: psycopg.Connection = Depends(connection)) -> 
         if mesh_moment is None and (MOMENTS_DIR / moment_id / "mesh.obj").is_file():
             mesh_moment = moment_id
 
-    return {"id": room_id, "mesh_moment": mesh_moment, "moments": moments}
+    return {"id": space_id, "mesh_moment": mesh_moment, "moments": moments}
 
 
-@app.get("/rooms/{room_id}/map")
-def room_map(room_id: int, conn: psycopg.Connection = Depends(connection)) -> FileResponse:
-    """Return a room's saved ARKit map, so the phone can recognise it."""
-    path = db.room_map(conn, room_id)
+@app.get("/spaces/{space_id}/map")
+def space_map(space_id: int, conn: psycopg.Connection = Depends(connection)) -> FileResponse:
+    """Return a space's saved ARKit map, so the phone can recognise it."""
+    path = db.space_map(conn, space_id)
     file = (DATA_DIR / path).resolve() if path else None
 
     if file is None or not file.is_file():
-        raise HTTPException(404, "no map for this room")
+        raise HTTPException(404, "no map for this space")
 
     return FileResponse(file, media_type="application/octet-stream")
 
 
-@app.put("/rooms/{room_id}")
-def rename_room(room_id: int, body: RoomName, tasks: BackgroundTasks,
-                conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Name or rename a room."""
+@app.put("/spaces/{space_id}")
+def rename_space(space_id: int, body: NewName, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Name or rename a space."""
     name = body.name.strip() if body.name and body.name.strip() else None
 
-    if not db.name_room(conn, room_id, name):
+    if not db.name_space(conn, space_id, name, by_user=True):
+        raise HTTPException(404, "no such space")
+
+    return {"id": space_id, "name": name}
+
+
+@app.put("/rooms/{room_id}")
+def rename_room(room_id: int, body: NewName, tasks: BackgroundTasks,
+                conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Rename a room, and rebuild the facts that mention it."""
+    name = body.name.strip() if body.name and body.name.strip() else None
+
+    if name is None:
+        raise HTTPException(422, "a room needs a name")
+
+    space_id = db.name_room(conn, room_id, name)
+
+    if space_id is None:
         raise HTTPException(404, "no such room")
 
     conn.commit()
-    tasks.add_task(rebuild_facts, db.room_moments(conn, room_id))
+    tasks.add_task(rebuild_facts, db.space_moments(conn, space_id))
 
     return {"id": room_id, "name": name}
-
-
-@app.get("/rooms/{room_id}/moments")
-def room_moments(room_id: int, conn: psycopg.Connection = Depends(connection)) -> list[str]:
-    """List the moments recorded in a room, newest first."""
-    return db.room_moments(conn, room_id)
 
 
 @app.get("/moments/{moment_id}/path")
@@ -412,11 +437,11 @@ def moment_path(moment_id: str) -> dict:
 
 @app.get("/moments/{moment_id}/mesh")
 def moment_mesh(moment_id: str) -> FileResponse:
-    """Return the room mesh the phone's lidar captured during a moment, as OBJ."""
+    """Return the mesh the phone's lidar captured during a moment, as OBJ."""
     mesh = (MOMENTS_DIR / moment_id / "mesh.obj").resolve()
 
     if not mesh.is_relative_to(MOMENTS_DIR) or not mesh.is_file():
-        raise HTTPException(404, "no room mesh for this moment")
+        raise HTTPException(404, "no mesh for this moment")
 
     return FileResponse(mesh, media_type="model/obj")
 
@@ -584,7 +609,7 @@ FACE_MARGIN = 0.35
 
 
 def rebuild_facts(moment_ids: list[str]) -> None:
-    """Rebuild the facts of moments after a person's name changed."""
+    """Rebuild the facts of moments after a person's or room's name changed."""
     with db.connect() as conn:
         for moment_id in moment_ids:
             build_facts(conn, moment_id)

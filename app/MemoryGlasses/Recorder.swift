@@ -42,8 +42,8 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     private var lastPose: TimeInterval = 0
     private var startedAt = Date()
     private var outputURL: URL?
-    private var candidate: Room?
-    private var recognised: Room?
+    private var candidate: Space?
+    private var recognised: Space?
     private var lookedSince = Date()
 
     override init() {
@@ -69,8 +69,22 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     private func startTracking() async {
         candidate = nil
         recognised = nil
-        room = "Looking for a known room…"
+        room = "Looking for a known place…"
 
+        let configuration = freshConfiguration()
+
+        if let (known, map) = await nearestSpaceMap() {
+            candidate = known
+            configuration.initialWorldMap = map
+        } else {
+            room = "New place"
+        }
+
+        lookedSince = .now
+        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+    }
+
+    private func freshConfiguration() -> ARWorldTrackingConfiguration {
         let configuration = ARWorldTrackingConfiguration()
         configuration.providesAudioData = true
 
@@ -78,26 +92,18 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
             configuration.sceneReconstruction = .meshWithClassification
         }
 
-        if let (known, map) = await nearestRoomMap() {
-            candidate = known
-            configuration.initialWorldMap = map
-        } else {
-            room = "New room"
-        }
-
-        lookedSince = .now
-        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        return configuration
     }
 
-    private func nearestRoomMap() async -> (Room, ARWorldMap)? {
-        var path = "/rooms"
+    private func nearestSpaceMap() async -> (Space, ARWorldMap)? {
+        var path = "/spaces"
 
         if let location {
             path += "?lat=\(location.coordinate.latitude)&lon=\(location.coordinate.longitude)"
         }
 
-        guard let rooms: [Room] = try? await API.current.get(path), let latest = rooms.first,
-              let data = try? await API.current.image("/rooms/\(latest.id)/map"),
+        guard let spaces: [Space] = try? await API.current.get(path), let latest = spaces.first(where: \.hasMap),
+              let data = try? await API.current.image("/spaces/\(latest.id)/map"),
               let map = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data)
         else { return nil }
 
@@ -124,6 +130,10 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         elapsed = 0
 
         queue.async {
+            if self.candidate != nil, self.recognised == nil {
+                self.giveUpLooking()
+            }
+
             self.firstTime = nil
             self.lastWritten = 0
             self.poses = []
@@ -248,18 +258,14 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
             recognised = candidate
             DispatchQueue.main.async { self.room = "Recognised \(candidate.label)" }
         } else if Date.now.timeIntervalSince(lookedSince) > Self.recogniseSeconds {
-            self.candidate = nil
-            DispatchQueue.main.async { self.room = "New room" }
-
-            let configuration = ARWorldTrackingConfiguration()
-            configuration.providesAudioData = true
-
-            if hasLidar {
-                configuration.sceneReconstruction = .meshWithClassification
-            }
-
-            session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+            giveUpLooking()
         }
+    }
+
+    private func giveUpLooking() {
+        candidate = nil
+        DispatchQueue.main.async { self.room = "New place" }
+        session.run(freshConfiguration(), options: [.resetTracking, .removeExistingAnchors])
     }
 
     private func logPose(_ frame: ARFrame) {
@@ -349,7 +355,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         case .limited(.initializing): "Starting tracking…"
         case .limited(.excessiveMotion): "Moving too fast"
         case .limited(.insufficientFeatures): "Not enough detail to track"
-        case .limited(.relocalizing): "Recognising the room…"
+        case .limited(.relocalizing): "Recognising the place…"
         case .limited: "Tracking limited"
         }
     }
@@ -360,7 +366,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         stage = .uploading(0)
 
         do {
-            try await API.current.uploadMoment(video: outputURL, framesPerMinute: framesPerMinute, roomId: recognised?.id,
+            try await API.current.uploadMoment(video: outputURL, framesPerMinute: framesPerMinute, spaceId: recognised?.id,
                                                extras: extras) { progress in
                 DispatchQueue.main.async { self.stage = .uploading(progress) }
             }

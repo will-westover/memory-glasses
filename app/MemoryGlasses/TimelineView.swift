@@ -172,7 +172,7 @@ struct MomentView: View {
                             }
                         }
 
-                        Text("\(clock(frame.offsetSeconds)) in")
+                        Text([clock(frame.offsetSeconds) + " in", frame.room].compactMap { $0 }.joined(separator: " · "))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.tertiary)
 
@@ -195,7 +195,7 @@ struct MomentView: View {
                 if path.count > 1 {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            SectionTitle(detail.room.map { "Where you went in the \(($0.name ?? "room").lowercased())" } ?? "Where you went")
+                            SectionTitle(detail.space?.name.map { "Where you went in \($0)" } ?? "Where you went")
                             Spacer()
 
                             if detail.hasMesh {

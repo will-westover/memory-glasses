@@ -6,7 +6,7 @@ struct WorldView: View {
     @State private var world: World?
     @State private var problem: String?
     @State private var camera: MapCameraPosition = .automatic
-    @State private var openRoom: WorldRoom?
+    @State private var openSpace: WorldSpace?
     @State private var openMoment: MomentLink?
 
     var body: some View {
@@ -21,10 +21,10 @@ struct WorldView: View {
                 }
             }
             .navigationTitle("World")
-            .navigationDestination(for: WorldRoom.self) { CombinedRoomView(room: $0) }
+            .navigationDestination(for: WorldSpace.self) { SpaceSceneView(space: $0) }
             .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
             .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
-            .navigationDestination(item: $openRoom) { CombinedRoomView(room: $0) }
+            .navigationDestination(item: $openSpace) { SpaceSceneView(space: $0) }
             .navigationDestination(item: $openMoment) { MomentView(link: $0) }
             .task { await load() }
         }
@@ -45,29 +45,22 @@ struct WorldView: View {
                         .listRowSeparator(.hidden)
                 }
 
-                if !world.rooms.isEmpty {
+                if !world.spaces.isEmpty {
                     Section {
-                        ForEach(world.rooms) { room in
-                            NavigationLink(value: room) {
-                                Label {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(room.label).font(.body.weight(.medium))
-                                        Text(room.moments == 1 ? "1 moment, in 3D" : "\(room.moments) moments, stitched in 3D")
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                } icon: {
-                                    Image(systemName: "cube.transparent")
-                                }
+                        ForEach(world.spaces) { space in
+                            if space.hasMap {
+                                NavigationLink(value: space) { spaceRow(space, icon: "cube.transparent") }
+                            } else {
+                                spaceRow(space, icon: "house")
                             }
                         }
                     } header: {
-                        SectionTitle("Rooms").textCase(nil)
+                        SectionTitle("Places").textCase(nil)
                     }
                 }
 
                 Section {
-                    ForEach(world.moments.filter { $0.room == nil }) { moment in
+                    ForEach(world.moments.filter { $0.space == nil }) { moment in
                         NavigationLink(value: MomentLink(id: moment.id, startedAt: moment.startedAt)) {
                             Label(moment.startedAt.formatted(.dateTime.weekday(.abbreviated).month().day().hour().minute()),
                                   systemImage: sourceIcon(moment.source).symbol)
@@ -82,11 +75,25 @@ struct WorldView: View {
         }
     }
 
+    private func spaceRow(_ space: WorldSpace, icon: String) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(space.label).font(.body.weight(.medium))
+                Text(space.rooms.isEmpty ? momentCount(space.moments) : space.rooms.joined(separator: ", "))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        } icon: {
+            Image(systemName: icon)
+        }
+    }
+
     private func map(_ world: World) -> some View {
         Map(position: $camera) {
-            ForEach(world.rooms) { room in
-                Annotation(room.label, coordinate: CLLocationCoordinate2D(latitude: room.lat, longitude: room.lon)) {
-                    Button { openRoom = room } label: {
+            ForEach(world.spaces) { space in
+                Annotation(space.label, coordinate: CLLocationCoordinate2D(latitude: space.lat, longitude: space.lon)) {
+                    Button { if space.hasMap { openSpace = space } } label: {
                         Image(systemName: "house.fill")
                             .font(.caption)
                             .foregroundStyle(Color(.systemBackground))
@@ -96,7 +103,7 @@ struct WorldView: View {
                 }
             }
 
-            ForEach(world.moments.filter { $0.room == nil }) { moment in
+            ForEach(world.moments.filter { $0.space == nil }) { moment in
                 Annotation("", coordinate: CLLocationCoordinate2D(latitude: moment.lat, longitude: moment.lon)) {
                     Button { openMoment = MomentLink(id: moment.id, startedAt: moment.startedAt) } label: {
                         FrameImage(path: moment.cover)
@@ -120,45 +127,46 @@ struct WorldView: View {
     }
 }
 
-struct CombinedRoomView: View {
-    static let colors: [UIColor] = [.systemOrange, .systemBlue, .systemGreen, .systemPink, .systemPurple, .systemTeal]
+struct SpaceSceneView: View {
+    static let colors: [UIColor] = [.systemOrange, .systemBlue, .systemGreen, .systemPink, .systemPurple, .systemTeal,
+                                    .systemYellow, .systemIndigo]
 
-    let room: WorldRoom
+    let space: WorldSpace
 
-    @State private var data: RoomSceneData?
     @State private var scene: SCNScene?
+    @State private var rooms: [(name: String, frames: [(moment: SceneMoment, frame: Frame)])] = []
     @State private var problem: String?
     @State private var opened: Fact?
 
     var body: some View {
         VStack(spacing: 0) {
-            if let scene, let data {
-                RoomScene(scene: scene) { layer, index in open(data, layer, index) }
+            if let scene {
+                RoomScene(scene: scene) { layer, index in open(layer, index) }
 
-                legend(data)
+                legend
             } else if let problem {
-                ContentUnavailableView("Couldn't load the room", systemImage: "cube.transparent", description: Text(problem))
+                ContentUnavailableView("Couldn't load the place", systemImage: "cube.transparent", description: Text(problem))
             } else {
-                ProgressView("Stitching the room…")
+                ProgressView("Building the place…")
                     .frame(maxHeight: .infinity)
             }
         }
-        .navigationTitle(room.label)
+        .navigationTitle(space.label)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $opened) { FrameView(fact: $0) }
         .task { await load() }
     }
 
-    private func legend(_ data: RoomSceneData) -> some View {
+    private var legend: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 14) {
-                ForEach(Array(data.moments.enumerated()), id: \.offset) { position, moment in
+                ForEach(Array(rooms.enumerated()), id: \.offset) { position, room in
                     HStack(spacing: 6) {
                         Circle()
                             .fill(Color(Self.colors[position % Self.colors.count]))
                             .frame(width: 10, height: 10)
 
-                        Text(moment.startedAt.formatted(.dateTime.month().day().hour().minute()))
+                        Text(room.name)
                             .font(.caption)
                     }
                 }
@@ -168,11 +176,10 @@ struct CombinedRoomView: View {
         .background(.bar)
     }
 
-    private func open(_ data: RoomSceneData, _ layer: Int, _ index: Int) {
-        guard data.moments.indices.contains(layer), data.moments[layer].frames.indices.contains(index) else { return }
+    private func open(_ layer: Int, _ index: Int) {
+        guard rooms.indices.contains(layer), rooms[layer].frames.indices.contains(index) else { return }
 
-        let moment = data.moments[layer]
-        let frame = moment.frames[index]
+        let (moment, frame) = rooms[layer].frames[index]
 
         opened = Fact(id: -frame.id, kind: "frame", at: frame.at, momentId: moment.id, offsetSeconds: frame.offsetSeconds,
                       text: frame.summary, image: frame.image)
@@ -180,7 +187,7 @@ struct CombinedRoomView: View {
 
     private func load() async {
         do {
-            let loaded: RoomSceneData = try await API.current.get("/rooms/\(room.id)/scene")
+            let loaded: SpaceSceneData = try await API.current.get("/spaces/\(space.id)/scene")
             var mesh: URL?
 
             if let meshMoment = loaded.meshMoment {
@@ -193,12 +200,27 @@ struct CombinedRoomView: View {
                 mesh = file
             }
 
-            let layers = loaded.moments.enumerated().map { position, moment in
-                SceneLayer(path: moment.path, frames: moment.frames, color: Self.colors[position % Self.colors.count])
+            var grouped: [(name: String, frames: [(moment: SceneMoment, frame: Frame)])] = []
+
+            for moment in loaded.moments {
+                for frame in moment.frames {
+                    let name = frame.room ?? "Somewhere else"
+
+                    if let index = grouped.firstIndex(where: { $0.name == name }) {
+                        grouped[index].frames.append((moment, frame))
+                    } else {
+                        grouped.append((name, [(moment, frame)]))
+                    }
+                }
             }
 
-            scene = try RoomScene.build(mesh: mesh, layers: layers)
-            data = loaded
+            let roomLayers = grouped.enumerated().map { position, room in
+                SceneLayer(path: [], frames: room.frames.map(\.frame), color: Self.colors[position % Self.colors.count])
+            }
+            let paths = loaded.moments.map { SceneLayer(path: $0.path, frames: [], color: .systemGray) }
+
+            scene = try RoomScene.build(mesh: mesh, layers: roomLayers + paths)
+            rooms = grouped
         } catch {
             problem = error.localizedDescription
         }

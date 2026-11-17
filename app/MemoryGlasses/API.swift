@@ -31,6 +31,7 @@ struct Frame: Decodable, Identifiable {
     let texts: [SeenText]
     let people: [PersonTag]
     let position: Position?
+    let room: String?
 }
 
 struct Position: Decodable, Hashable {
@@ -69,21 +70,37 @@ struct MomentDetail: Decodable {
     let hasVideo: Bool
     let framesPerMinute: Double?
     let hasMesh: Bool
-    let room: RoomTag?
+    let space: SpaceTag?
 }
 
-struct RoomTag: Decodable, Hashable {
+struct SpaceTag: Decodable, Hashable {
     let id: Int
     let name: String?
 }
 
-struct Room: Decodable, Identifiable, Hashable {
+struct Space: Decodable, Identifiable, Hashable {
     let id: Int
     let name: String?
     let updatedAt: Date
     let moments: Int
+    let hasMap: Bool
+    let rooms: [String]
 
-    var label: String { name ?? "Unnamed room" }
+    var label: String { name ?? "Unnamed place" }
+}
+
+struct RoomInfo: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let description: String?
+    let frames: Int
+}
+
+struct SpaceDetail: Decodable {
+    let id: Int
+    let name: String?
+    let rooms: [RoomInfo]
+    let momentIds: [String]
 }
 
 struct Answer: Codable {
@@ -302,23 +319,25 @@ struct WorldMoment: Decodable, Identifiable, Hashable {
     let durationSeconds: Double
     let lat: Double
     let lon: Double
-    let room: RoomTag?
+    let space: SpaceTag?
     let cover: String?
 }
 
 struct World: Decodable {
-    let rooms: [WorldRoom]
+    let spaces: [WorldSpace]
     let moments: [WorldMoment]
 }
 
-struct WorldRoom: Decodable, Identifiable, Hashable {
+struct WorldSpace: Decodable, Identifiable, Hashable {
     let id: Int
     let name: String?
     let lat: Double
     let lon: Double
     let moments: Int
+    let hasMap: Bool
+    let rooms: [String]
 
-    var label: String { name ?? "Unnamed room" }
+    var label: String { name ?? "Unnamed place" }
 }
 
 struct SceneMoment: Decodable, Identifiable {
@@ -328,7 +347,7 @@ struct SceneMoment: Decodable, Identifiable {
     let frames: [Frame]
 }
 
-struct RoomSceneData: Decodable {
+struct SpaceSceneData: Decodable {
     let id: Int
     let meshMoment: String?
     let moments: [SceneMoment]

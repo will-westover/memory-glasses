@@ -43,7 +43,8 @@ struct FrameView: View {
             PhotoPager(frames: detail.frames, index: $index)
 
             VStack(alignment: .leading, spacing: 18) {
-                Text("\(frame.at.formatted(date: .omitted, time: .standard)) · \(clock(frame.offsetSeconds)) in")
+                Text([frame.at.formatted(date: .omitted, time: .standard), clock(frame.offsetSeconds) + " in", frame.room]
+                        .compactMap { $0 }.joined(separator: " · "))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
 

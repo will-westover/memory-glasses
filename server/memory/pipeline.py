@@ -1,4 +1,4 @@
-"""Run every step on a recording: frames, captions, transcript, faces and facts.
+"""Run every step on a recording: frames, captions, transcript, faces, rooms and facts.
 
     uv run python -m memory.pipeline path/to/video.mov --frames-per-minute 30
 """
@@ -10,14 +10,14 @@ from pathlib import Path
 
 from memory import db
 from memory.config import FRAMES_PER_MINUTE
-from memory import rooms
+from memory import spaces
 from memory.ingest import captions, faces, facts, recording, transcript
 
-STEPS = ("Picking frames", "Describing frames", "Transcribing", "Finding faces", "Building facts")
+STEPS = ("Picking frames", "Describing frames", "Transcribing", "Finding faces", "Finding rooms", "Building facts")
 
 
 def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: dict[str, Path] | None = None,
-            replace: bool = False, reuse_frames: bool = False, room_id: int | None = None, source: str | None = None,
+            replace: bool = False, reuse_frames: bool = False, space_id: int | None = None, source: str | None = None,
             on_step: Callable[[str], None] = lambda step: None) -> str:
     """Turn a video into a searchable moment and return its id."""
     on_step(STEPS[0])
@@ -40,10 +40,14 @@ def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: d
         on_step(STEPS[3])
         faces.find_faces(conn, moment_id)
 
-        if not reuse_frames:
-            rooms.file_moment(conn, moment_id, moment_dir, room_id)
-
         on_step(STEPS[4])
+        if not reuse_frames or db.moment_space(conn, moment_id) is None:
+            spaces.file_moment(conn, moment_id, moment_dir, space_id)
+
+        spaces.label_rooms(conn, moment_id)
+        conn.commit()
+
+        on_step(STEPS[5])
         facts.build_facts(conn, moment_id)
         recording.refresh_page(conn, moment_dir)
 
