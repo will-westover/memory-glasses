@@ -16,7 +16,7 @@ struct RoomView: View {
         NavigationStack {
             Group {
                 if let scene {
-                    RoomScene(scene: scene) { index in
+                    RoomScene(scene: scene) { _, index in
                         pick(index)
                         dismiss()
                     }
@@ -49,19 +49,25 @@ struct RoomView: View {
             let file = FileManager.default.temporaryDirectory.appending(path: "room-\(momentId).obj")
             try data.write(to: file)
 
-            scene = try RoomScene.build(mesh: file, frames: frames, path: path)
+            scene = try RoomScene.build(mesh: file, layers: [SceneLayer(path: path, frames: frames, color: .systemOrange)])
         } catch {
             problem = error.localizedDescription
         }
     }
 }
 
+struct SceneLayer {
+    let path: [[Double]]
+    let frames: [Frame]
+    let color: UIColor
+}
+
 struct RoomScene: UIViewRepresentable {
     let scene: SCNScene
-    let pick: (Int) -> Void
+    let pick: (Int, Int) -> Void
 
-    static func build(mesh: URL, frames: [Frame], path: [[Double]]) throws -> SCNScene {
-        let scene = try SCNScene(url: mesh)
+    static func build(mesh: URL?, layers: [SceneLayer]) throws -> SCNScene {
+        let scene = try mesh.map { try SCNScene(url: $0) } ?? SCNScene()
 
         let wall = SCNMaterial()
         wall.diffuse.contents = UIColor.secondaryLabel.withAlphaComponent(0.35)
@@ -72,14 +78,18 @@ struct RoomScene: UIViewRepresentable {
             node.geometry?.materials = [wall]
         }
 
-        if path.count > 1 {
-            scene.rootNode.addChildNode(line(through: path.map { SCNVector3($0[1], $0[2], $0[3]) }))
-        }
+        for (layerIndex, layer) in layers.enumerated() {
+            if layer.path.count > 1 {
+                scene.rootNode.addChildNode(line(through: layer.path.map { SCNVector3($0[1], $0[2], $0[3]) },
+                                                 color: layer.color))
+            }
 
-        for (index, frame) in frames.enumerated() {
-            guard let pose = frame.position else { continue }
+            for (index, frame) in layer.frames.enumerated() {
+                guard let pose = frame.position else { continue }
 
-            scene.rootNode.addChildNode(marker(index: index, at: SCNVector3(pose.x, pose.y, pose.z), yaw: pose.yaw))
+                scene.rootNode.addChildNode(marker(layer: layerIndex, index: index, at: SCNVector3(pose.x, pose.y, pose.z),
+                                                   yaw: pose.yaw, color: layer.color))
+            }
         }
 
         let light = SCNNode()
@@ -107,29 +117,29 @@ struct RoomScene: UIViewRepresentable {
         return node
     }
 
-    static func line(through points: [SCNVector3]) -> SCNNode {
+    static func line(through points: [SCNVector3], color: UIColor) -> SCNNode {
         let source = SCNGeometrySource(vertices: points)
         let indices = (0..<Int32(points.count - 1)).flatMap { [$0, $0 + 1] }
         let element = SCNGeometryElement(indices: indices, primitiveType: .line)
 
         let geometry = SCNGeometry(sources: [source], elements: [element])
         let material = SCNMaterial()
-        material.diffuse.contents = UIColor.label
+        material.diffuse.contents = color
         material.lightingModel = .constant
         geometry.materials = [material]
 
         return SCNNode(geometry: geometry)
     }
 
-    static func marker(index: Int, at position: SCNVector3, yaw: Double) -> SCNNode {
+    static func marker(layer: Int, index: Int, at position: SCNVector3, yaw: Double, color: UIColor) -> SCNNode {
         let cone = SCNCone(topRadius: 0, bottomRadius: 0.06, height: 0.16)
         let material = SCNMaterial()
-        material.diffuse.contents = UIColor.systemOrange
+        material.diffuse.contents = color
         material.lightingModel = .constant
         cone.materials = [material]
 
         let node = SCNNode(geometry: cone)
-        node.name = "frame-\(index)"
+        node.name = "frame-\(layer)-\(index)"
         node.position = position
         node.eulerAngles = SCNVector3(Float.pi / 2, Float(yaw), 0)
 
@@ -155,9 +165,9 @@ struct RoomScene: UIViewRepresentable {
     func updateUIView(_ view: SCNView, context: Context) {}
 
     final class Coordinator: NSObject {
-        let pick: (Int) -> Void
+        let pick: (Int, Int) -> Void
 
-        init(pick: @escaping (Int) -> Void) {
+        init(pick: @escaping (Int, Int) -> Void) {
             self.pick = pick
         }
 
@@ -166,9 +176,12 @@ struct RoomScene: UIViewRepresentable {
 
             let hits = view.hitTest(gesture.location(in: view), options: [.searchMode: SCNHitTestSearchMode.all.rawValue])
 
-            if let name = hits.compactMap({ $0.node.name }).first(where: { $0.hasPrefix("frame-") }),
-               let index = Int(name.dropFirst("frame-".count)) {
-                pick(index)
+            if let name = hits.compactMap({ $0.node.name }).first(where: { $0.hasPrefix("frame-") }) {
+                let parts = name.split(separator: "-").compactMap { Int($0) }
+
+                if parts.count == 2 {
+                    pick(parts[0], parts[1])
+                }
             }
         }
     }

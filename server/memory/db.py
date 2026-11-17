@@ -570,6 +570,21 @@ def moment_room(conn: psycopg.Connection, moment_id: str) -> dict | None:
     return {"id": row[0], "name": row[1]} if row else None
 
 
+def located_moments(conn: psycopg.Connection) -> list[dict]:
+    """Return every moment that has a location, newest first, with its room if known."""
+    rows = conn.execute(
+        "select m.id, m.source, m.started_at, m.duration_seconds, m.lat, m.lon, m.room_id, r.name"
+        "  from moment m left join room r on r.id = m.room_id"
+        " where m.lat is not null order by m.started_at desc"
+    )
+
+    return [
+        {"id": moment_id, "source": source, "started_at": started_at, "duration_seconds": duration, "lat": lat,
+         "lon": lon, "room": {"id": room_id, "name": name} if room_id else None}
+        for moment_id, source, started_at, duration, lat, lon, room_id, name in rows
+    ]
+
+
 def rooms(conn: psycopg.Connection) -> list[dict]:
     """Return every room, most recently updated first, with how many moments were recorded in it."""
     rows = conn.execute(

@@ -13,6 +13,9 @@ struct MemoryGlassesApp: App {
                 TimelineView()
                     .tabItem { Label("Timeline", systemImage: "clock") }
 
+                WorldView()
+                    .tabItem { Label("World", systemImage: "map") }
+
                 StatsView()
                     .tabItem { Label("Stats", systemImage: "chart.bar") }
 

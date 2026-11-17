@@ -332,6 +332,40 @@ def list_rooms(lat: float | None = None, lon: float | None = None,
     return rooms.nearby(conn, lat, lon)
 
 
+@app.get("/world")
+def world(conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return every room and every moment that has a location, to place on a map."""
+    covers = db.covers(conn)
+
+    return {
+        "rooms": [room for room in db.rooms(conn) if room["lat"] is not None],
+        "moments": [{**moment, "cover": image_url(covers.get(moment["id"]))} for moment in db.located_moments(conn)],
+    }
+
+
+@app.get("/rooms/{room_id}/scene")
+def room_scene(room_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return every moment recorded in a room with its path and frames, all in the room's shared coordinates."""
+    moments = []
+    mesh_moment = None
+
+    for moment_id in db.room_moments(conn, room_id):
+        poses_file = MOMENTS_DIR / moment_id / "poses.json"
+        started_at, _, _ = db.moment_info(conn, moment_id)
+
+        moments.append({
+            "id": moment_id,
+            "started_at": started_at,
+            "path": thin(load_poses(poses_file), 300) if poses_file.is_file() else [],
+            "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
+        })
+
+        if mesh_moment is None and (MOMENTS_DIR / moment_id / "mesh.obj").is_file():
+            mesh_moment = moment_id
+
+    return {"id": room_id, "mesh_moment": mesh_moment, "moments": moments}
+
+
 @app.get("/rooms/{room_id}/map")
 def room_map(room_id: int, conn: psycopg.Connection = Depends(connection)) -> FileResponse:
     """Return a room's saved ARKit map, so the phone can recognise it."""

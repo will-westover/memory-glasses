@@ -294,3 +294,42 @@ func sourceIcon(_ source: String) -> (symbol: String, label: String) {
     default: ("film", "Imported video")
     }
 }
+
+struct WorldMoment: Decodable, Identifiable, Hashable {
+    let id: String
+    let source: String
+    let startedAt: Date
+    let durationSeconds: Double
+    let lat: Double
+    let lon: Double
+    let room: RoomTag?
+    let cover: String?
+}
+
+struct World: Decodable {
+    let rooms: [WorldRoom]
+    let moments: [WorldMoment]
+}
+
+struct WorldRoom: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String?
+    let lat: Double
+    let lon: Double
+    let moments: Int
+
+    var label: String { name ?? "Unnamed room" }
+}
+
+struct SceneMoment: Decodable, Identifiable {
+    let id: String
+    let startedAt: Date
+    let path: [[Double]]
+    let frames: [Frame]
+}
+
+struct RoomSceneData: Decodable {
+    let id: Int
+    let meshMoment: String?
+    let moments: [SceneMoment]
+}
