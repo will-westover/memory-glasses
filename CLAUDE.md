@@ -78,6 +78,8 @@ Everything else is your call.
   The user has written consent from the people recorded.
 - Places: `memory.places add "Home" <lat> <lon> --radius 75`, `memory.places list`.
 - Model prices are in `server/prices.json`. A model with no price there is refused before any call.
+- Phone connection: the server runs with `API_TOKEN` and `--host 0.0.0.0`; Mac and phone both join Tailscale (campus
+  Wi-Fi blocks devices reaching each other). `memory.pair` shows a QR code; the iPhone camera opens it in the app.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
   in a new numbered file in `server/migrations/`.
 - Test clips, both in the ignored `data/samples/`: `nasa/crew-quarters-tour.webm` (public-domain NASA tour,

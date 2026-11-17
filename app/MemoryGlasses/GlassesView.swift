@@ -58,10 +58,12 @@ struct GlassesView: View {
                     Button("Check connection") { Task { await load() } }
                 } header: {
                     Text("Server")
+                } footer: {
+                    Text("To connect quickly, run memory.pair on the Mac and scan its QR code with the iPhone camera.")
                 }
             }
             .navigationTitle("Glasses")
-            .task { await load() }
+            .task(id: address + token) { await load() }
         }
     }
 
@@ -93,5 +95,26 @@ struct GlassesView: View {
         } catch {
             status = error.localizedDescription
         }
+    }
+}
+
+struct Pairing: Identifiable {
+    let server: String
+    let token: String
+
+    var id: String { server }
+
+    init?(url: URL) {
+        guard url.scheme == "memoryglasses", url.host() == "pair",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let server = items.first(where: { $0.name == "server" })?.value else { return nil }
+
+        self.server = server
+        self.token = items.first(where: { $0.name == "token" })?.value ?? ""
+    }
+
+    func save() {
+        UserDefaults.standard.set(server, forKey: "serverAddress")
+        UserDefaults.standard.set(token, forKey: "serverToken")
     }
 }

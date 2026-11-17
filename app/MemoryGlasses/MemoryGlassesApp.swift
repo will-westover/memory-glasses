@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct MemoryGlassesApp: App {
     @State private var store = ConversationStore()
+    @State private var pairing: Pairing?
 
     var body: some Scene {
         WindowGroup {
@@ -24,6 +25,14 @@ struct MemoryGlassesApp: App {
             }
             .tint(.primary)
             .environment(store)
+            .onOpenURL { pairing = Pairing(url: $0) }
+            .alert("Connect to this server?", isPresented: Binding(get: { pairing != nil }, set: { if !$0 { pairing = nil } }),
+                   presenting: pairing) { found in
+                Button("Connect") { found.save() }
+                Button("Cancel", role: .cancel) {}
+            } message: { found in
+                Text(found.server)
+            }
         }
     }
 }
