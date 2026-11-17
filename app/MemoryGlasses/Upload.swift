@@ -54,13 +54,19 @@ struct MultipartBody {
 }
 
 extension API {
-    func uploadMoment(video: URL, framesPerMinute: Double, extras: [(field: String, url: URL)] = [],
+    func uploadMoment(video: URL, framesPerMinute: Double, roomId: Int? = nil, extras: [(field: String, url: URL)] = [],
                       progress: @escaping (Double) -> Void) async throws {
         let body = MultipartBody()
         let bodyFile = FileManager.default.temporaryDirectory.appending(path: "upload-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: bodyFile) }
 
-        try body.write(fields: ["frames_per_minute": String(Int(framesPerMinute))],
+        var fields = ["frames_per_minute": String(Int(framesPerMinute))]
+
+        if let roomId {
+            fields["room_id"] = String(roomId)
+        }
+
+        try body.write(fields: fields,
                        files: [("video", video)] + extras, to: bodyFile)
 
         var request = try request("/moments", method: "POST")

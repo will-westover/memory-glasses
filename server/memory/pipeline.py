@@ -10,13 +10,14 @@ from pathlib import Path
 
 from memory import db
 from memory.config import FRAMES_PER_MINUTE
+from memory import rooms
 from memory.ingest import captions, faces, facts, recording, transcript
 
 STEPS = ("Picking frames", "Describing frames", "Transcribing", "Finding faces", "Building facts")
 
 
 def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: dict[str, Path] | None = None,
-            replace: bool = False, reuse_frames: bool = False,
+            replace: bool = False, reuse_frames: bool = False, room_id: int | None = None,
             on_step: Callable[[str], None] = lambda step: None) -> str:
     """Turn a video into a searchable moment and return its id."""
     on_step(STEPS[0])
@@ -38,6 +39,9 @@ def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: d
 
         on_step(STEPS[3])
         faces.find_faces(conn, moment_id)
+
+        if not reuse_frames:
+            rooms.file_moment(conn, moment_id, moment_dir, room_id)
 
         on_step(STEPS[4])
         facts.build_facts(conn, moment_id)

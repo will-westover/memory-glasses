@@ -34,8 +34,14 @@ struct GlassesView: View {
                     } label: {
                         Label("People", systemImage: "person.2")
                     }
+
+                    NavigationLink {
+                        RoomsView()
+                    } label: {
+                        Label("Rooms", systemImage: "house")
+                    }
                 } footer: {
-                    Text("Name the people the glasses have seen, so answers can say who was there.")
+                    Text("Name the people and rooms the glasses have seen, so answers can say who was there and where.")
                 }
 
                 Section {

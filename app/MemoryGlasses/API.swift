@@ -68,6 +68,21 @@ struct MomentDetail: Decodable {
     let hasVideo: Bool
     let framesPerMinute: Double?
     let hasMesh: Bool
+    let room: RoomTag?
+}
+
+struct RoomTag: Decodable, Hashable {
+    let id: Int
+    let name: String?
+}
+
+struct Room: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String?
+    let updatedAt: Date
+    let moments: Int
+
+    var label: String { name ?? "Unnamed room" }
 }
 
 struct Answer: Codable {

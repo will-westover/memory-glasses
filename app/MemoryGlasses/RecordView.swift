@@ -63,6 +63,10 @@ struct RecordView: View {
 
                 pill(recorder.tracking, systemImage: "location.viewfinder")
 
+                if !recorder.room.isEmpty {
+                    pill(recorder.room, systemImage: "house")
+                }
+
                 if recorder.hasLidar {
                     pill("Lidar", systemImage: "cube.transparent")
                 }

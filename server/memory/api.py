@@ -14,7 +14,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from memory import db, pipeline
+from memory import db, pipeline, rooms
 from memory.agent import ask_agent, ask_plain
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
@@ -43,6 +43,10 @@ class Question(BaseModel):
 
 class ChatQuestion(BaseModel):
     question: str = Field(min_length=1)
+
+
+class RoomName(BaseModel):
+    name: str | None = Field(default=None, max_length=60)
 
 
 class Rate(BaseModel):
@@ -166,6 +170,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "has_video": has_video(moment_id),
         "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
         "has_mesh": (MOMENTS_DIR / moment_id / "mesh.obj").is_file(),
+        "room": db.moment_room(conn, moment_id),
     }
 
 
@@ -209,7 +214,7 @@ def save_upload(upload: UploadFile, target) -> None:
         shutil.copyfileobj(upload.file, out, length=1024 * 1024)
 
 
-def run_upload(upload_id, video, extras: dict, frames_per_minute: float) -> None:
+def run_upload(upload_id, video, extras: dict, frames_per_minute: float, room_id: int | None = None) -> None:
     """Process an uploaded recording, keeping its status up to date."""
     with db.connect() as conn:
         def step(name: str) -> None:
@@ -217,7 +222,7 @@ def run_upload(upload_id, video, extras: dict, frames_per_minute: float) -> None
             conn.commit()
 
         try:
-            moment_id = pipeline.process(video, frames_per_minute, extras, on_step=step)
+            moment_id = pipeline.process(video, frames_per_minute, extras, room_id=room_id, on_step=step)
             db.update_upload(conn, upload_id, status="ready", step=None, moment_id=moment_id)
             shutil.rmtree(video.parent, ignore_errors=True)
         except Exception as error:
@@ -233,6 +238,7 @@ def upload_moment(
     poses: UploadFile | None = File(None),
     mesh: UploadFile | None = File(None),
     world_map: UploadFile | None = File(None),
+    room_id: int | None = Form(None),
     conn: psycopg.Connection = Depends(connection),
 ) -> dict:
     """Receive a recording and its extra files, and process it in the background."""
@@ -252,7 +258,7 @@ def upload_moment(
             extras[EXTRA_FILES[field]] = folder / EXTRA_FILES[field]
             save_upload(upload, extras[EXTRA_FILES[field]])
 
-    tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute)
+    tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute, room_id)
 
     return {"id": upload_id, "status": "processing"}
 
@@ -315,6 +321,42 @@ def run_reprocess(upload_id, moment_id: str, frames_per_minute: float) -> None:
         except Exception as error:
             conn.rollback()
             db.update_upload(conn, upload_id, status="failed", error=str(error))
+
+
+@app.get("/rooms")
+def list_rooms(lat: float | None = None, lon: float | None = None,
+               conn: psycopg.Connection = Depends(connection)) -> list[dict]:
+    """List rooms near a location (or all of them), most recently updated first."""
+    return rooms.nearby(conn, lat, lon)
+
+
+@app.get("/rooms/{room_id}/map")
+def room_map(room_id: int, conn: psycopg.Connection = Depends(connection)) -> FileResponse:
+    """Return a room's saved ARKit map, so the phone can recognise it."""
+    path = db.room_map(conn, room_id)
+    file = (DATA_DIR / path).resolve() if path else None
+
+    if file is None or not file.is_file():
+        raise HTTPException(404, "no map for this room")
+
+    return FileResponse(file, media_type="application/octet-stream")
+
+
+@app.put("/rooms/{room_id}")
+def rename_room(room_id: int, body: RoomName, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Name or rename a room."""
+    name = body.name.strip() if body.name and body.name.strip() else None
+
+    if not db.name_room(conn, room_id, name):
+        raise HTTPException(404, "no such room")
+
+    return {"id": room_id, "name": name}
+
+
+@app.get("/rooms/{room_id}/moments")
+def room_moments(room_id: int, conn: psycopg.Connection = Depends(connection)) -> list[str]:
+    """List the moments recorded in a room, newest first."""
+    return db.room_moments(conn, room_id)
 
 
 @app.get("/moments/{moment_id}/path")

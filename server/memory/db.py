@@ -543,6 +543,66 @@ def captioned_images(conn: psycopg.Connection, moment_id: str) -> list[str]:
     return [image_path for (image_path,) in rows]
 
 
+def moment_room(conn: psycopg.Connection, moment_id: str) -> dict | None:
+    """Return the room a moment was recorded in, if known."""
+    row = conn.execute(
+        "select r.id, r.name from moment m join room r on r.id = m.room_id where m.id = %s", (moment_id,)
+    ).fetchone()
+
+    return {"id": row[0], "name": row[1]} if row else None
+
+
+def rooms(conn: psycopg.Connection) -> list[dict]:
+    """Return every room, most recently updated first, with how many moments were recorded in it."""
+    rows = conn.execute(
+        "select r.id, r.name, r.lat, r.lon, r.updated_at, count(m.id)"
+        "  from room r left join moment m on m.room_id = r.id"
+        " group by r.id order by r.updated_at desc"
+    )
+
+    return [
+        {"id": room_id, "name": name, "lat": lat, "lon": lon, "updated_at": updated_at, "moments": moments}
+        for room_id, name, lat, lon, updated_at, moments in rows
+    ]
+
+
+def room_map(conn: psycopg.Connection, room_id: int) -> str | None:
+    """Return the path of a room's saved ARKit map."""
+    row = conn.execute("select map_path from room where id = %s", (room_id,)).fetchone()
+
+    return row[0] if row else None
+
+
+def save_room(conn: psycopg.Connection, room_id: int | None, map_path: str, lat, lon) -> int:
+    """Store a room's latest map, creating the room if room_id is None. Return its id."""
+    if room_id is not None and conn.execute(
+        "update room set map_path = %s, updated_at = now() where id = %s", (map_path, room_id)
+    ).rowcount:
+        return room_id
+
+    (new_id,) = conn.execute(
+        "insert into room (map_path, lat, lon) values (%s, %s, %s) returning id", (map_path, lat, lon)
+    ).fetchone()
+
+    return new_id
+
+
+def set_moment_room(conn: psycopg.Connection, moment_id: str, room_id: int) -> None:
+    conn.execute("update moment set room_id = %s where id = %s", (room_id, moment_id))
+
+
+def name_room(conn: psycopg.Connection, room_id: int, name: str | None) -> bool:
+    """Set or clear a room's name. Return whether it exists."""
+    return conn.execute("update room set name = %s where id = %s", (name, room_id)).rowcount > 0
+
+
+def room_moments(conn: psycopg.Connection, room_id: int) -> list[str]:
+    """Return the moments recorded in a room, newest first."""
+    rows = conn.execute("select id from moment where room_id = %s order by started_at desc", (room_id,))
+
+    return [moment_id for (moment_id,) in rows]
+
+
 def new_upload(conn: psycopg.Connection, frames_per_minute: float):
     """Record a new upload and return its id."""
     (upload_id,) = conn.execute(
