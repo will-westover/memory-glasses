@@ -15,6 +15,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     static let videoWidth = 1440
     static let videoHeight = 1080
     static let videoBitrate = 6_000_000
+    static let poseInterval = 0.1
 
     @Published private(set) var stage: Stage = .ready
     @Published private(set) var elapsed: TimeInterval = 0
@@ -35,6 +36,8 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     private var firstTime: TimeInterval?
     private var lastWritten: TimeInterval = 0
     private var isRecording = false
+    private var poses: [[Double]] = []
+    private var lastPose: TimeInterval = 0
     private var startedAt = Date()
     private var outputURL: URL?
 
@@ -81,6 +84,8 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         queue.async {
             self.firstTime = nil
             self.lastWritten = 0
+            self.poses = []
+            self.lastPose = 0
             self.isRecording = true
         }
 
@@ -101,8 +106,12 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
             self.videoInput?.markAsFinished()
             self.audioInput?.markAsFinished()
 
+            let posesFile = self.writePoses()
+
             writer.finishWriting {
-                DispatchQueue.main.async { Task { await self.upload(framesPerMinute: framesPerMinute) } }
+                DispatchQueue.main.async {
+                    Task { await self.upload(framesPerMinute: framesPerMinute, extras: posesFile.map { [("poses", $0)] } ?? []) }
+                }
             }
         }
     }
@@ -172,9 +181,31 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
 
         adaptor.append(frame.capturedImage, withPresentationTime: CMTime(seconds: frame.timestamp, preferredTimescale: 600))
         lastWritten = frame.timestamp
+        logPose(frame)
 
         let seconds = frame.timestamp - (firstTime ?? frame.timestamp)
         DispatchQueue.main.async { self.elapsed = seconds }
+    }
+
+    private func logPose(_ frame: ARFrame) {
+        guard frame.timestamp - lastPose >= Self.poseInterval, case .normal = frame.camera.trackingState else { return }
+
+        let transform = frame.camera.transform
+        let forward = -transform.columns.2
+        let seconds = frame.timestamp - (firstTime ?? frame.timestamp)
+
+        poses.append([seconds, Double(transform.columns.3.x), Double(transform.columns.3.y),
+                      Double(transform.columns.3.z), Double(atan2(forward.x, forward.z))])
+        lastPose = frame.timestamp
+    }
+
+    private func writePoses() -> URL? {
+        guard !poses.isEmpty else { return nil }
+
+        let url = FileManager.default.temporaryDirectory.appending(path: "poses-\(UUID().uuidString).json")
+        let data = try? JSONSerialization.data(withJSONObject: ["poses": poses])
+
+        return (try? data?.write(to: url)) != nil ? url : nil
     }
 
     func session(_ session: ARSession, didOutputAudioSampleBuffer audioSampleBuffer: CMSampleBuffer) {
@@ -203,17 +234,18 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         }
     }
 
-    private func upload(framesPerMinute: Double) async {
+    private func upload(framesPerMinute: Double, extras: [(field: String, url: URL)]) async {
         guard let outputURL else { return }
 
         stage = .uploading(0)
 
         do {
-            try await API.current.uploadMoment(video: outputURL, framesPerMinute: framesPerMinute) { progress in
+            try await API.current.uploadMoment(video: outputURL, framesPerMinute: framesPerMinute, extras: extras) { progress in
                 DispatchQueue.main.async { self.stage = .uploading(progress) }
             }
 
             try? FileManager.default.removeItem(at: outputURL)
+            extras.forEach { try? FileManager.default.removeItem(at: $0.url) }
             stage = .uploaded
         } catch {
             stage = .failed("Upload failed: \(error.localizedDescription). The recording is still on the phone.")

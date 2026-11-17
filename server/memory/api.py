@@ -19,6 +19,7 @@ from memory.agent import ask_agent, ask_plain
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
 from memory.ingest.facts import build_facts
+from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import kept_frames, planned_frames
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
@@ -95,6 +96,11 @@ def fact_json(fact: dict) -> dict:
     }
 
 
+def position_json(pose) -> dict | None:
+    """Return a frame's position as named fields, or None."""
+    return dict(zip(("x", "y", "z", "yaw"), pose)) if pose else None
+
+
 def frame_json(frame: dict) -> dict:
     """Return a captioned frame in the shape the app reads."""
     return {
@@ -109,6 +115,7 @@ def frame_json(frame: dict) -> dict:
             {"id": person["id"], "name": person["name"], "face": f"/faces/{person['face_id']}"}
             for person in frame["people"]
         ],
+        "position": position_json(frame["position"]),
     }
 
 
@@ -307,6 +314,17 @@ def run_reprocess(upload_id, moment_id: str, frames_per_minute: float) -> None:
         except Exception as error:
             conn.rollback()
             db.update_upload(conn, upload_id, status="failed", error=str(error))
+
+
+@app.get("/moments/{moment_id}/path")
+def moment_path(moment_id: str) -> dict:
+    """Return where the phone went during a moment, from above: [seconds, x, z] in metres."""
+    poses_file = (MOMENTS_DIR / moment_id / "poses.json").resolve()
+
+    if not poses_file.is_relative_to(MOMENTS_DIR) or not poses_file.is_file():
+        return {"points": []}
+
+    return {"points": [[t, x, z] for t, x, _, z, _ in thin(load_poses(poses_file))]}
 
 
 @app.get("/moments/{moment_id}/reprocess-estimate")

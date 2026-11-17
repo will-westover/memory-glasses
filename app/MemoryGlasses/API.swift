@@ -29,6 +29,18 @@ struct Frame: Decodable, Identifiable {
     let objects: [SeenObject]
     let texts: [SeenText]
     let people: [PersonTag]
+    let position: Position?
+}
+
+struct Position: Decodable, Hashable {
+    let x: Double
+    let y: Double
+    let z: Double
+    let yaw: Double
+}
+
+struct WalkedPath: Decodable {
+    let points: [[Double]]
 }
 
 struct SpokenLine: Decodable, Hashable {

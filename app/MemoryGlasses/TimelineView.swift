@@ -122,6 +122,7 @@ struct MomentView: View {
     @State private var showTranscript = false
     @State private var index = 0
     @State private var playingFrom: Double?
+    @State private var path: [[Double]] = []
 
     var body: some View {
         Group {
@@ -180,6 +181,13 @@ struct MomentView: View {
             }
 
             VStack(alignment: .leading, spacing: 28) {
+                if path.count > 1 {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionTitle("Where you went")
+                        PathMap(points: path, frames: detail.frames, index: $index)
+                    }
+                }
+
                 if !detail.summaries.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionTitle("Summary")
@@ -237,6 +245,7 @@ struct MomentView: View {
             }
 
             detail = loaded
+            path = ((try? await API.current.get("/moments/\(link.id)/path")) as WalkedPath?)?.points ?? []
             problem = nil
         } catch {
             problem = error.localizedDescription

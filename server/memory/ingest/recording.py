@@ -15,6 +15,7 @@ import psycopg
 from memory import db
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE, clock
 from memory.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
+from memory.ingest.poses import load_poses, nearest_pose
 from memory.places import parse_location
 from memory.ingest.fingerprint import (
     DEFAULT_MAX_DISTANCE,
@@ -259,6 +260,11 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frame
     sampled, usable, picks = choose_frames(fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates,
                                            reuse)
     frames = keep_frames(frames_dir, picks, candidates, started)
+    poses = load_poses(extras["poses.json"]) if "poses.json" in extras else []
+
+    for frame in frames:
+        pose = nearest_pose(poses, frame["offset_seconds"])
+        frame["position"] = pose[1:] if pose else None
 
     if has_sound(info):
         extract_audio(video, build_dir / "audio.wav")

@@ -42,13 +42,20 @@ def migrate(conn: psycopg.Connection) -> list[str]:
     return ran
 
 
+def position(frame: dict) -> tuple:
+    """Return a manifest frame's (x, y, z, yaw), or Nones if the recording had no positions."""
+    pose = frame.get("position")
+
+    return tuple(pose) if pose else (None, None, None, None)
+
+
 def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
     """Store a moment folder's manifest, keeping the captions of frames that are unchanged."""
     manifest = json.loads((moment_dir / "manifest.json").read_text())
     moment_id = manifest["id"]
     folder = f"moments/{moment_id}"
 
-    wanted = {(f"{folder}/{frame['file']}", frame["fingerprint"]): frame["captured_at"] for frame in manifest["frames"]}
+    wanted = {(f"{folder}/{frame['file']}", frame["fingerprint"]): frame for frame in manifest["frames"]}
 
     with conn.transaction():
         conn.execute(
@@ -81,13 +88,16 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
 
         with conn.cursor() as cursor:
             cursor.executemany(
-                "update frame set captured_at = %s where id = %s",
-                [(wanted[key], stored[key][0]) for key in wanted.keys() & stored.keys()],
+                "update frame set captured_at = %s, x = %s, y = %s, z = %s, yaw = %s where id = %s",
+                [(wanted[key]["captured_at"], *position(wanted[key]), stored[key][0])
+                 for key in wanted.keys() & stored.keys()],
             )
 
             cursor.executemany(
-                "insert into frame (moment_id, captured_at, image_path, fingerprint) values (%s, %s, %s, %s)",
-                [(moment_id, wanted[key], *key) for key in wanted.keys() - stored.keys()],
+                "insert into frame (moment_id, captured_at, image_path, fingerprint, x, y, z, yaw)"
+                " values (%s, %s, %s, %s, %s, %s, %s, %s)",
+                [(moment_id, wanted[key]["captured_at"], *key, *position(wanted[key]))
+                 for key in wanted.keys() - stored.keys()],
             )
 
     return {
@@ -153,6 +163,7 @@ def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
     """Return every captioned frame of a moment, oldest first."""
     rows = conn.execute(
         "select f.id, f.image_path, f.captured_at, extract(epoch from f.captured_at - s.started_at),"
+        "       case when f.x is null then null else json_build_array(f.x, f.y, f.z, f.yaw) end,"
         "       f.summary,"
         "       (select coalesce(json_agg(json_build_array(o.name, o.location)), '[]')"
         "          from frame_object o where o.frame_id = f.id),"
@@ -177,8 +188,9 @@ def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
             "objects": [tuple(item) for item in objects],
             "texts": [tuple(item) for item in texts],
             "people": people,
+            "position": pose,
         }
-        for frame_id, image_path, captured_at, offset, summary, objects, texts, people in rows
+        for frame_id, image_path, captured_at, offset, pose, summary, objects, texts, people in rows
     ]
 
 
