@@ -64,3 +64,18 @@ def test_a_frame_already_kept_inside_a_slot_is_reused():
     assert [pick["offset"] for pick in picks] == [0.5, 1.5]
     assert picks[0]["source"] == Path("/old/00000500.jpg")
     assert picks[1]["source"] == Path("/new/000006.jpg")
+
+
+def test_extra_files_and_the_source_are_kept(tmp_path):
+    video = tmp_path / "walk.mp4"
+    make_video(video)
+    poses = tmp_path / "poses.json"
+    poses.write_text(json.dumps({"poses": [[t / 10, t / 10, 1.5, 0.0, 0.0] for t in range(170)]}))
+
+    moment_dir = ingest(video, data_dir=tmp_path / "data", extras={"poses.json": poses}, source="iphone")
+
+    manifest = json.loads((moment_dir / "manifest.json").read_text())
+    assert manifest["source"] == "iphone"
+    assert manifest["extras"] == ["poses.json"]
+    assert (moment_dir / "poses.json").is_file()
+    assert all(frame["position"] for frame in manifest["frames"])

@@ -19,10 +19,18 @@ def test_a_slot_is_dropped_only_when_every_frame_in_it_is_blurry():
     one_sharp = [0.50, 0.52, 0.39, 0.48]
     all_blurry = [0.50, 0.52, 0.47, 0.48]
 
-    assert sharpest_per_slot(one_sharp + all_blurry, per_slot=4, max_blur=0.44) == [2, None]
+    assert sharpest_per_slot(one_sharp + all_blurry, per_slot=4, max_blur=0.44, margin=0) == [2, None]
 
 
 def test_blank_frames_are_never_chosen_and_a_short_last_slot_still_counts():
     scores = [None, 0.35, 0.33, 0.34,   None]
 
     assert sharpest_per_slot(scores, per_slot=4, max_blur=0.44) == [2, None]
+
+
+def test_a_soft_recording_keeps_its_frames_and_drops_only_the_clear_outlier():
+    scores = [0.46, 0.47, 0.48, 0.49, 0.45, 0.46, 0.47, 0.48, 0.47, 0.50, 0.51, 0.52, 0.58, 0.60, 0.61, 0.62]
+
+    chosen = sharpest_per_slot(scores, per_slot=4)
+
+    assert chosen == [0, 4, 8, None]

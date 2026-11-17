@@ -271,8 +271,8 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frame
 
     video_file = keep_video(video, build_dir)
 
-    for name, source in extras.items():
-        keep_file(source, build_dir / name)
+    for name, extra in extras.items():
+        keep_file(extra, build_dir / name)
 
     manifest = {
         "id": moment_id,
