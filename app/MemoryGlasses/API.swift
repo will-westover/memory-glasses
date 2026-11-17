@@ -54,6 +54,7 @@ struct MomentDetail: Decodable {
     let transcript: [SpokenLine]
     let summaries: [Fact]
     let hasVideo: Bool
+    let framesPerMinute: Double?
 }
 
 struct Answer: Codable {

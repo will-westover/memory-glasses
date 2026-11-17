@@ -40,3 +40,27 @@ def test_two_scenes_become_two_frames(tmp_path):
     assert on_disk == [Path(frame["file"]).name for frame in manifest["frames"]]
     assert (moment_dir / "audio.wav").stat().st_size > 0
     assert (moment_dir / "index.html").exists()
+
+
+def test_frames_are_named_by_their_time_so_a_new_rate_finds_the_same_names():
+    from memory.ingest.recording import frame_name, frame_offset
+
+    at_30 = frame_name(frame_offset(4, 2.0))
+    at_60 = frame_name(frame_offset(8, 1.0))
+
+    assert at_30 == at_60 == "00002000.jpg"
+
+
+def test_a_frame_already_kept_inside_a_slot_is_reused():
+    from pathlib import Path
+
+    from memory.ingest.recording import slot_picks
+
+    reuse = [{"offset_seconds": 0.5, "path": Path("/old/00000500.jpg"), "fingerprint": "00000000000000ff", "blur": 0.3}]
+    candidates = [Path(f"/new/{index:06d}.jpg") for index in range(8)]
+
+    picks = slot_picks([1, 6], list(range(8)), [0.3] * 8, 1.0, candidates, reuse)
+
+    assert [pick["offset"] for pick in picks] == [0.5, 1.5]
+    assert picks[0]["source"] == Path("/old/00000500.jpg")
+    assert picks[1]["source"] == Path("/new/000006.jpg")

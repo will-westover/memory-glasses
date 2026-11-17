@@ -191,6 +191,10 @@ struct MomentView: View {
                 if !detail.transcript.isEmpty {
                     transcript(detail.transcript)
                 }
+
+                if detail.hasVideo {
+                    RateControl(momentId: link.id, current: detail.framesPerMinute ?? 30) { await load() }
+                }
             }
             .padding(.horizontal, 20)
         }

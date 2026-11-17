@@ -19,6 +19,7 @@ from memory.agent import ask_agent, ask_plain
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
 from memory.ingest.facts import build_facts
+from memory.ingest.recording import kept_frames, planned_frames
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
 
@@ -41,6 +42,10 @@ class Question(BaseModel):
 
 class ChatQuestion(BaseModel):
     question: str = Field(min_length=1)
+
+
+class Rate(BaseModel):
+    frames_per_minute: float = Field(ge=1, le=MAX_FRAMES_PER_MINUTE)
 
 
 class PersonName(BaseModel):
@@ -152,6 +157,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "transcript": db.transcript_lines(conn, moment_id),
         "summaries": [fact_json(fact) for fact in db.summaries(conn, moment_id)],
         "has_video": has_video(moment_id),
+        "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
     }
 
 
@@ -264,6 +270,78 @@ def video_path(moment_id: str):
 
 def has_video(moment_id: str) -> bool:
     return video_path(moment_id) is not None
+
+
+def manifest_of(moment_id: str) -> dict:
+    """Return a moment's manifest, or an empty one if it can't be read."""
+    path = (MOMENTS_DIR / moment_id / "manifest.json").resolve()
+
+    return json.loads(path.read_text()) if path.is_relative_to(MOMENTS_DIR) and path.is_file() else {}
+
+
+def current_extras(moment_id: str) -> dict:
+    """Return the extra files kept with a moment, by name."""
+    folder = MOMENTS_DIR / moment_id
+
+    return {name: folder / name for name in manifest_of(moment_id).get("extras", []) if (folder / name).is_file()}
+
+
+def caption_cost(conn: psycopg.Connection) -> float:
+    """Return the average cost of describing one frame so far."""
+    (average,) = conn.execute("select coalesce(avg(usd), 0.006) from api_cost where step = 'caption'").fetchone()
+
+    return float(average)
+
+
+def run_reprocess(upload_id, moment_id: str, frames_per_minute: float) -> None:
+    """Rebuild a moment's frames at a new rate from its kept video, then caption only what's new."""
+    with db.connect() as conn:
+        def step(name: str) -> None:
+            db.update_upload(conn, upload_id, step=name)
+            conn.commit()
+
+        try:
+            pipeline.process(video_path(moment_id), frames_per_minute, current_extras(moment_id), replace=True,
+                             reuse_frames=True, on_step=step)
+            db.update_upload(conn, upload_id, status="ready", step=None)
+        except Exception as error:
+            conn.rollback()
+            db.update_upload(conn, upload_id, status="failed", error=str(error))
+
+
+@app.get("/moments/{moment_id}/reprocess-estimate")
+def reprocess_estimate(moment_id: str, frames_per_minute: float,
+                       conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Say how many new frames a rate would add and what describing them would cost."""
+    path = video_path(moment_id)
+
+    if path is None:
+        raise HTTPException(404, "this moment's video wasn't kept, so it can't be reprocessed")
+
+    if not 1 <= frames_per_minute <= MAX_FRAMES_PER_MINUTE:
+        raise HTTPException(422, f"frames per minute must be between 1 and {MAX_FRAMES_PER_MINUTE}")
+
+    planned = planned_frames(path, frames_per_minute, kept_frames(MOMENTS_DIR / moment_id))
+    new = sum(1 for frame in planned if not frame["reused"])
+
+    return {"frames": len(planned), "new_frames": new, "kept_captions": len(planned) - new,
+            "usd": round(new * caption_cost(conn), 4)}
+
+
+@app.post("/moments/{moment_id}/reprocess")
+def reprocess(moment_id: str, body: Rate, tasks: BackgroundTasks,
+              conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Rebuild a moment at a different frames per minute, in the background."""
+    if video_path(moment_id) is None:
+        raise HTTPException(404, "this moment's video wasn't kept, so it can't be reprocessed")
+
+    upload_id = db.new_upload(conn, body.frames_per_minute)
+    db.update_upload(conn, upload_id, moment_id=moment_id, step="Waiting")
+    conn.commit()
+
+    tasks.add_task(run_reprocess, upload_id, moment_id, body.frames_per_minute)
+
+    return {"id": upload_id, "status": "processing"}
 
 
 @app.get("/moments/{moment_id}/video")

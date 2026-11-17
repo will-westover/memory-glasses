@@ -245,7 +245,7 @@ def keep_video(video: Path, folder: Path) -> str:
 
 
 def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frames_per_minute: float,
-                 max_distance: int, max_blur: float, extras: dict[str, Path]) -> None:
+                 max_distance: int, max_blur: float, extras: dict[str, Path], reuse: list[dict]) -> None:
     """Fill a folder with the moment's video, kept frames, audio, extra files, manifest and page."""
     started = start_time(info, video)
     place = location(info)
@@ -254,9 +254,11 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frame
 
     seconds_per_frame = 60 / frames_per_minute if frames_per_minute else 0.0
     fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame) if frames_per_minute else ([], [])
+    candidates = sorted(frames_dir.glob("*.jpg"))
 
-    sampled, sharp, kept = choose_frames(fingerprints, blur, max_distance, max_blur)
-    frames = keep_frames(frames_dir, kept, fingerprints, blur, started, seconds_per_frame)
+    sampled, usable, picks = choose_frames(fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates,
+                                           reuse)
+    frames = keep_frames(frames_dir, picks, candidates, started)
 
     if has_sound(info):
         extract_audio(video, build_dir / "audio.wav")
@@ -279,7 +281,7 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frame
         "lon": place[1] if place else None,
         "frames_per_minute": frames_per_minute,
         "frames_sampled": sampled,
-        "frames_blurry": sampled - sharp,
+        "frames_blurry": sampled - usable,
         "frames_kept": len(frames),
         "audio": "audio.wav" if has_sound(info) else None,
         "frames": frames,
@@ -289,37 +291,101 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frame
     write_page(build_dir, manifest)
 
 
-def choose_frames(fingerprints: list[int], blur: list, max_distance: int, max_blur: float) -> tuple[int, int, set[int]]:
-    """Return how many slots there were, how many were sharp, and which frames to keep."""
+def frame_offset(index: int, seconds_per_frame: float) -> float:
+    """Return the time in the video of a sampled candidate frame."""
+    return index * seconds_per_frame / CANDIDATES_PER_SLOT
+
+
+def frame_name(offset: float) -> str:
+    """Return a frame's file name from its time in the video, in milliseconds, so it stays the same at any rate."""
+    return f"{round(offset * 1000):08d}.jpg"
+
+
+def slot_picks(slots: list[int | None], fingerprints: list[int], blur: list, seconds_per_frame: float,
+               candidates: list[Path], reuse: list[dict]) -> list[dict]:
+    """Return one frame per slot: a frame already kept inside the slot if there is one, else the sharpest sample."""
+    picks = []
+
+    for slot, index in enumerate(slots):
+        start, end = slot * seconds_per_frame, (slot + 1) * seconds_per_frame
+        existing = next((frame for frame in reuse if start <= frame["offset_seconds"] < end), None)
+
+        if existing:
+            picks.append({"offset": existing["offset_seconds"], "source": existing["path"],
+                          "fingerprint": int(existing["fingerprint"], 16), "blur": existing.get("blur")})
+        elif index is not None:
+            picks.append({"offset": frame_offset(index, seconds_per_frame), "source": candidates[index],
+                          "fingerprint": fingerprints[index], "blur": blur[index]})
+
+    return picks
+
+
+def choose_frames(fingerprints: list[int], blur: list, seconds_per_frame: float, max_distance: int, max_blur: float,
+                  candidates: list[Path], reuse: list[dict]) -> tuple[int, int, list[dict]]:
+    """Return how many slots there were, how many had a usable frame, and the frames to keep."""
     slots = sharpest_per_slot(blur, CANDIDATES_PER_SLOT, max_blur)
-    sharp = [index for index in slots if index is not None]
+    picks = slot_picks(slots, fingerprints, blur, seconds_per_frame, candidates, reuse)
 
-    different = indexes_to_keep([fingerprints[index] for index in sharp], max_distance)
+    different = indexes_to_keep([pick["fingerprint"] for pick in picks], max_distance)
 
-    return len(slots), len(sharp), {sharp[position] for position in different}
+    return len(slots), len(picks), [picks[position] for position in different]
 
 
-def keep_frames(frames_dir: Path, kept: set[int], fingerprints: list[int], blur: list,
-                started: datetime, seconds_per_frame: float) -> list[dict]:
-    """Delete the frames that were not chosen and return a manifest entry for each one kept."""
+def keep_frames(frames_dir: Path, picks: list[dict], candidates: list[Path], started: datetime) -> list[dict]:
+    """Put each chosen frame in place under its time-based name, delete the other samples, and describe them."""
     frames = []
 
-    for index, path in enumerate(sorted(frames_dir.glob("*.jpg"))):
-        if index not in kept:
-            path.unlink()
-            continue
+    for pick in picks:
+        target = frames_dir / frame_name(pick["offset"])
 
-        offset = index * seconds_per_frame / CANDIDATES_PER_SLOT
+        if pick["source"].parent == frames_dir:
+            pick["source"].rename(target)
+        else:
+            shutil.copy2(pick["source"], target)
 
         frames.append({
-            "file": f"frames/{path.name}",
-            "offset_seconds": offset,
-            "captured_at": (started + timedelta(seconds=offset)).isoformat(),
-            "fingerprint": f"{fingerprints[index]:016x}",
-            "blur": round(blur[index], 3),
+            "file": f"frames/{target.name}",
+            "offset_seconds": pick["offset"],
+            "captured_at": (started + timedelta(seconds=pick["offset"])).isoformat(),
+            "fingerprint": f"{pick['fingerprint']:016x}",
+            "blur": round(pick["blur"], 3) if pick["blur"] is not None else None,
         })
 
+    for candidate in candidates:
+        candidate.unlink(missing_ok=True)
+
     return frames
+
+
+def kept_frames(moment_dir: Path) -> list[dict]:
+    """Return a moment's current frames with their file paths, to reuse when it's rebuilt at another rate."""
+    manifest = moment_dir / "manifest.json"
+
+    if not manifest.is_file():
+        return []
+
+    return [{**frame, "path": moment_dir / frame["file"]} for frame in json.loads(manifest.read_text())["frames"]
+            if (moment_dir / frame["file"]).is_file()]
+
+
+def planned_frames(video: Path, frames_per_minute: float, reuse: list[dict] | None = None,
+                   max_distance: int = DEFAULT_MAX_DISTANCE, max_blur: float = DEFAULT_MAX_BLUR) -> list[dict]:
+    """Return the frames that would be kept at a rate, each saying whether it's reused, without keeping anything."""
+    if not frames_per_minute:
+        return []
+
+    seconds_per_frame = 60 / frames_per_minute
+
+    with tempfile.TemporaryDirectory() as scratch:
+        frames_dir = Path(scratch) / "frames"
+        frames_dir.mkdir()
+        fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame)
+        candidates = sorted(frames_dir.glob("*.jpg"))
+
+        _, _, picks = choose_frames(fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates,
+                                    reuse or [])
+
+    return [{"name": frame_name(pick["offset"]), "reused": pick["source"].parent != frames_dir} for pick in picks]
 
 
 def ingest(
@@ -330,6 +396,7 @@ def ingest(
     max_blur: float = DEFAULT_MAX_BLUR,
     replace: bool = False,
     extras: dict[str, Path] | None = None,
+    reuse_frames: bool = False,
 ) -> Path:
     """Turn a video into a moment folder and return the folder's path. extras are files kept alongside it."""
     if not video.is_file():
@@ -347,9 +414,11 @@ def ingest(
         raise IngestError(f"{moment_dir} already exists. Pass --replace to build it again.")
 
     shutil.rmtree(build_dir, ignore_errors=True)
+    reuse = kept_frames(moment_dir) if reuse_frames else []
 
     try:
-        build_moment(video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur, extras or {})
+        build_moment(video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur, extras or {},
+                     reuse)
     except Exception:
         shutil.rmtree(build_dir, ignore_errors=True)
         raise

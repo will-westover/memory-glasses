@@ -524,6 +524,13 @@ def face_crop(conn: psycopg.Connection, face_id: int) -> tuple | None:
     ).fetchone()
 
 
+def captioned_images(conn: psycopg.Connection, moment_id: str) -> list[str]:
+    """Return the image paths of a moment's captioned frames."""
+    rows = conn.execute("select image_path from frame where moment_id = %s and captioned_at is not null", (moment_id,))
+
+    return [image_path for (image_path,) in rows]
+
+
 def new_upload(conn: psycopg.Connection, frames_per_minute: float):
     """Record a new upload and return its id."""
     (upload_id,) = conn.execute(
