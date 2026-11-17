@@ -44,8 +44,11 @@ Recordings:
 
 AGENT_NOTES = """
 
-You have two tools. search finds facts by what they are about. timeline lists what happened between two times,
-in order: use it for questions about a stretch of time, or about what came before or after something. Call them
+You have three tools. search finds facts by what they are about. timeline lists what happened between two times,
+in order: use it for questions about a stretch of time, or about what came before or after something. nearby lists
+what was seen close to where one fact's frame was taken, across every moment in the same room: use it for
+questions about what was near something, or what was in the same spot another time. Facts from phone recordings
+say which room they were in and where, in metres. Call them
 until you can answer. If a search finds nothing relevant, try other words before giving up. Earlier messages
 in the conversation can tell you what a follow-up question refers to, but answer only from the facts."""
 
@@ -89,7 +92,24 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "type": "function",
+        "name": "nearby",
+        "description": "List what was seen near where a fact's frame was taken, in any moment in the same room.",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fact_id": {"type": "integer", "description": "The number of a fact from a frame"},
+                "metres": {"type": ["number", "null"], "description": "How far around to look; 1.5 if null"},
+            },
+            "required": ["fact_id", "metres"],
+            "additionalProperties": False,
+        },
+    },
 ]
+
+NEARBY_METRES = 1.5
 
 
 class Answer(BaseModel):
@@ -140,7 +160,13 @@ def fit(facts: list[dict], limit: int = TIMELINE_LIMIT) -> list[dict]:
 
 def fact_line(fact: dict) -> str:
     """Return a fact as the one line the model reads."""
-    return f"[{fact['id']}] {fact['at'].astimezone():%a %d %b %Y %H:%M:%S}  {fact['kind']}: {fact['text']}"
+    where = ""
+
+    if fact.get("position"):
+        x, z = fact["position"]
+        where = f"  ({fact.get('room') or 'room'}, at {x:.1f} m, {z:.1f} m)"
+
+    return f"[{fact['id']}] {fact['at'].astimezone():%a %d %b %Y %H:%M:%S}  {fact['kind']}: {fact['text']}{where}"
 
 
 def fact_lines(facts: list[dict]) -> str:
@@ -153,6 +179,9 @@ def fact_lines(facts: list[dict]) -> str:
 
 def find_facts(conn, name: str, arguments: dict) -> list[dict]:
     """Return the facts one tool call asks for."""
+    if name == "nearby":
+        return db.nearby_facts(conn, arguments["fact_id"], arguments.get("metres") or NEARBY_METRES)
+
     start = parse_time(arguments.get("start"))
     end = parse_time(arguments.get("end"))
 
@@ -195,7 +224,8 @@ def conversation(history: list[tuple[str, str]], question: str) -> list[dict]:
     return messages + [{"role": "user", "content": question}]
 
 
-def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = ()) -> dict:
+def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = (),
+              use_nearby: bool = True) -> dict:
     """Answer a question by letting the model call the tools."""
     llm.require_price(model)
     started = time.monotonic()
@@ -214,7 +244,7 @@ def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple
             instructions=prompt,
             input=send,
             previous_response_id=previous_id,
-            tools=TOOLS,
+            tools=TOOLS if use_nearby else [tool for tool in TOOLS if tool["name"] != "nearby"],
             tool_choice="auto" if round_number < MAX_ROUNDS else "none",
             text_format=Answer,
             reasoning={"effort": "low"},

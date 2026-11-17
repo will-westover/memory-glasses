@@ -343,12 +343,16 @@ def room_map(room_id: int, conn: psycopg.Connection = Depends(connection)) -> Fi
 
 
 @app.put("/rooms/{room_id}")
-def rename_room(room_id: int, body: RoomName, conn: psycopg.Connection = Depends(connection)) -> dict:
+def rename_room(room_id: int, body: RoomName, tasks: BackgroundTasks,
+                conn: psycopg.Connection = Depends(connection)) -> dict:
     """Name or rename a room."""
     name = body.name.strip() if body.name and body.name.strip() else None
 
     if not db.name_room(conn, room_id, name):
         raise HTTPException(404, "no such room")
+
+    conn.commit()
+    tasks.add_task(rebuild_facts, db.room_moments(conn, room_id))
 
     return {"id": room_id, "name": name}
 

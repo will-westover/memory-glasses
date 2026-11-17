@@ -66,7 +66,13 @@ Everything else is your call.
   `.faces`, `.facts`. The original video is kept in the moment folder. Then `memory.agent "question"` (add
   `--plain` for the baseline), or `memory.search "question"` to see the raw facts.
 - The app records moments on an iPhone through ARKit and uploads them (`POST /moments`); they process in the
-  background. Recording needs a real iPhone; the Simulator has no camera tracking.
+  background. Recording needs a real iPhone; the Simulator has no camera tracking. With a recording come
+  `poses.json` (where the phone was, 10 times a second), and on Pro phones `mesh.obj` (the lidar room) and
+  `world.map` (ARKit's map, used to recognise the room next time). Rooms are in `data/rooms/`.
+- A moment can be reprocessed at another frames per minute from its kept video; frames are named by their time,
+  so ones that already exist keep their captions.
+- The agent has three tools: search, timeline and nearby (what was seen near a frame, in the same room).
+  `memory.evals --mode agent --mode no-nearby` compares it with and without nearby.
 - People: `memory.people list`, `name <id> "Sam"`, `merge <id> <into id>`, `forget <id>`, or the People screen in
   the app. Faces use OpenCV's YuNet and SFace models in the ignored `server/models/` (from github.com/opencv/opencv_zoo).
   The user has written consent from the people recorded.

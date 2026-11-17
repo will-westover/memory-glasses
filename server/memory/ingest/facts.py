@@ -37,9 +37,9 @@ class Stretch(BaseModel):
     said: list[Said] = Field(description="One entry per passage; empty if nothing was said")
 
 
-def at_place(place: str | None) -> str:
-    """Return ' At Home.' for a named place, or nothing."""
-    return f" At {place}." if place else ""
+def at_place(place: str | None, room: str | None = None) -> str:
+    """Return where it was, e.g. ' Room: Kitchen. At Home.', or nothing."""
+    return (f" Room: {room}." if room else "") + (f" At {place}." if place else "")
 
 
 def first_sentence(text: str) -> str:
@@ -49,7 +49,7 @@ def first_sentence(text: str) -> str:
     return head + "." if stop else text
 
 
-def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
+def frame_facts(frames: list[dict], place: str | None, room: str | None = None) -> list[dict]:
     """Return a frame fact for each frame, and a fact for each new object and piece of text in it."""
     facts = []
     previous_objects: set = set()
@@ -57,7 +57,7 @@ def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
     previous_people: set = set()
 
     for frame in frames:
-        where = at_place(place)
+        where = at_place(place, room)
         scene = first_sentence(frame["summary"])
         base = {"frame_id": frame["id"], "at": frame["at"], "offset_seconds": frame["offset_seconds"]}
 
@@ -215,7 +215,8 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     frames = db.captioned_frames(conn, moment_id)
     groups = passages(db.transcript_lines(conn, moment_id))
 
-    facts = frame_facts(frames, place)
+    room = (db.moment_room(conn, moment_id) or {}).get("name")
+    facts = frame_facts(frames, place, room)
     facts += [speech_fact(passage, place, "speech", spoken(passage)) for passage in groups]
     facts += summary_facts(conn, frames, groups, place)
 

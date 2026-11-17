@@ -9,13 +9,16 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from memory import db, llm
+from functools import partial
+
 from memory.agent import ask_agent, ask_plain
 from memory.config import AGENT_MODEL, DATA_DIR, JUDGE_MODEL, SERVER_DIR
 
 QUESTION_FILES = (SERVER_DIR / "evals" / "questions.json", DATA_DIR / "evals" / "questions.json")
 RUNS_DIR = DATA_DIR / "evals" / "runs"
 
-MODES = {"agent": ask_agent, "plain": ask_plain}
+MODES = {"agent": ask_agent, "plain": ask_plain, "no-nearby": partial(ask_agent, use_nearby=False)}
+DEFAULT_MODES = ("agent", "plain")
 POINTS = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
 NOT_RECORDED = "NOT RECORDED"
 
@@ -142,7 +145,8 @@ def save_run(rows: list[dict], model: str) -> None:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     path = RUNS_DIR / f"{datetime.now():%Y-%m-%dT%H-%M-%S}.json"
 
-    scores = {mode: summarise([row for row in rows if row["mode"] == mode]) for mode in MODES}
+    ran = dict.fromkeys(row["mode"] for row in rows)
+    scores = {mode: summarise([row for row in rows if row["mode"] == mode]) for mode in ran}
     path.write_text(json.dumps({"model": model, "judge": JUDGE_MODEL, "scores": scores, "rows": rows}, indent=2))
 
     print(f"Saved to {path}")
@@ -151,13 +155,14 @@ def save_run(rows: list[dict], model: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Grade the agent and the plain baseline on the test questions.")
     parser.add_argument("--limit", type=int, help="ask only the first few questions")
-    parser.add_argument("--mode", choices=list(MODES), help="run one mode only")
+    parser.add_argument("--mode", choices=list(MODES), action="append",
+                        help="modes to run (default: agent and plain); no-nearby is the agent without the nearby tool")
     parser.add_argument("--model", default=AGENT_MODEL, help="the model that answers")
     args = parser.parse_args()
 
     llm.require_price(JUDGE_MODEL)
     questions = load_questions()[: args.limit]
-    modes = [args.mode] if args.mode else list(MODES)
+    modes = args.mode or list(DEFAULT_MODES)
     rows = []
 
     with db.connect() as conn:

@@ -263,17 +263,35 @@ def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], v
 
 
 FACT_COLUMNS = (
-    "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds, fact.text, frame.image_path"
+    "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds, fact.text, frame.image_path,"
+    "       frame.x, frame.z, room.name"
     "  from fact left join frame on frame.id = fact.frame_id"
+    "  join moment on moment.id = fact.moment_id left join room on room.id = moment.room_id"
 )
 
 
 def fact_rows(rows) -> list[dict]:
     return [
         {"id": fact_id, "kind": kind, "at": at, "moment_id": moment_id, "offset_seconds": float(offset),
-         "text": text, "image_path": image_path}
-        for fact_id, kind, at, moment_id, offset, text, image_path in rows
+         "text": text, "image_path": image_path, "position": [x, z] if x is not None else None, "room": room}
+        for fact_id, kind, at, moment_id, offset, text, image_path, x, z, room in rows
     ]
+
+
+def nearby_facts(conn: psycopg.Connection, fact_id: int, metres: float, limit: int = 12) -> list[dict]:
+    """Return what was seen within `metres` of where a fact's frame was taken, in the same room, newest first."""
+    return fact_rows(conn.execute(
+        "with origin as ("
+        "    select frame.x, frame.z, frame.moment_id, moment.room_id from fact"
+        "      join frame on frame.id = fact.frame_id join moment on moment.id = frame.moment_id"
+        "     where fact.id = %(id)s and frame.x is not null)"
+        f" {FACT_COLUMNS}, origin"
+        " where frame.x is not null and fact.id <> %(id)s and fact.kind in ('frame', 'object', 'text', 'person')"
+        "   and (moment.room_id = origin.room_id or frame.moment_id = origin.moment_id)"
+        "   and sqrt(power(frame.x - origin.x, 2) + power(frame.z - origin.z, 2)) <= %(metres)s"
+        " order by fact.at desc limit %(limit)s",
+        {"id": fact_id, "metres": metres, "limit": limit},
+    ))
 
 
 def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
