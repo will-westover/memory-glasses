@@ -193,30 +193,39 @@ struct SourceChip: View {
     let fact: Fact
 
     var body: some View {
-        HStack(spacing: 10) {
-            if fact.image != nil {
-                FrameImage(path: fact.image)
-                    .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            } else {
-                Image(systemName: fact.kind == "summary" ? "text.alignleft" : "waveform")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, height: 44)
-                    .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            }
+        NavigationLink(value: fact) {
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack(alignment: .bottomLeading) {
+                    if fact.image != nil {
+                        FrameImage(path: fact.image)
+                    } else {
+                        Rectangle()
+                            .fill(Color(.tertiarySystemFill))
+                            .overlay {
+                                Image(systemName: fact.isSpeech ? "waveform" : "text.alignleft")
+                                    .font(.title2)
+                                    .foregroundStyle(.secondary)
+                            }
+                    }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(fact.at.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    Text(fact.at.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(8)
+                }
+                .frame(width: 200, height: 120)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                 Text(fact.text)
                     .font(.caption)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(width: 200, alignment: .leading)
             }
         }
-        .padding(8)
-        .frame(width: 240, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .buttonStyle(.plain)
     }
 }

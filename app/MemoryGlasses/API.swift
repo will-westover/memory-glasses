@@ -32,11 +32,12 @@ struct Frame: Decodable, Identifiable {
 
 struct SpokenLine: Decodable, Hashable {
     let start: Double
+    let end: Double
     let speaker: String?
     let text: String
 }
 
-struct Fact: Codable, Identifiable {
+struct Fact: Codable, Identifiable, Hashable {
     let id: Int
     let kind: String
     let at: Date
@@ -214,6 +215,10 @@ struct API {
     func image(_ path: String) async throws -> Data {
         try await data(for: request(path))
     }
+
+    func audio(session: String, from start: Double, to end: Double) async throws -> Data {
+        try await data(for: request("/sessions/\(session)/audio?start=\(start)&end=\(end)"))
+    }
 }
 
 func clock(_ seconds: Double) -> String {
@@ -230,4 +235,18 @@ func dollars(_ amount: Double) -> String {
     }
 
     return amount < 0.01 ? String(format: "$%.4f", amount) : String(format: "$%.2f", amount)
+}
+
+struct SessionLink: Hashable {
+    let id: String
+    let startedAt: Date
+    var focus: Double? = nil
+}
+
+extension Fact {
+    var session: SessionLink {
+        SessionLink(id: sessionId, startedAt: at.addingTimeInterval(-offsetSeconds), focus: offsetSeconds)
+    }
+
+    var isSpeech: Bool { kind == "speech" || kind == "said" }
 }

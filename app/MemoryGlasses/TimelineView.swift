@@ -17,7 +17,9 @@ struct TimelineView: View {
                         ForEach(days, id: \.self) { day in
                             Section {
                                 ForEach(sessions.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }) { session in
-                                    NavigationLink(value: session) { SessionRow(session: session) }
+                                    NavigationLink(value: SessionLink(id: session.id, startedAt: session.startedAt)) {
+                                        SessionRow(session: session)
+                                    }
                                 }
                             } header: {
                                 Text(day.formatted(.dateTime.weekday(.wide).month().day()))
@@ -32,7 +34,8 @@ struct TimelineView: View {
                 }
             }
             .navigationTitle("Timeline")
-            .navigationDestination(for: SessionSummary.self) { SessionView(session: $0) }
+            .navigationDestination(for: SessionLink.self) { SessionView(link: $0) }
+            .navigationDestination(for: Fact.self) { MomentView(fact: $0) }
             .task { await load() }
         }
     }
@@ -84,36 +87,22 @@ struct SessionRow: View {
 }
 
 struct SessionView: View {
-    let session: SessionSummary
+    let link: SessionLink
 
     @State private var detail: SessionDetail?
     @State private var problem: String?
     @State private var showTranscript = false
+    @State private var highlighted: Int?
 
     var body: some View {
         Group {
             if let detail {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
-                        if !detail.summaries.isEmpty {
-                            VStack(alignment: .leading, spacing: 10) {
-                                SectionTitle("Summary")
-
-                                ForEach(detail.summaries) { Text($0.text).lineSpacing(3) }
-                            }
-                        }
-
-                        if !detail.transcript.isEmpty {
-                            transcript(detail.transcript)
-                        }
-
-                        VStack(alignment: .leading, spacing: 24) {
-                            SectionTitle("\(detail.frames.count) moments")
-
-                            ForEach(detail.frames) { MomentView(frame: $0) }
-                        }
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        content(detail)
+                            .padding(20)
                     }
-                    .padding(20)
+                    .task { await focus(detail, scroll) }
                 }
             } else if let problem {
                 ServerProblem(message: problem, retry: load)
@@ -121,9 +110,42 @@ struct SessionView: View {
                 ProgressView()
             }
         }
-        .navigationTitle(session.startedAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
+        .navigationTitle(link.startedAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+    }
+
+    private func content(_ detail: SessionDetail) -> some View {
+        VStack(alignment: .leading, spacing: 28) {
+            if !detail.summaries.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionTitle("Summary")
+
+                    ForEach(detail.summaries) { Text($0.text).lineSpacing(3) }
+                }
+            }
+
+            if !detail.transcript.isEmpty {
+                transcript(detail.transcript)
+            }
+
+            VStack(alignment: .leading, spacing: 24) {
+                SectionTitle("\(detail.frames.count) moments")
+
+                ForEach(detail.frames) { frame in
+                    NavigationLink(value: moment(frame)) {
+                        MomentRow(frame: frame, highlighted: highlighted == frame.id)
+                    }
+                    .buttonStyle(.plain)
+                    .id(frame.id)
+                }
+            }
+        }
+    }
+
+    private func moment(_ frame: Frame) -> Fact {
+        Fact(id: -frame.id, kind: "moment", at: frame.at, sessionId: link.id, offsetSeconds: frame.offsetSeconds,
+             text: frame.summary, image: frame.image)
     }
 
     private func transcript(_ lines: [SpokenLine]) -> some View {
@@ -147,9 +169,22 @@ struct SessionView: View {
         }
     }
 
+    private func focus(_ detail: SessionDetail, _ scroll: ScrollViewProxy) async {
+        guard let offset = link.focus,
+              let nearest = detail.frames.min(by: { abs($0.offsetSeconds - offset) < abs($1.offsetSeconds - offset) })
+        else { return }
+
+        try? await Task.sleep(for: .milliseconds(300))
+        withAnimation(.snappy) { scroll.scrollTo(nearest.id, anchor: .center) }
+        highlighted = nearest.id
+
+        try? await Task.sleep(for: .seconds(2.5))
+        withAnimation(.easeOut(duration: 0.6)) { highlighted = nil }
+    }
+
     private func load() async {
         do {
-            detail = try await API.current.get("/sessions/\(session.id)")
+            detail = try await API.current.get("/sessions/\(link.id)")
             problem = nil
         } catch {
             problem = error.localizedDescription
@@ -157,45 +192,29 @@ struct SessionView: View {
     }
 }
 
-struct MomentView: View {
+struct MomentRow: View {
     let frame: Frame
-
-    @State private var expanded = false
+    let highlighted: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             FrameImage(path: frame.image)
                 .aspectRatio(4 / 3, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            HStack(alignment: .firstTextBaseline) {
-                Text(clock(frame.offsetSeconds))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-
-                Spacer()
-
-                if !frame.objects.isEmpty || !frame.texts.isEmpty {
-                    Button(expanded ? "Less" : "\(frame.objects.count + frame.texts.count) details") {
-                        withAnimation(.snappy) { expanded.toggle() }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.accentColor, lineWidth: highlighted ? 4 : 0)
                 }
-            }
+
+            Text(clock(frame.offsetSeconds))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
 
             Text(frame.summary)
                 .font(.subheadline)
                 .lineSpacing(2)
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(frame.texts, id: \.self) { Text("“\($0.text)” on \($0.surface)") }
-                    ForEach(frame.objects, id: \.self) { Text("\($0.name): \($0.location)") }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+                .multilineTextAlignment(.leading)
         }
+        .contentShape(Rectangle())
     }
 }

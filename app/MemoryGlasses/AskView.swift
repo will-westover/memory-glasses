@@ -3,7 +3,7 @@ import SwiftUI
 struct AskView: View {
     @Environment(ConversationStore.self) private var store
 
-    @State private var path: [UUID] = []
+    @State private var path = NavigationPath()
     @State private var search = ""
 
     var body: some View {
@@ -22,6 +22,8 @@ struct AskView: View {
                 .navigationDestination(for: UUID.self) { id in
                     ChatView(id: id, newChat: newChat)
                 }
+                .navigationDestination(for: Fact.self) { MomentView(fact: $0) }
+                .navigationDestination(for: SessionLink.self) { SessionView(link: $0) }
                 .onAppear { store.removeEmpty() }
         }
     }
@@ -68,7 +70,7 @@ struct AskView: View {
     }
 
     private func newChat() {
-        path = [store.start()]
+        path = NavigationPath([store.start()])
     }
 }
 

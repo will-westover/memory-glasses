@@ -1,12 +1,14 @@
 """The HTTP API the iPhone app talks to."""
 
+import io
 import json
 import os
+import wave
 from collections.abc import Iterator
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from memory import db
@@ -17,6 +19,7 @@ from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
 
 SESSIONS_DIR = (DATA_DIR / "sessions").resolve()
+MAX_CLIP_SECONDS = 120
 
 
 class Exchange(BaseModel):
@@ -127,6 +130,40 @@ def session(session_id: str, conn: psycopg.Connection = Depends(connection)) -> 
         "transcript": db.transcript_lines(conn, session_id),
         "summaries": [fact_json(fact) for fact in db.summaries(conn, session_id)],
     }
+
+
+def audio_clip(path, start: float, end: float) -> bytes:
+    """Return the part of a WAV file between two times as a WAV file of its own."""
+    with wave.open(str(path)) as source:
+        rate = source.getframerate()
+        first = min(max(0, int(start * rate)), source.getnframes())
+        last = min(max(first, int(end * rate)), source.getnframes())
+
+        source.setpos(first)
+        frames = source.readframes(last - first)
+        params = source.getparams()
+
+    out = io.BytesIO()
+
+    with wave.open(out, "wb") as clip:
+        clip.setparams(params)
+        clip.writeframes(frames)
+
+    return out.getvalue()
+
+
+@app.get("/sessions/{session_id}/audio")
+def audio(session_id: str, start: float, end: float) -> Response:
+    """Return what was heard between two offsets in a session, as WAV."""
+    if not 0 <= start < end or end - start > MAX_CLIP_SECONDS:
+        raise HTTPException(422, f"start and end must be 0 or more and at most {MAX_CLIP_SECONDS} s apart")
+
+    file = (SESSIONS_DIR / session_id / "audio.wav").resolve()
+
+    if not file.is_relative_to(SESSIONS_DIR) or not file.is_file():
+        raise HTTPException(404, "no sound for this session")
+
+    return Response(audio_clip(file, start, end), media_type="audio/wav")
 
 
 @app.get("/images/{path:path}")

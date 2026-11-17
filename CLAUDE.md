@@ -32,7 +32,7 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 8. **API** (done): `memory/api.py` (FastAPI) serves sessions, a session's timeline, frame images, ask,
    stats and settings.
 9. **iPhone app** (done): SwiftUI in `app/`, with Ask (saved chats on the phone, with follow-ups), Timeline,
-   Stats and Glasses screens. Build and run
+   Stats and Glasses screens. Tapping a source opens its Moment: the photo, nearby photos, what was said, audio. Build and run
    it in the iOS Simulator with the server running on port 8000.
 10. **Glasses firmware**: the glasses upload frames and audio. Start with a test that takes one photo, since
     Rust has to call Espressif's C camera driver.
