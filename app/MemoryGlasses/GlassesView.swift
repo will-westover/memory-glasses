@@ -29,6 +29,16 @@ struct GlassesView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        PeopleView()
+                    } label: {
+                        Label("People", systemImage: "person.2")
+                    }
+                } footer: {
+                    Text("Name the people the glasses have seen, so answers can say who was there.")
+                }
+
+                Section {
                     TextField("Address", text: $address)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)

@@ -16,3 +16,4 @@ target/
 .DS_Store
 xcuserdata/
 .embuild/
+server/models/

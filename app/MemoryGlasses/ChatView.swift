@@ -17,8 +17,7 @@ struct ChatView: View {
     ]
 
     var body: some View {
-        let conversation = store.conversation(id)
-        let turns = conversation?.turns ?? []
+        let turns = store.turns[id] ?? []
         let busy = turns.last.map { $0.answer == nil && $0.problem == nil } ?? false
 
         ScrollView {
@@ -38,7 +37,7 @@ struct ChatView: View {
         .safeAreaInset(edge: .bottom) {
             Composer(text: $draft, busy: busy, focused: $composing) { send(draft) }
         }
-        .navigationTitle(turns.isEmpty ? "New chat" : conversation?.title ?? "")
+        .navigationTitle(turns.isEmpty ? "New chat" : store.title(of: id) ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -48,6 +47,7 @@ struct ChatView: View {
             }
         }
         .onAppear { composing = turns.isEmpty }
+        .task { if store.turns[id] == nil { await store.load(id) } }
     }
 
     private var welcome: some View {

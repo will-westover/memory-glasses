@@ -125,6 +125,8 @@ struct SessionView: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.tertiary)
 
+                        PeopleChips(people: frame.people)
+
                         Text(frame.summary)
                             .font(.subheadline)
                             .lineSpacing(2)

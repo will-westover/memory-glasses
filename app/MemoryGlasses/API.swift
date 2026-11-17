@@ -28,6 +28,7 @@ struct Frame: Decodable, Identifiable {
     let summary: String
     let objects: [SeenObject]
     let texts: [SeenText]
+    let people: [PersonTag]
 }
 
 struct SpokenLine: Decodable, Hashable {
@@ -210,6 +211,10 @@ struct API {
         let encoded = try API.encoder.encode(body)
 
         return try API.decoder.decode(Result.self, from: await data(for: request(path, method: method, body: encoded)))
+    }
+
+    func delete(_ path: String) async throws {
+        _ = try await data(for: request(path, method: "DELETE"))
     }
 
     func image(_ path: String) async throws -> Data {

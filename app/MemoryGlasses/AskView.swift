@@ -24,7 +24,7 @@ struct AskView: View {
                 }
                 .navigationDestination(for: Fact.self) { MomentView(fact: $0) }
                 .navigationDestination(for: SessionLink.self) { SessionView(link: $0) }
-                .onAppear { store.removeEmpty() }
+                .task { await store.refresh() }
         }
     }
 
@@ -39,7 +39,10 @@ struct AskView: View {
                         ForEach(group.conversations) { conversation in
                             NavigationLink(value: conversation.id) { ConversationRow(conversation: conversation) }
                         }
-                        .onDelete { offsets in store.delete(offsets.map { group.conversations[$0].id }) }
+                        .onDelete { offsets in
+                            let ids = offsets.map { group.conversations[$0].id }
+                            Task { await store.delete(ids) }
+                        }
                     } header: {
                         Text(group.title)
                             .font(.footnote.weight(.medium))
@@ -49,12 +52,15 @@ struct AskView: View {
                 }
             }
             .listStyle(.plain)
+            .refreshable { await store.refresh() }
         }
     }
 
     @ViewBuilder
     private var emptyList: some View {
-        if search.isEmpty {
+        if let problem = store.problem, search.isEmpty {
+            ServerProblem(message: problem, retry: store.refresh)
+        } else if search.isEmpty {
             ContentUnavailableView {
                 Label("No chats yet", systemImage: "bubble.left.and.text.bubble.right")
             } description: {
@@ -70,12 +76,16 @@ struct AskView: View {
     }
 
     private func newChat() {
-        path = NavigationPath([store.start()])
+        Task {
+            if let id = await store.start() {
+                path = NavigationPath([id])
+            }
+        }
     }
 }
 
 struct ConversationRow: View {
-    let conversation: Conversation
+    let conversation: ConversationSummary
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {

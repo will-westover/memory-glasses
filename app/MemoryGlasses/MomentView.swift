@@ -47,6 +47,8 @@ struct MomentView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
 
+                PeopleChips(people: frame.people)
+
                 Text(frame.summary)
                     .lineSpacing(3)
 

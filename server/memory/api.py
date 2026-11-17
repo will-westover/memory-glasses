@@ -4,10 +4,12 @@ import io
 import json
 import os
 import wave
+from uuid import UUID
 from collections.abc import Iterator
 
 import psycopg
-from fastapi import Depends, FastAPI, Header, HTTPException
+import cv2
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -15,6 +17,7 @@ from memory import db
 from memory.agent import ask_agent, ask_plain
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
+from memory.ingest.facts import build_facts
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
 
@@ -31,6 +34,18 @@ class Question(BaseModel):
     question: str = Field(min_length=1)
     plain: bool = False
     history: list[Exchange] = Field(default=[], max_length=10)
+
+
+class ChatQuestion(BaseModel):
+    question: str = Field(min_length=1)
+
+
+class PersonName(BaseModel):
+    name: str | None = Field(default=None, max_length=80)
+
+
+class Merge(BaseModel):
+    into: int
 
 
 class Settings(BaseModel):
@@ -82,6 +97,7 @@ def frame_json(frame: dict) -> dict:
         "summary": frame["summary"],
         "objects": [{"name": name, "location": location} for name, location in frame["objects"]],
         "texts": [{"text": text, "surface": surface} for text, surface in frame["texts"]],
+        "people": frame["people"],
     }
 
 
@@ -193,6 +209,166 @@ def ask(body: Question, conn: psycopg.Connection = Depends(connection)) -> dict:
         "seconds": result["seconds"],
         "usd": result["usd"],
     }
+
+
+HISTORY_TURNS = 6
+
+
+def turn_json(turn: dict) -> dict:
+    """Return a stored turn in the shape the app reads."""
+    answer = None
+
+    if turn["answer"] is not None:
+        answer = {
+            "answer": turn["answer"],
+            "found": turn["found"],
+            "sources": [fact_json(fact) for fact in turn["sources"]],
+            "model_calls": turn["model_calls"],
+            "seconds": turn["seconds"],
+            "usd": turn["usd"],
+        }
+
+    return {"id": turn["id"], "asked_at": turn["asked_at"], "question": turn["question"], "answer": answer,
+            "problem": turn["problem"]}
+
+
+@app.get("/conversations")
+def conversations(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
+    """List conversations, newest first."""
+    return db.conversations(conn)
+
+
+@app.post("/conversations")
+def start_conversation(conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Start an empty conversation."""
+    return {"id": db.new_conversation(conn), "turns": []}
+
+
+@app.get("/conversations/{conversation_id}")
+def conversation(conversation_id: UUID, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return one conversation with every question, answer and source."""
+    turns = db.conversation_turns(conn, conversation_id)
+
+    if turns is None:
+        raise HTTPException(404, "no such conversation")
+
+    return {"id": conversation_id, "turns": [turn_json(turn) for turn in turns]}
+
+
+@app.post("/conversations/{conversation_id}/ask")
+def ask_in_conversation(conversation_id: UUID, body: ChatQuestion,
+                        conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Answer a question using the conversation so far, and store both."""
+    turns = db.conversation_turns(conn, conversation_id)
+
+    if turns is None:
+        raise HTTPException(404, "no such conversation")
+
+    history = [(turn["question"], turn["answer"]) for turn in turns if turn["answer"]][-HISTORY_TURNS:]
+    result, problem = None, None
+
+    try:
+        result = ask_agent(conn, body.question, history=history)
+    except Exception as error:
+        conn.rollback()
+        problem = f"The answer failed: {error}"
+
+    turn_id = db.save_turn(conn, conversation_id, body.question, result, problem)
+
+    return turn_json(next(turn for turn in db.conversation_turns(conn, conversation_id) if turn["id"] == turn_id))
+
+
+@app.delete("/conversations/{conversation_id}")
+def delete_conversation(conversation_id: UUID, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Delete a conversation."""
+    if not db.delete_conversation(conn, conversation_id):
+        raise HTTPException(404, "no such conversation")
+
+    return {"deleted": str(conversation_id)}
+
+
+FACE_MARGIN = 0.35
+
+
+def rebuild_facts(session_ids: list[str]) -> None:
+    """Rebuild the facts of sessions after a person's name changed."""
+    with db.connect() as conn:
+        for session_id in session_ids:
+            build_facts(conn, session_id)
+
+
+def person_json(person: dict) -> dict:
+    """Return a person in the shape the app reads."""
+    return {**person, "face": f"/faces/{person['face_id']}" if person["face_id"] else None}
+
+
+@app.get("/people")
+def people(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
+    """List everyone whose face was found, most seen first."""
+    return [person_json(person) for person in db.people(conn)]
+
+
+@app.put("/people/{person_id}")
+def name_person(person_id: int, body: PersonName, tasks: BackgroundTasks,
+                conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Name or rename a person, then rebuild the facts they appear in."""
+    name = body.name.strip() if body.name and body.name.strip() else None
+
+    if not db.name_person(conn, person_id, name):
+        raise HTTPException(404, "no such person")
+
+    conn.commit()
+    tasks.add_task(rebuild_facts, db.person_sessions(conn, person_id))
+
+    return {"id": person_id, "name": name}
+
+
+@app.post("/people/{person_id}/merge")
+def merge_person(person_id: int, body: Merge, tasks: BackgroundTasks,
+                 conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Treat two people as the same person."""
+    if person_id == body.into or not db.person_sessions(conn, body.into):
+        raise HTTPException(422, "merge into a different person who exists")
+
+    sessions = db.person_sessions(conn, person_id)
+    db.merge_people(conn, person_id, body.into)
+    conn.commit()
+    tasks.add_task(rebuild_facts, sessions)
+
+    return {"merged": person_id, "into": body.into}
+
+
+@app.delete("/people/{person_id}")
+def forget_person(person_id: int, tasks: BackgroundTasks, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Delete a person and every face of them."""
+    sessions = db.person_sessions(conn, person_id)
+
+    if not db.forget_person(conn, person_id):
+        raise HTTPException(404, "no such person")
+
+    conn.commit()
+    tasks.add_task(rebuild_facts, sessions)
+
+    return {"forgotten": person_id}
+
+
+@app.get("/faces/{face_id}")
+def face(face_id: int, conn: psycopg.Connection = Depends(connection)) -> Response:
+    """Return one face, cropped from its photo with a little margin, as JPEG."""
+    found = db.face_crop(conn, face_id)
+    image = cv2.imread(str(DATA_DIR / found[0])) if found else None
+
+    if image is None:
+        raise HTTPException(404, "no such face")
+
+    _, x, y, w, h = found
+    height, width = image.shape[:2]
+    left, top = max(0, int((x - w * FACE_MARGIN) * width)), max(0, int((y - h * FACE_MARGIN) * height))
+    right, bottom = int((x + w * (1 + FACE_MARGIN)) * width), int((y + h * (1 + FACE_MARGIN)) * height)
+
+    _, jpeg = cv2.imencode(".jpg", image[top:bottom, left:right])
+
+    return Response(jpeg.tobytes(), media_type="image/jpeg")
 
 
 @app.get("/stats")

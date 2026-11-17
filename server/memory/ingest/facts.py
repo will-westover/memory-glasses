@@ -14,7 +14,7 @@ PASSAGE_WORDS = 60
 PASSAGE_GAP_SECONDS = 8.0
 PARALLEL_CALLS = 8
 
-KINDS = ("moment", "object", "text", "speech", "said", "summary")
+KINDS = ("moment", "person", "object", "text", "speech", "said", "summary")
 
 SUMMARY_INSTRUCTIONS = """\
 You are given about a minute of what someone's camera glasses recorded: what the wearer saw, as timed
@@ -54,13 +54,21 @@ def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
     facts = []
     previous_objects: set = set()
     previous_texts: set = set()
+    previous_people: set = set()
 
     for frame in frames:
         where = at_place(place)
         scene = first_sentence(frame["summary"])
         base = {"frame_id": frame["id"], "at": frame["at"], "offset_seconds": frame["offset_seconds"]}
 
-        facts.append({**base, "kind": "moment", "text": f"{frame['summary']}{where}"})
+        names = sorted({person["name"] for person in frame.get("people", []) if person["name"]})
+        with_people = f" With {', '.join(names)}." if names else ""
+
+        facts.append({**base, "kind": "moment", "text": f"{frame['summary']}{with_people}{where}"})
+
+        for name in names:
+            if name not in previous_people:
+                facts.append({**base, "kind": "person", "text": f"{name} was there.{where} {scene}"})
 
         for name, location in frame["objects"]:
             if (name, location) not in previous_objects:
@@ -72,6 +80,7 @@ def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
 
         previous_objects = set(frame["objects"])
         previous_texts = set(frame["texts"])
+        previous_people = set(names)
 
     return facts
 

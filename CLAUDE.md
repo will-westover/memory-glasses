@@ -31,7 +31,7 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
    answer, and the run reports scores, whether the right fact was retrieved, and cost.
 8. **API** (done): `memory/api.py` (FastAPI) serves sessions, a session's timeline, frame images, ask,
    stats and settings.
-9. **iPhone app** (done): SwiftUI in `app/`, with Ask (saved chats on the phone, with follow-ups), Timeline,
+9. **iPhone app** (done): SwiftUI in `app/`, with Ask (chats saved on the server, with follow-ups), Timeline,
    Stats and Glasses screens. Tapping a source opens its Moment: the photo, nearby photos, what was said, audio. Build and run
    it in the iOS Simulator with the server running on port 8000.
 10. **Glasses firmware**: the glasses upload frames and audio. Start with a test that takes one photo, since
@@ -60,13 +60,17 @@ Everything else is your call.
 - Tests: `uv run pytest` in `server/`.
 - Every step runs from `server/` as `uv run python -m <module>`; `--help` lists its options.
 - Pipeline for one video, in order: `memory.ingest.recording <video>` (`--replace` to rebuild; captions of
-  unchanged frames are kept), then `memory.ingest.captions`, `.transcript` and `.facts` with the session id.
+  unchanged frames are kept), then `memory.ingest.captions`, `.transcript`, `.faces` and `.facts` with the
+  session id.
   Then `memory.agent "question"` (add `--plain` for the baseline), or `memory.search "question"` to see the
   raw facts.
 - Eval questions: `server/evals/questions.json` (the NASA clip) and the ignored
   `data/evals/questions.json` (the user's own recordings). Runs are saved in `data/evals/runs/`.
 - API: `uv run uvicorn memory.api:app` in `server/`, then open `/docs`. Set `API_TOKEN` in `server/.env`
   to require `Authorization: Bearer <token>`; add `--host 0.0.0.0` to reach it from a phone.
+- People: `memory.people list`, `name <id> "Sam"`, `merge <id> <into id>`, `forget <id>`, or the People screen in
+  the app. Faces use OpenCV's YuNet and SFace models in the ignored `server/models/` (from github.com/opencv/opencv_zoo).
+  The user has written consent from the people recorded.
 - Places: `memory.places add "Home" <lat> <lon> --radius 75`, `memory.places list`.
 - Model prices are in `server/prices.json`. A model with no price there is refused before any call.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go

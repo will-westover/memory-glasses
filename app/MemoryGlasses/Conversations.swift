@@ -1,30 +1,37 @@
 import Foundation
 import Observation
 
-struct Turn: Codable, Identifiable {
-    var id = UUID()
+struct Turn: Decodable, Identifiable {
+    let id: UUID
     let question: String
     var answer: Answer?
     var problem: String?
+
+    init(question: String) {
+        id = UUID()
+        self.question = question
+    }
 }
 
-struct Conversation: Codable, Identifiable {
-    var id = UUID()
-    var turns: [Turn] = []
-    var updated = Date()
+struct ConversationSummary: Decodable, Identifiable {
+    let id: UUID
+    let updatedAt: Date
+    let title: String
+    let preview: String
+}
 
-    var title: String { turns.first?.question ?? "New chat" }
+struct ConversationDetail: Decodable {
+    let id: UUID
+    let turns: [Turn]
+}
 
-    var preview: String {
-        guard let last = turns.last else { return "" }
-
-        return last.answer?.answer ?? last.problem ?? "Waiting for an answer…"
-    }
+struct ChatQuestion: Encodable {
+    let question: String
 }
 
 struct ConversationGroup: Identifiable {
     let title: String
-    let conversations: [Conversation]
+    let conversations: [ConversationSummary]
 
     var id: String { title }
 }
@@ -32,52 +39,92 @@ struct ConversationGroup: Identifiable {
 @MainActor
 @Observable
 final class ConversationStore {
-    static let historyLimit = 6
+    private(set) var summaries: [ConversationSummary] = []
+    private(set) var turns: [UUID: [Turn]] = [:]
+    private(set) var problem: String?
 
-    private(set) var conversations: [Conversation] = []
-
-    private let file = URL.documentsDirectory.appending(path: "conversations.json")
-
-    init() {
-        guard let data = try? Data(contentsOf: file),
-              let saved = try? JSONDecoder().decode([Conversation].self, from: data) else { return }
-
-        conversations = saved
+    func refresh() async {
+        do {
+            summaries = try await API.current.get("/conversations")
+            problem = nil
+        } catch {
+            problem = error.localizedDescription
+        }
     }
 
-    func conversation(_ id: UUID) -> Conversation? {
-        conversations.first { $0.id == id }
+    func load(_ id: UUID) async {
+        do {
+            let detail: ConversationDetail = try await API.current.get("/conversations/\(id)")
+            turns[id] = detail.turns
+        } catch {
+            problem = error.localizedDescription
+        }
     }
 
-    func start() -> UUID {
-        let conversation = Conversation()
-        conversations.insert(conversation, at: 0)
+    func start() async -> UUID? {
+        do {
+            let detail: ConversationDetail = try await API.current.send("/conversations", method: "POST", body: [String: String]())
+            turns[detail.id] = []
 
-        return conversation.id
+            return detail.id
+        } catch {
+            problem = error.localizedDescription
+
+            return nil
+        }
     }
 
-    func delete(_ ids: [UUID]) {
-        conversations.removeAll { ids.contains($0.id) }
-        save()
+    func title(of id: UUID) -> String? {
+        turns[id]?.first?.question ?? summaries.first { $0.id == id }?.title
     }
 
-    func removeEmpty() {
-        conversations.removeAll { $0.turns.isEmpty }
+    func ask(_ question: String, in id: UUID) async {
+        let pending = Turn(question: question)
+        turns[id, default: []].append(pending)
+
+        var answered: Turn?
+        var failure: String?
+
+        do {
+            answered = try await API.current.send("/conversations/\(id)/ask", method: "POST",
+                                                  body: ChatQuestion(question: question))
+        } catch {
+            failure = error.localizedDescription
+        }
+
+        replace(pending.id, in: id) { turn in
+            if let answered {
+                turn = answered
+            } else {
+                turn.problem = failure
+            }
+        }
+
+        await refresh()
+    }
+
+    func delete(_ ids: [UUID]) async {
+        for id in ids {
+            try? await API.current.delete("/conversations/\(id)")
+            turns[id] = nil
+        }
+
+        await refresh()
     }
 
     func groups(matching search: String) -> [ConversationGroup] {
         let calendar = Calendar.current
         let weekAgo = calendar.date(byAdding: .day, value: -7, to: .now) ?? .now
 
-        let visible = conversations
-            .filter { !$0.turns.isEmpty }
-            .filter { search.isEmpty || matches($0, search) }
-            .sorted { $0.updated > $1.updated }
+        let visible = summaries.filter {
+            search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)
+                || $0.preview.localizedCaseInsensitiveContains(search)
+        }
 
-        let buckets: [(String, (Conversation) -> Bool)] = [
-            ("Today", { calendar.isDateInToday($0.updated) }),
-            ("Yesterday", { calendar.isDateInYesterday($0.updated) }),
-            ("Previous 7 days", { $0.updated > weekAgo }),
+        let buckets: [(String, (ConversationSummary) -> Bool)] = [
+            ("Today", { calendar.isDateInToday($0.updatedAt) }),
+            ("Yesterday", { calendar.isDateInYesterday($0.updatedAt) }),
+            ("Previous 7 days", { $0.updatedAt > weekAgo }),
             ("Older", { _ in true }),
         ]
 
@@ -96,58 +143,9 @@ final class ConversationStore {
         return groups
     }
 
-    func ask(_ question: String, in id: UUID) async {
-        guard let index = index(of: id) else { return }
+    private func replace(_ turnID: UUID, in id: UUID, change: (inout Turn) -> Void) {
+        guard let index = turns[id]?.firstIndex(where: { $0.id == turnID }) else { return }
 
-        let history = conversations[index].turns
-            .compactMap { turn in turn.answer.map { PastExchange(question: turn.question, answer: $0.answer) } }
-            .suffix(Self.historyLimit)
-
-        let turn = Turn(question: question)
-        conversations[index].turns.append(turn)
-        conversations[index].updated = .now
-        save()
-
-        var answer: Answer?
-        var problem: String?
-
-        do {
-            answer = try await API.current.send(
-                "/ask", method: "POST", body: Question(question: question, plain: false, history: Array(history))
-            )
-        } catch {
-            problem = error.localizedDescription
-        }
-
-        update(turn.id, in: id) {
-            $0.answer = answer
-            $0.problem = problem
-        }
-    }
-
-    private func matches(_ conversation: Conversation, _ search: String) -> Bool {
-        conversation.turns.contains {
-            $0.question.localizedCaseInsensitiveContains(search)
-                || ($0.answer?.answer.localizedCaseInsensitiveContains(search) ?? false)
-        }
-    }
-
-    private func index(of id: UUID) -> Int? {
-        conversations.firstIndex { $0.id == id }
-    }
-
-    private func update(_ turnID: UUID, in id: UUID, change: (inout Turn) -> Void) {
-        guard let index = index(of: id),
-              let turnIndex = conversations[index].turns.firstIndex(where: { $0.id == turnID }) else { return }
-
-        change(&conversations[index].turns[turnIndex])
-        conversations[index].updated = .now
-        save()
-    }
-
-    private func save() {
-        let saved = conversations.filter { !$0.turns.isEmpty }
-
-        try? JSONEncoder().encode(saved).write(to: file, options: .atomic)
+        change(&turns[id]![index])
     }
 }

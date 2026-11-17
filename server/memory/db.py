@@ -158,6 +158,8 @@ def captioned_frames(conn: psycopg.Connection, session_id: str) -> list[dict]:
         "          from frame_object o where o.frame_id = f.id),"
         "       (select coalesce(json_agg(json_build_array(t.text, t.surface)), '[]')"
         "          from frame_text t where t.frame_id = f.id)"
+        "       ,(select coalesce(json_agg(distinct jsonb_build_object('id', p.id, 'name', p.name)), '[]')"
+        "          from face fc join person p on p.id = fc.person_id where fc.frame_id = f.id)"
         "  from frame f join session s on s.id = f.session_id"
         " where f.session_id = %s and f.captioned_at is not null"
         " order by f.captured_at",
@@ -173,8 +175,9 @@ def captioned_frames(conn: psycopg.Connection, session_id: str) -> list[dict]:
             "summary": summary,
             "objects": [tuple(item) for item in objects],
             "texts": [tuple(item) for item in texts],
+            "people": people,
         }
-        for frame_id, image_path, captured_at, offset, summary, objects, texts in rows
+        for frame_id, image_path, captured_at, offset, summary, objects, texts, people in rows
     ]
 
 
@@ -332,6 +335,192 @@ def save_setting(conn: psycopg.Connection, name: str, value) -> None:
         "insert into setting (name, value) values (%s, %s) on conflict (name) do update set value = excluded.value",
         (name, str(value)),
     )
+
+
+def conversations(conn: psycopg.Connection) -> list[dict]:
+    """Return every conversation with its first question and latest answer, newest first."""
+    rows = conn.execute(
+        "select c.id, c.updated_at,"
+        "       (select question from turn where conversation_id = c.id order by asked_at limit 1),"
+        "       (select coalesce(answer, problem) from turn where conversation_id = c.id order by asked_at desc limit 1)"
+        "  from conversation c"
+        " where exists (select 1 from turn where conversation_id = c.id)"
+        " order by c.updated_at desc"
+    )
+
+    return [
+        {"id": conversation_id, "updated_at": updated_at, "title": title, "preview": preview or ""}
+        for conversation_id, updated_at, title, preview in rows
+    ]
+
+
+def conversation_turns(conn: psycopg.Connection, conversation_id) -> list[dict] | None:
+    """Return a conversation's turns, oldest first, each with its sources; None if there is no such conversation."""
+    if not conn.execute("select 1 from conversation where id = %s", (conversation_id,)).fetchone():
+        return None
+
+    turns = conn.execute(
+        "select id, asked_at, question, answer, found, problem, model_calls, seconds, usd"
+        "  from turn where conversation_id = %s order by asked_at",
+        (conversation_id,),
+    ).fetchall()
+
+    sources = conn.execute(
+        "select s.turn_id, s.fact_id, s.kind, s.at, s.session_id, s.offset_seconds, s.text, s.image_path"
+        "  from turn_source s join turn t on t.id = s.turn_id"
+        " where t.conversation_id = %s order by s.turn_id, s.position",
+        (conversation_id,),
+    ).fetchall()
+
+    by_turn: dict = {}
+    for turn_id, fact_id, kind, at, session_id, offset, text, image_path in sources:
+        by_turn.setdefault(turn_id, []).append({
+            "id": fact_id, "kind": kind, "at": at, "session_id": session_id,
+            "offset_seconds": float(offset), "text": text, "image_path": image_path,
+        })
+
+    return [
+        {
+            "id": turn_id, "asked_at": asked_at, "question": question, "answer": answer, "found": found,
+            "problem": problem, "model_calls": model_calls, "seconds": seconds,
+            "usd": float(usd) if usd is not None else None, "sources": by_turn.get(turn_id, []),
+        }
+        for turn_id, asked_at, question, answer, found, problem, model_calls, seconds, usd in turns
+    ]
+
+
+def new_conversation(conn: psycopg.Connection):
+    """Create an empty conversation and return its id."""
+    (conversation_id,) = conn.execute("insert into conversation default values returning id").fetchone()
+
+    return conversation_id
+
+
+def save_turn(conn: psycopg.Connection, conversation_id, question: str, result: dict | None, problem: str | None):
+    """Store one question and its answer or problem, with copies of its sources. Return the turn's id."""
+    with conn.transaction():
+        (turn_id,) = conn.execute(
+            "insert into turn (conversation_id, question, answer, found, problem, model_calls, seconds, usd)"
+            " values (%s, %s, %s, %s, %s, %s, %s, %s) returning id",
+            (
+                conversation_id, question,
+                result and result["answer"], result and result["found"], problem,
+                result and result["model_calls"], result and result["seconds"], result and result["usd"],
+            ),
+        ).fetchone()
+
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                "insert into turn_source (turn_id, position, fact_id, kind, at, session_id, offset_seconds, text,"
+                " image_path) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                [
+                    (turn_id, position, fact["id"], fact["kind"], fact["at"], fact["session_id"],
+                     fact["offset_seconds"], fact["text"], fact["image_path"])
+                    for position, fact in enumerate(result["sources"] if result else [])
+                ],
+            )
+
+        conn.execute("update conversation set updated_at = now() where id = %s", (conversation_id,))
+
+    return turn_id
+
+
+def delete_conversation(conn: psycopg.Connection, conversation_id) -> bool:
+    """Delete a conversation and everything in it. Return whether it existed."""
+    return conn.execute("delete from conversation where id = %s", (conversation_id,)).rowcount > 0
+
+
+def frame_images(conn: psycopg.Connection, session_id: str) -> list[tuple]:
+    """Return (frame id, image path) for every frame of a session, oldest first."""
+    return conn.execute(
+        "select id, image_path from frame where session_id = %s order by captured_at", (session_id,)
+    ).fetchall()
+
+
+def clear_faces(conn: psycopg.Connection, session_id: str) -> None:
+    """Delete the faces found in a session's frames."""
+    conn.execute("delete from face where frame_id in (select id from frame where session_id = %s)", (session_id,))
+
+
+def person_centres(conn: psycopg.Connection) -> dict:
+    """Return each person's summed face embedding, keyed by person id."""
+    import numpy as np
+
+    rows = conn.execute("select person_id, sum(embedding)::text from face group by person_id")
+
+    return {person_id: np.array([float(v) for v in total.strip("[]").split(",")]) for person_id, total in rows}
+
+
+def new_person(conn: psycopg.Connection) -> int:
+    """Create an unnamed person and return their id."""
+    (person_id,) = conn.execute("insert into person default values returning id").fetchone()
+
+    return person_id
+
+
+def save_face(conn: psycopg.Connection, frame_id: int, person_id: int, box, score: float, vector: str) -> None:
+    """Store one face found in a frame."""
+    conn.execute(
+        "insert into face (frame_id, person_id, x, y, w, h, score, embedding) values (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (frame_id, person_id, *box, score, vector),
+    )
+
+
+def remove_faceless_people(conn: psycopg.Connection) -> None:
+    """Delete unnamed people who no longer have any faces."""
+    conn.execute("delete from person p where name is null and not exists (select 1 from face where person_id = p.id)")
+
+
+def people(conn: psycopg.Connection) -> list[dict]:
+    """Return every person with a face count, when they were seen, and their clearest face."""
+    rows = conn.execute(
+        "select p.id, p.name, count(f.id), min(fr.captured_at), max(fr.captured_at),"
+        "       (select f2.id from face f2 where f2.person_id = p.id order by f2.w * f2.h * f2.score desc limit 1)"
+        "  from person p join face f on f.person_id = p.id join frame fr on fr.id = f.frame_id"
+        " group by p.id order by count(f.id) desc"
+    )
+
+    return [
+        {"id": person_id, "name": name, "faces": faces, "first_seen": first, "last_seen": last, "face_id": face_id}
+        for person_id, name, faces, first, last, face_id in rows
+    ]
+
+
+def person_sessions(conn: psycopg.Connection, person_id: int) -> list[str]:
+    """Return the sessions a person appears in."""
+    rows = conn.execute(
+        "select distinct fr.session_id from face f join frame fr on fr.id = f.frame_id where f.person_id = %s",
+        (person_id,),
+    )
+
+    return [session_id for (session_id,) in rows]
+
+
+def name_person(conn: psycopg.Connection, person_id: int, name: str | None) -> bool:
+    """Set or clear a person's name. Return whether they exist."""
+    return conn.execute("update person set name = %s where id = %s", (name, person_id)).rowcount > 0
+
+
+def merge_people(conn: psycopg.Connection, person_id: int, into: int) -> None:
+    """Move every face of one person to another, then delete the first."""
+    with conn.transaction():
+        conn.execute("update face set person_id = %s where person_id = %s", (into, person_id))
+        conn.execute("update person set name = coalesce(name, (select name from person where id = %s)) where id = %s",
+                     (person_id, into))
+        conn.execute("delete from person where id = %s", (person_id,))
+
+
+def forget_person(conn: psycopg.Connection, person_id: int) -> bool:
+    """Delete a person and every face of them. Return whether they existed."""
+    return conn.execute("delete from person where id = %s", (person_id,)).rowcount > 0
+
+
+def face_crop(conn: psycopg.Connection, face_id: int) -> tuple | None:
+    """Return (image path, x, y, w, h) for one face."""
+    return conn.execute(
+        "select fr.image_path, f.x, f.y, f.w, f.h from face f join frame fr on fr.id = f.frame_id where f.id = %s",
+        (face_id,),
+    ).fetchone()
 
 
 def print_sessions(rows: list[tuple]) -> None:
