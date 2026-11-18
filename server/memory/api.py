@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from memory import db, glasses, pipeline, rooms
-from memory.agent import ask_agent, ask_plain
+from memory.agent import ask_agent
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
 from memory.ingest.facts import build_facts
@@ -38,17 +38,6 @@ MAX_FRAME_BYTES = 2_000_000
 CHECK_SECONDS = 15
 MIN_DISPLAY_SCALE = 0.3
 SENDING_SECONDS = 20
-
-
-class Exchange(BaseModel):
-    question: str
-    answer: str
-
-
-class Question(BaseModel):
-    question: str = Field(min_length=1)
-    plain: bool = False
-    history: list[Exchange] = Field(default=[], max_length=10)
 
 
 class ChatQuestion(BaseModel):
@@ -613,24 +602,6 @@ def image(path: str) -> FileResponse:
         raise HTTPException(404, "no such image")
 
     return FileResponse(file, media_type="image/jpeg")
-
-
-@app.post("/ask")
-def ask(body: Question, conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Answer a question, with the facts the answer rests on."""
-    if body.plain:
-        result = ask_plain(conn, body.question)
-    else:
-        result = ask_agent(conn, body.question, history=[(item.question, item.answer) for item in body.history])
-
-    return {
-        "answer": result["answer"],
-        "found": result["found"],
-        "sources": [fact_json(fact) for fact in result["sources"]],
-        "model_calls": result["model_calls"],
-        "seconds": result["seconds"],
-        "usd": result["usd"],
-    }
 
 
 HISTORY_TURNS = 6

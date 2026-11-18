@@ -49,13 +49,14 @@ How a question is answered:
 
 ![Data model](images/data-model.png)
 
-- A **moment** has many **frames** and **audio segments**.
+- A **moment** is one recording. It has many **frames** and **audio segments**, and is split into **segments**:
+  stretches of time at one **place**, or on the move. **location** keeps GPS points over time.
+- A **place** has a name, an optional GPS circle and an optional phone map, and holds **rooms**. Each frame is
+  placed in a room. Fields only the phone fills (ARKit positions and maps) are orange.
 - Frames have **objects**, **text seen** and **faces**; each face belongs to a **person**.
 - **Facts** come from frames or speech and carry the embeddings that search uses.
-- A **space** (an apartment, a lecture hall) holds **rooms**. Frames are placed in a room, and spaces can sit at
-  a named **place**.
-- **Conversations** have **turns** (a question and its answer), and each turn cites the facts it used.
-- **api_cost** logs every model call; **upload** tracks a recording while it processes.
+- **Conversations** keep every **message** raw: the question, tool calls, tool results and the answer.
+- **model_call** logs every model call and what made it; **job** tracks a recording while it processes.
 
 ## UX sketch
 

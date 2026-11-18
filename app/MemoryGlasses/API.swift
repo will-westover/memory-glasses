@@ -173,17 +173,6 @@ struct GlassesStatus: Decodable {
     let processing: Int
 }
 
-struct PastExchange: Encodable {
-    let question: String
-    let answer: String
-}
-
-struct Question: Encodable {
-    let question: String
-    let plain: Bool
-    let history: [PastExchange]
-}
-
 enum APIError: LocalizedError {
     case badAddress
     case status(Int)
