@@ -54,3 +54,23 @@ def test_recordings_are_grouped_and_a_video_marks_one_done():
 
     assert found == {"live": {"photos": 2, "last": 12.0, "done": False},
                      "done": {"photos": 1, "last": 5.0, "done": True}}
+
+
+def test_a_kept_video_is_copied_inside_r2_so_mirroring_sends_nothing(r2, tmp_path):
+    upload = tmp_path / "uploads" / "job" / "video.mov"
+    upload.parent.mkdir(parents=True)
+    upload.write_bytes(b"video")
+    storage.save(upload)
+
+    folder = tmp_path / "moments" / "m1"
+    folder.mkdir(parents=True)
+    (folder / "video.mov").write_bytes(b"video")
+    storage.copy(upload, folder / "video.mov")
+
+    sent = []
+    original = r2.upload_file
+    r2.upload_file = lambda *args, **kwargs: sent.append(args) or original(*args, **kwargs)
+    storage.mirror(folder)
+
+    assert sent == []
+    assert r2.Object("moments/m1/video.mov").get()["Body"].read() == b"video"

@@ -2,10 +2,12 @@
 
 import json
 import sys
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import psycopg
+from psycopg_pool import ConnectionPool
 from psycopg.types.json import Jsonb
 
 from memory.citations import renumber
@@ -17,10 +19,29 @@ USAGE = "usage: python -m memory.db list | save <moment folder>"
 
 def connect() -> psycopg.Connection:
     """Open a connection and make sure the tables are up to date."""
-    conn = psycopg.connect(DATABASE_URL, connect_timeout=3)
+    conn = psycopg.connect(DATABASE_URL, connect_timeout=10)
     migrate(conn)
 
     return conn
+
+
+POOL = {}
+POOL_LOCK = threading.Lock()
+POOL_SIZE = 4
+IDLE_SECONDS = 120
+
+
+def pool() -> ConnectionPool:
+    """Return the connection pool the API shares, opening it and bringing the tables up to date the first time."""
+    with POOL_LOCK:
+        if "pool" not in POOL:
+            with connect():
+                pass
+
+            POOL["pool"] = ConnectionPool(DATABASE_URL, min_size=0, max_size=POOL_SIZE, max_idle=IDLE_SECONDS,
+                                          kwargs={"connect_timeout": 10}, check=ConnectionPool.check_connection)
+
+    return POOL["pool"]
 
 
 def migrate(conn: psycopg.Connection) -> list[str]:
@@ -857,13 +878,23 @@ def name_room(conn: psycopg.Connection, room_id: int, name: str) -> int | None:
     return row[0] if row else None
 
 
-def new_job(conn: psycopg.Connection, frames_per_minute: float):
-    """Record a new processing job and return its id."""
-    (job_id,) = conn.execute(
-        "insert into job (frames_per_minute) values (%s) returning id", (frames_per_minute,)
+def new_job(conn: psycopg.Connection, frames_per_minute: float, task: dict | None = None,
+            status: str = "processing"):
+    """Record a new processing job and what it should do, and return its id, or None if that recording has one."""
+    row = conn.execute(
+        "insert into job (frames_per_minute, task, status) values (%s, %s, %s)"
+        " on conflict ((task ->> 'recording')) where task ->> 'recording' is not null do nothing returning id",
+        (frames_per_minute, Jsonb(task) if task else None, status),
     ).fetchone()
 
-    return job_id
+    return row[0] if row else None
+
+
+def job_task(conn: psycopg.Connection, job_id) -> dict | None:
+    """Return what a job should do."""
+    row = conn.execute("select task from job where id = %s", (job_id,)).fetchone()
+
+    return row[0] if row else None
 
 
 def update_job(conn: psycopg.Connection, job_id, **fields) -> None:
@@ -875,7 +906,8 @@ def update_job(conn: psycopg.Connection, job_id, **fields) -> None:
 def jobs(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
     """Return the most recent jobs, newest first."""
     rows = conn.execute(
-        "select id, received_at, status, step, moment_id, error from job order by received_at desc limit %s",
+        "select id, received_at, status, step, moment_id, error from job"
+        " where coalesce(task ->> 'kind', '') <> 'facts' order by received_at desc limit %s",
         (limit,),
     )
 

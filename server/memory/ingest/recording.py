@@ -354,9 +354,22 @@ def ingest(
 
     shutil.rmtree(moment_dir, ignore_errors=True)
     build_dir.rename(moment_dir)
+    copy_kept_files(video, moment_dir, extras or {})
     storage.mirror(moment_dir)
 
     return moment_dir
+
+
+def copy_kept_files(video: Path, moment_dir: Path, extras: dict[str, Path]) -> None:
+    """Copy the original video and extra files inside R2 when it already holds them, instead of sending them again."""
+    manifest = json.loads((moment_dir / "manifest.json").read_text())
+    sources = dict(extras)
+
+    if manifest.get("video_file") and video.suffix.lower() in PLAYABLE:
+        sources[manifest["video_file"]] = video
+
+    for name, source in sources.items():
+        storage.copy(source, moment_dir / name)
 
 
 def parse_arguments() -> argparse.Namespace:

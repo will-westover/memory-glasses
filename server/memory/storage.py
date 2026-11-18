@@ -144,6 +144,42 @@ def mirror(folder: Path) -> None:
         bucket().delete_objects(Delete={"Objects": stale[start:start + 1000]})
 
 
+def copy(source: Path, target: Path) -> None:
+    """Copy a file R2 already holds to another key inside R2, so it needn't be sent again."""
+    if not enabled():
+        return
+
+    try:
+        source_key, target_key = key(source), key(target)
+    except ValueError:
+        return
+
+    if source_key == target_key:
+        return
+
+    try:
+        bucket().Object(target_key).copy_from(CopySource={"Bucket": bucket().name, "Key": source_key})
+    except Exception as error:
+        if not missing(error):
+            raise
+
+
+def download_url(path: Path, media_type: str | None = None, seconds: int = 900) -> str:
+    """Return a short-lived link that reads a file straight from R2."""
+    params = {"Bucket": bucket().name, "Key": key(path)}
+
+    if media_type:
+        params["ResponseContentType"] = media_type
+
+    return bucket().meta.client.generate_presigned_url("get_object", Params=params, ExpiresIn=seconds)
+
+
+def upload_url(path: Path, seconds: int = 3600) -> str:
+    """Return a short-lived link that writes a file straight into R2 with PUT."""
+    return bucket().meta.client.generate_presigned_url("put_object", Params={"Bucket": bucket().name, "Key": key(path)},
+                                                       ExpiresIn=seconds)
+
+
 def remove(folder: Path) -> None:
     """Delete a folder's files from R2."""
     if enabled():

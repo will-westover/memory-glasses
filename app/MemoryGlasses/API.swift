@@ -278,7 +278,7 @@ struct API {
     }
 
     func data(for request: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request, delegate: TokenStaysHome())
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 
         guard status == 200 else {
@@ -388,4 +388,16 @@ struct PlaceSceneData: Decodable {
     let id: Int
     let meshMoment: String?
     let moments: [SceneMoment]
+}
+
+final class TokenStaysHome: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        guard request.url?.host != task.originalRequest?.url?.host else { return request }
+
+        var next = request
+        next.setValue(nil, forHTTPHeaderField: "Authorization")
+
+        return next
+    }
 }

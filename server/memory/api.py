@@ -16,8 +16,8 @@ from collections.abc import Iterator
 import psycopg
 import cv2
 from fastapi.encoders import jsonable_encoder
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from memory import chat, db, glasses, pipeline, rooms, storage
@@ -29,6 +29,7 @@ from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import kept_frames, planned_frames
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
+from memory.tasks import on_cloud_run, start as start_job
 
 MOMENTS_DIR = (DATA_DIR / "moments").resolve()
 MAX_CLIP_SECONDS = 120
@@ -97,37 +98,57 @@ def check_token(authorization: str | None = Header(default=None)) -> None:
 
 
 def connection() -> Iterator[psycopg.Connection]:
-    """Open a database connection for one request."""
-    with db.connect() as conn:
+    """Lend one request a connection from the shared pool."""
+    with db.pool().connection() as conn:
         yield conn
 
 
-def process_finished_glasses() -> None:
-    """Every few seconds, turn glasses recordings that have stopped into videos and process them."""
+def check_glasses() -> list[str]:
+    """Start processing every glasses recording that has stopped and has no job yet, and return their names."""
+    started = []
+
+    for folder in glasses.finished():
+        with db.connect() as conn:
+            rate = float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE))
+            job_id = db.new_job(conn, rate, {"kind": "glasses", "recording": folder.name, "frames_per_minute": rate})
+            conn.commit()
+
+        if job_id is not None:
+            start_job(job_id)
+            started.append(folder.name)
+
+    return started
+
+
+def watch_glasses() -> None:
+    """Every few seconds, start processing glasses recordings that have stopped."""
     while True:
-        for folder in glasses.finished():
-            with db.connect() as conn:
-                rate = float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE))
-                job_id = db.new_job(conn, rate)
-                conn.commit()
-
-            try:
-                video = glasses.build_video(folder)
-            except Exception as error:
-                with db.connect() as conn:
-                    db.update_job(conn, job_id, status="failed", error=str(error))
-                (folder / "video.mp4").touch()
-                storage.save(folder / "video.mp4")
-                continue
-
-            run_upload(job_id, video, {}, rate, None, "glasses")
-
+        check_glasses()
         time.sleep(CHECK_SECONDS)
+
+
+def process_glasses(job_id, task: dict) -> None:
+    """Turn a stopped glasses recording into a video and process it like any upload."""
+    folder = glasses.GLASSES_DIR / task["recording"]
+
+    try:
+        video = glasses.build_video(folder)
+    except Exception as error:
+        with db.connect() as conn:
+            db.update_job(conn, job_id, status="failed", error=str(error))
+
+        (folder / "video.mp4").touch()
+        storage.save(folder / "video.mp4")
+        return
+
+    run_upload(job_id, video, {}, task["frames_per_minute"], None, "glasses")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    threading.Thread(target=process_finished_glasses, daemon=True).start()
+    if not on_cloud_run():
+        threading.Thread(target=watch_glasses, daemon=True).start()
+
     yield
 
 
@@ -283,6 +304,17 @@ def audio(moment_id: str, start: float, end: float) -> Response:
     return Response(audio_clip(file, start, end), media_type="audio/wav")
 
 
+def stored_file(file, media_type: str | None, missing: str) -> Response:
+    """Send a kept file: a redirect to a short-lived R2 link when R2 holds the files, else the file itself."""
+    if storage.enabled():
+        return RedirectResponse(storage.download_url(file, media_type), status_code=307)
+
+    if not file.is_file():
+        raise HTTPException(404, missing)
+
+    return FileResponse(file, media_type=media_type)
+
+
 def save_upload(upload: UploadFile, target) -> None:
     """Write an uploaded file to disk without holding it all in memory."""
     with open(target, "wb") as out:
@@ -312,7 +344,6 @@ def run_upload(job_id, video, extras: dict, frames_per_minute: float, place_id: 
 
 @app.post("/moments")
 def upload_moment(
-    tasks: BackgroundTasks,
     video: UploadFile = File(...),
     frames_per_minute: float = Form(FRAMES_PER_MINUTE, ge=0, le=MAX_FRAMES_PER_MINUTE),
     poses: UploadFile | None = File(None),
@@ -323,26 +354,89 @@ def upload_moment(
     conn: psycopg.Connection = Depends(connection),
 ) -> dict:
     """Receive a recording and its extra files, and process it in the background."""
-    job_id = db.new_job(conn, frames_per_minute)
+    suffix = os.path.splitext(video.filename or "")[1].lower() or ".mov"
+    names = {"video": f"video{suffix}"} | {field: EXTRA_FILES[field] for field, upload in
+                                           (("poses", poses), ("mesh", mesh), ("world_map", world_map)) if upload}
+    job_id = db.new_job(conn, frames_per_minute, upload_task(names, frames_per_minute, place_id, source))
     conn.commit()
 
     folder = UPLOADS_DIR / str(job_id)
     folder.mkdir(parents=True)
 
-    suffix = os.path.splitext(video.filename or "")[1].lower() or ".mov"
-    video_path = folder / f"video{suffix}"
-    save_upload(video, video_path)
+    save_upload(video, folder / names["video"])
 
-    extras = {}
     for field, upload in (("poses", poses), ("mesh", mesh), ("world_map", world_map)):
         if upload is not None:
-            extras[EXTRA_FILES[field]] = folder / EXTRA_FILES[field]
-            save_upload(upload, extras[EXTRA_FILES[field]])
+            save_upload(upload, folder / EXTRA_FILES[field])
 
     storage.mirror(folder)
-    tasks.add_task(run_upload, job_id, video_path, extras, frames_per_minute, place_id, source)
+    start_job(job_id)
 
     return {"id": job_id, "status": "processing"}
+
+
+def upload_task(names: dict, frames_per_minute: float, place_id: int | None, source: str) -> dict:
+    """Describe the work for an uploaded recording: its files and how to process it."""
+    return {"kind": "upload", "video": names["video"], "extras": [name for field, name in names.items() if field != "video"],
+            "frames_per_minute": frames_per_minute, "place_id": place_id, "source": source}
+
+
+def process_upload(job_id, task: dict) -> None:
+    """Process the recording an upload job describes."""
+    folder = UPLOADS_DIR / str(job_id)
+    extras = {name: folder / name for name in task["extras"]}
+
+    run_upload(job_id, folder / task["video"], extras, task["frames_per_minute"], task["place_id"], task["source"])
+
+
+class DirectUpload(BaseModel):
+    frames_per_minute: float = Field(FRAMES_PER_MINUTE, ge=0, le=MAX_FRAMES_PER_MINUTE)
+    place_id: int | None = None
+    source: str = Field("iphone", pattern="^(iphone|glasses|video)$")
+    video_suffix: str = Field(".mov", pattern=r"^\.[a-z0-9]{1,5}$")
+    extras: list[str] = Field(default=[], max_length=3)
+
+
+@app.post("/uploads")
+def start_upload(body: DirectUpload, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Start an upload straight to storage: return a link to PUT each file to, valid for an hour."""
+    if not storage.enabled():
+        raise HTTPException(409, "direct uploads need R2; send the files to POST /moments instead")
+
+    names = {"video": f"video{body.video_suffix}"} | {field: EXTRA_FILES[field] for field in body.extras
+                                                      if field in EXTRA_FILES}
+    task = upload_task(names, body.frames_per_minute, body.place_id, body.source)
+    job_id = db.new_job(conn, body.frames_per_minute, task, status="uploading")
+    db.update_job(conn, job_id, step="Uploading")
+    conn.commit()
+
+    folder = UPLOADS_DIR / str(job_id)
+
+    return {"id": job_id, "urls": {field: storage.upload_url(folder / name) for field, name in names.items()}}
+
+
+@app.post("/uploads/{job_id}/done")
+def finish_upload(job_id: UUID, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Start processing a recording once its files are in storage."""
+    task = db.job_task(conn, job_id)
+
+    if task is None or task.get("kind") != "upload":
+        raise HTTPException(404, "no such upload")
+
+    if not storage.exists(UPLOADS_DIR / str(job_id) / task["video"]):
+        raise HTTPException(409, "the video hasn't arrived yet")
+
+    db.update_job(conn, job_id, status="processing", step=None)
+    conn.commit()
+    start_job(job_id)
+
+    return {"id": job_id, "status": "processing"}
+
+
+@app.post("/glasses/check")
+def glasses_check() -> dict:
+    """Start processing glasses recordings that have stopped; Cloud Scheduler calls this every minute."""
+    return {"started": check_glasses()}
 
 
 def current_settings(conn: psycopg.Connection) -> Settings:
@@ -512,15 +606,15 @@ def place_scene(place_id: int, conn: psycopg.Connection = Depends(connection)) -
 
 
 @app.get("/places/{place_id}/map")
-def place_map_file(place_id: int, conn: psycopg.Connection = Depends(connection)) -> FileResponse:
+def place_map_file(place_id: int, conn: psycopg.Connection = Depends(connection)) -> Response:
     """Return a place's saved ARKit map, so the phone can recognise it."""
     path = db.place_map(conn, place_id)
     file = (DATA_DIR / path).resolve() if path else None
 
-    if file is None or storage.local(file) is None:
+    if file is None:
         raise HTTPException(404, "no map for this place")
 
-    return FileResponse(file, media_type="application/octet-stream")
+    return stored_file(file, "application/octet-stream", "no map for this place")
 
 
 @app.put("/places/{place_id}")
@@ -535,7 +629,7 @@ def rename_place(place_id: int, body: NewName, conn: psycopg.Connection = Depend
 
 
 @app.put("/rooms/{room_id}")
-def rename_room(room_id: int, body: NewName, tasks: BackgroundTasks,
+def rename_room(room_id: int, body: NewName,
                 conn: psycopg.Connection = Depends(connection)) -> dict:
     """Rename a room, and rebuild the facts that mention it."""
     name = body.name.strip() if body.name and body.name.strip() else None
@@ -549,7 +643,7 @@ def rename_room(room_id: int, body: NewName, tasks: BackgroundTasks,
         raise HTTPException(404, "no such room")
 
     conn.commit()
-    tasks.add_task(rebuild_facts, db.place_moments(conn, place_id))
+    start_rebuild(conn, db.place_moments(conn, place_id))
 
     return {"id": room_id, "name": name}
 
@@ -566,14 +660,14 @@ def moment_path(moment_id: str) -> dict:
 
 
 @app.get("/moments/{moment_id}/mesh")
-def moment_mesh(moment_id: str) -> FileResponse:
+def moment_mesh(moment_id: str) -> Response:
     """Return the mesh the phone's lidar captured during a moment, as OBJ."""
     mesh = (MOMENTS_DIR / moment_id / "mesh.obj").resolve()
 
-    if not mesh.is_relative_to(MOMENTS_DIR) or storage.local(mesh) is None:
+    if not mesh.is_relative_to(MOMENTS_DIR):
         raise HTTPException(404, "no mesh for this moment")
 
-    return FileResponse(mesh, media_type="model/obj")
+    return stored_file(mesh, "model/obj", "no mesh for this moment")
 
 
 def check_higher(moment_id: str, frames_per_minute: float) -> None:
@@ -603,42 +697,57 @@ def reprocess_estimate(moment_id: str, frames_per_minute: float,
 
 
 @app.post("/moments/{moment_id}/reprocess")
-def reprocess(moment_id: str, body: Rate, tasks: BackgroundTasks,
-              conn: psycopg.Connection = Depends(connection)) -> dict:
+def reprocess(moment_id: str, body: Rate, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Rebuild a moment at a different frames per minute, in the background."""
     if video_path(moment_id) is None:
         raise HTTPException(404, "this moment's video wasn't kept, so it can't be reprocessed")
 
     check_higher(moment_id, body.frames_per_minute)
-    job_id = db.new_job(conn, body.frames_per_minute)
+    task = {"kind": "reprocess", "moment_id": moment_id, "frames_per_minute": body.frames_per_minute}
+    job_id = db.new_job(conn, body.frames_per_minute, task)
     db.update_job(conn, job_id, moment_id=moment_id, step="Waiting")
     conn.commit()
 
-    tasks.add_task(run_reprocess, job_id, moment_id, body.frames_per_minute)
+    start_job(job_id)
 
     return {"id": job_id, "status": "processing"}
 
 
 @app.get("/moments/{moment_id}/video")
-def moment_video(moment_id: str) -> FileResponse:
+def moment_video(moment_id: str) -> Response:
     """Stream a moment's original video."""
-    path = video_path(moment_id)
+    path = video_path(moment_id, download=False)
 
     if path is None:
         raise HTTPException(404, "no video for this moment")
 
-    return FileResponse(path, media_type="video/quicktime" if path.suffix == ".mov" else None)
+    return stored_file(path, video_type(path), "no video for this moment")
+
+
+def video_type(path) -> str:
+    return "video/quicktime" if path.suffix == ".mov" else "video/mp4"
+
+
+@app.get("/moments/{moment_id}/video/link")
+def moment_video_link(moment_id: str) -> dict:
+    """Return a short-lived link that plays a moment's video straight from R2, or None when files are kept here."""
+    path = video_path(moment_id, download=False)
+
+    if path is None:
+        raise HTTPException(404, "no video for this moment")
+
+    return {"url": storage.download_url(path, video_type(path), seconds=3600) if storage.enabled() else None}
 
 
 @app.get("/images/{path:path}")
-def image(path: str) -> FileResponse:
+def image(path: str) -> Response:
     """Serve one frame's JPEG."""
     file = (MOMENTS_DIR / path).resolve()
 
-    if not file.is_relative_to(MOMENTS_DIR) or file.suffix != ".jpg" or storage.local(file) is None:
+    if not file.is_relative_to(MOMENTS_DIR) or file.suffix != ".jpg":
         raise HTTPException(404, "no such image")
 
-    return FileResponse(file, media_type="image/jpeg")
+    return stored_file(file, "image/jpeg", "no such image")
 
 
 HISTORY_TURNS = 6
@@ -739,8 +848,7 @@ def give_title(conversation_id: UUID, question: str, answer: str | None) -> None
 
 
 @app.post("/conversations/{conversation_id}/ask")
-def ask_in_conversation(conversation_id: UUID, body: ChatQuestion, tasks: BackgroundTasks,
-                        conn: psycopg.Connection = Depends(connection)) -> dict:
+def ask_in_conversation(conversation_id: UUID, body: ChatQuestion, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Answer a question using the conversation so far, and store both."""
     history, frame, question = prepare(conn, conversation_id, body)
 
@@ -752,7 +860,7 @@ def ask_in_conversation(conversation_id: UUID, body: ChatQuestion, tasks: Backgr
 
     turn = saved_turn(conn, conversation_id, [question, *replies])
     conn.commit()
-    tasks.add_task(give_title, conversation_id, body.question, (turn["answer"] or {}).get("answer"))
+    give_title(conversation_id, body.question, (turn["answer"] or {}).get("answer"))
 
     return turn
 
@@ -825,11 +933,27 @@ def delete_conversation(conversation_id: UUID, conn: psycopg.Connection = Depend
 FACE_MARGIN = 0.35
 
 
-def rebuild_facts(moment_ids: list[str]) -> None:
+def start_rebuild(conn: psycopg.Connection, moment_ids: list[str]) -> None:
+    """Rebuild, in the background, the facts of moments whose people or rooms changed."""
+    if not moment_ids:
+        return
+
+    job_id = db.new_job(conn, 0, {"kind": "facts", "moment_ids": list(moment_ids)})
+    conn.commit()
+    start_job(job_id)
+
+
+def rebuild_facts(job_id, moment_ids: list[str]) -> None:
     """Rebuild the facts of moments after a person's or room's name changed."""
     with db.connect() as conn:
-        for moment_id in moment_ids:
-            build_facts(conn, moment_id)
+        try:
+            for moment_id in moment_ids:
+                build_facts(conn, moment_id)
+
+            db.update_job(conn, job_id, status="ready")
+        except Exception as error:
+            conn.rollback()
+            db.update_job(conn, job_id, status="failed", error=str(error))
 
 
 def person_json(person: dict) -> dict:
@@ -844,7 +968,7 @@ def people(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
 
 
 @app.put("/people/{person_id}")
-def name_person(person_id: int, body: PersonName, tasks: BackgroundTasks,
+def name_person(person_id: int, body: PersonName,
                 conn: psycopg.Connection = Depends(connection)) -> dict:
     """Name or rename a person, then rebuild the facts they appear in."""
     name = body.name.strip() if body.name and body.name.strip() else None
@@ -853,13 +977,13 @@ def name_person(person_id: int, body: PersonName, tasks: BackgroundTasks,
         raise HTTPException(404, "no such person")
 
     conn.commit()
-    tasks.add_task(rebuild_facts, db.person_moments(conn, person_id))
+    start_rebuild(conn, db.person_moments(conn, person_id))
 
     return {"id": person_id, "name": name}
 
 
 @app.post("/people/{person_id}/merge")
-def merge_person(person_id: int, body: Merge, tasks: BackgroundTasks,
+def merge_person(person_id: int, body: Merge,
                  conn: psycopg.Connection = Depends(connection)) -> dict:
     """Treat two people as the same person."""
     if person_id == body.into or not db.person_moments(conn, body.into):
@@ -868,13 +992,13 @@ def merge_person(person_id: int, body: Merge, tasks: BackgroundTasks,
     moments = db.person_moments(conn, person_id)
     db.merge_people(conn, person_id, body.into)
     conn.commit()
-    tasks.add_task(rebuild_facts, moments)
+    start_rebuild(conn, moments)
 
     return {"merged": person_id, "into": body.into}
 
 
 @app.delete("/people/{person_id}")
-def forget_person(person_id: int, tasks: BackgroundTasks, conn: psycopg.Connection = Depends(connection)) -> dict:
+def forget_person(person_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Delete a person and every face of them."""
     moments = db.person_moments(conn, person_id)
 
@@ -882,7 +1006,7 @@ def forget_person(person_id: int, tasks: BackgroundTasks, conn: psycopg.Connecti
         raise HTTPException(404, "no such person")
 
     conn.commit()
-    tasks.add_task(rebuild_facts, moments)
+    start_rebuild(conn, moments)
 
     return {"forgotten": person_id}
 
