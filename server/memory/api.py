@@ -17,18 +17,19 @@ from collections.abc import Iterator
 import psycopg
 import cv2
 from fastapi.encoders import jsonable_encoder
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from memory import chat, db, glasses, pipeline, rooms, storage
 from memory.agent import answer_events, ask_agent, fact_record
-from memory.config import DATA_DIR, FRAMES_PER_MINUTE
+from memory.config import DATA_DIR, FRAMES_PER_MINUTE, STRETCH_SECONDS
 from memory.evals import RUNS_DIR
 from memory.ingest.facts import build_facts
 from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
+from memory.search import search
 from memory.tasks import on_cloud_run, start as start_job
 
 MOMENTS_DIR = (DATA_DIR / "moments").resolve()
@@ -179,6 +180,9 @@ def fact_json(fact: dict, details: dict | None = None) -> dict:
     speech = fact["kind"] in SPEECH_KINDS
     end = details.get("end_seconds") if speech else None
 
+    if fact["kind"] == "summary":
+        end = fact["offset_seconds"] + STRETCH_SECONDS
+
     return {
         "id": fact["id"],
         "kind": fact["kind"],
@@ -229,6 +233,16 @@ def latest_eval() -> dict | None:
     run = json.loads(runs[-1].read_text())
 
     return {"run": runs[-1].stem, "model": run["model"], "judge": run["judge"], "scores": run["scores"]}
+
+
+@app.get("/search")
+def search_memories(q: str = Query(min_length=1), limit: int = Query(40, ge=1, le=100),
+                    conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return the facts that best match some words, best first, for search inside the Timeline."""
+    facts = search(conn, q, limit=limit)
+    details = db.source_details(conn, facts)
+
+    return {"results": [fact_json(fact, details.get(fact["id"])) for fact in facts]}
 
 
 @app.get("/moments")

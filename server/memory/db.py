@@ -309,12 +309,20 @@ def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], v
 
 FACT_COLUMNS = (
     "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds, fact.text,"
-    "       coalesce(frame.image_path, closest.image_path), frame.x, frame.z, room.name, fact.frame_id"
+    "       coalesce(frame.image_path, best.image_path, closest.image_path), frame.x, frame.z, room.name,"
+    "       fact.frame_id"
     "  from fact left join frame on frame.id = fact.frame_id"
     "  join moment on moment.id = fact.moment_id left join room on room.id = frame.room_id"
     "  left join lateral ("
+    "    select seen.image_path from fact shown join frame seen on seen.id = shown.frame_id"
+    "     where fact.frame_id is null and shown.moment_id = fact.moment_id and shown.kind = 'frame'"
+    "       and shown.at between fact.at - interval '10 seconds' and fact.at + interval '70 seconds'"
+    "     order by shown.embedding <=> fact.embedding limit 1"
+    "  ) best on true"
+    "  left join lateral ("
     "    select near.image_path from frame near"
-    "     where fact.frame_id is null and near.moment_id = fact.moment_id and near.captioned_at is not null"
+    "     where fact.frame_id is null and best.image_path is null and near.moment_id = fact.moment_id"
+    "       and near.captioned_at is not null"
     "     order by abs(extract(epoch from near.captured_at - fact.at)) limit 1"
     "  ) closest on true"
 )
