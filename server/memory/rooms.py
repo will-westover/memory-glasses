@@ -1,8 +1,8 @@
-"""Spaces (an apartment, a lecture hall) and the rooms inside them, for every frame.
+"""Places (an apartment, a lecture hall) and the rooms inside them, for every frame.
 
-    uv run python -m memory.spaces list
-    uv run python -m memory.spaces label <moment id>
-    uv run python -m memory.spaces rebuild
+    uv run python -m memory.rooms list
+    uv run python -m memory.rooms label <moment id>
+    uv run python -m memory.rooms rebuild
 """
 
 import argparse
@@ -21,17 +21,17 @@ from memory.ingest.facts import build_facts
 from memory.ingest.poses import load_poses
 from memory.places import distance_m
 
-SPACES_DIR = DATA_DIR / "spaces"
+MAPS_DIR = DATA_DIR / "spaces"
 MOMENTS_DIR = DATA_DIR / "moments"
 NEARBY_METRES = 150
-SAME_SPACE = 0.75
+SAME_PLACE = 0.75
 TRAVEL_METRES = 30
 NEIGHBOUR_METRES = 1.5
 
 INSTRUCTIONS = """\
 You are given everything recorded in one moment by a person's camera: each frame's description, when it was taken,
 and where the camera stood (x and z in metres, in this moment's own map), plus what was said and, when there is one,
-the size of the space the phone's lidar scanned.
+the size of the place the phone's lidar scanned.
 
 Work out which room the person was standing in for every frame. A frame describes what the camera saw, which can be
 another room seen through a doorway or a close-up of a screen, a page or a hand; judge from the neighbouring frames,
@@ -39,7 +39,7 @@ the positions, the speech and the scan, not only from that one description. Fram
 and time are usually in the same room.
 
 Name each room in a few plain words, the way the person would say it. When a room matches one of the known rooms of
-this space, use that name exactly. A space can be a single room. Also name the whole space in a few words."""
+this place, use that name exactly. A place can be a single room. Also name the whole place in a few words."""
 
 
 class RoomInfo(BaseModel):
@@ -53,7 +53,7 @@ class FrameRoom(BaseModel):
 
 
 class Labels(BaseModel):
-    space: str = Field(description="The whole space in a few words")
+    place: str = Field(description="The whole place in a few words")
     rooms: list[RoomInfo]
     frames: list[FrameRoom]
 
@@ -129,67 +129,67 @@ def moment_vector(conn, moment_id: str) -> np.ndarray | None:
     if not summaries:
         return None
 
-    return unit(np.mean([parse_vector(vector) for vector in llm.embed(conn, summaries, "space")], axis=0))
+    return unit(np.mean([parse_vector(vector) for vector in llm.embed(conn, summaries, "place")], axis=0))
 
 
 def nearby(conn, lat, lon) -> list[dict]:
-    """Return the spaces near a location, most recently updated first; all of them when the location is unknown."""
-    return [space for space in db.spaces(conn)
-            if lat is None or space["lat"] is None or distance_m(lat, lon, space["lat"], space["lon"]) <= NEARBY_METRES]
+    """Return the places near a location, most recently updated first; all of them when the location is unknown."""
+    return [place for place in db.places(conn)
+            if lat is None or place["lat"] is None or distance_m(lat, lon, place["lat"], place["lon"]) <= NEARBY_METRES]
 
 
-def matching_space(conn, moment_id: str, lat, lon) -> int | None:
-    """Return the nearby space whose frames look most like this moment's, if they look alike enough."""
+def matching_place(conn, moment_id: str, lat, lon) -> int | None:
+    """Return the nearby place whose frames look most like this moment's, if they look alike enough."""
     vector = moment_vector(conn, moment_id)
 
     if vector is None:
         return None
 
-    close = {space["id"] for space in nearby(conn, lat, lon)}
-    scores = {space_id: float(unit(parse_vector(text)) @ vector)
-              for space_id, text in db.space_vectors(conn).items() if space_id in close}
+    close = {place["id"] for place in nearby(conn, lat, lon)}
+    scores = {place_id: float(unit(parse_vector(text)) @ vector)
+              for place_id, text in db.place_vectors(conn).items() if place_id in close}
 
     best = max(scores, key=scores.get, default=None)
 
-    return best if best is not None and scores[best] >= SAME_SPACE else None
+    return best if best is not None and scores[best] >= SAME_PLACE else None
 
 
-def keep_map(space_id: int, world_map: Path) -> str:
-    """Copy a world map into the spaces folder and return its path under the data folder."""
-    SPACES_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(world_map, SPACES_DIR / f"{space_id}.map")
+def keep_map(place_id: int, world_map: Path) -> str:
+    """Copy a world map into the maps folder and return its path under the data folder."""
+    MAPS_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(world_map, MAPS_DIR / f"{place_id}.map")
 
-    return f"spaces/{space_id}.map"
+    return f"spaces/{place_id}.map"
 
 
 def file_moment(conn, moment_id: str, moment_dir: Path, recognised: int | None) -> int | None:
-    """Put a moment in a space: the one the phone recognised, one that looks the same, or a new one."""
+    """Put a moment at a place: the one the phone recognised, one that looks the same, or a new one."""
     world_map = moment_dir / "world.map"
     poses_file = moment_dir / "poses.json"
     has_map = world_map.is_file() and not (poses_file.is_file() and travelled(load_poses(poses_file)))
     _, lat, lon = db.moment_info(conn, moment_id)
 
     if recognised is not None and has_map:
-        db.save_space(conn, recognised, keep_map(recognised, world_map), lat, lon)
-        db.set_moment_space(conn, moment_id, recognised, True)
+        db.save_place(conn, recognised, keep_map(recognised, world_map), lat, lon)
+        db.set_moment_place(conn, moment_id, recognised, True)
         return recognised
 
-    space_id = matching_space(conn, moment_id, lat, lon)
+    place_id = matching_place(conn, moment_id, lat, lon)
 
-    if space_id is None and not db.captioned_frames(conn, moment_id):
+    if place_id is None and not db.captioned_frames(conn, moment_id):
         return None
 
-    if space_id is None:
-        space_id = db.save_space(conn, None, None, lat, lon)
+    if place_id is None:
+        place_id = db.save_place(conn, None, None, lat, lon)
 
-    first_map = has_map and db.space_map(conn, space_id) is None
+    first_map = has_map and db.place_map(conn, place_id) is None
 
     if first_map:
-        db.save_space(conn, space_id, keep_map(space_id, world_map), lat, lon)
+        db.save_place(conn, place_id, keep_map(place_id, world_map), lat, lon)
 
-    db.set_moment_space(conn, moment_id, space_id, first_map)
+    db.set_moment_place(conn, moment_id, place_id, first_map)
 
-    return space_id
+    return place_id
 
 
 def describe_frames(frames: list[dict]) -> str:
@@ -214,7 +214,7 @@ def ask_for_labels(conn, moment_id: str, frames: list[dict], known: list[dict]) 
                       + " | ".join(db.room_examples(conn, room["id"])) for room in known)
     scan = scan_note(MOMENTS_DIR / moment_id)
 
-    prompt = (f"Known rooms of this space:\n{rooms or '(none yet)'}\n\n"
+    prompt = (f"Known rooms of this place:\n{rooms or '(none yet)'}\n\n"
               f"Scan: {scan or 'no lidar scan'}\n\n"
               f"What was said:\n{said or '(nothing)'}\n\n"
               f"Frames:\n{describe_frames(frames)}")
@@ -233,24 +233,24 @@ def ask_for_labels(conn, moment_id: str, frames: list[dict], known: list[dict]) 
 
 
 def label_rooms(conn, moment_id: str) -> dict[str, int]:
-    """Decide the room of every frame in a moment, name the space if it has no name, and return frames per room."""
-    space = db.moment_space(conn, moment_id)
+    """Decide the room of every frame in a moment, name the place if it has no name, and return frames per room."""
+    place = db.moment_place(conn, moment_id)
     frames = db.captioned_frames(conn, moment_id)
 
-    if space is None or not frames:
+    if place is None or not frames:
         return {}
 
-    labels = ask_for_labels(conn, moment_id, frames, db.space_rooms(conn, space["id"]))
+    labels = ask_for_labels(conn, moment_id, frames, db.place_rooms(conn, place["id"]))
 
     if labels is None:
         return {}
 
-    if not space["name"]:
-        db.name_space(conn, space["id"], capitalised(labels.space), by_user=False)
+    if not place["name"]:
+        db.name_place(conn, place["id"], capitalised(labels.place), by_user=False)
 
     descriptions = {room.name.strip().lower(): room.description for room in labels.rooms}
     picked = {item.frame: capitalised(item.room) for item in labels.frames if 0 <= item.frame < len(frames)}
-    rooms = {name.lower(): db.save_room(conn, space["id"], name, descriptions.get(name.lower()))
+    rooms = {name.lower(): db.save_room(conn, place["id"], name, descriptions.get(name.lower()))
              for name in set(picked.values())}
 
     own = []
@@ -260,7 +260,7 @@ def label_rooms(conn, moment_id: str) -> dict[str, int]:
             x, z = (frame["position"][0], frame["position"][2]) if frame["position"] else (None, None)
             own.append((frame["id"], x, z, rooms[picked[number].lower()]))
 
-    others = db.mapped_frames(conn, space["id"], moment_id) if space["in_map"] else []
+    others = db.mapped_frames(conn, place["id"], moment_id) if place["in_map"] else []
     chosen = smooth(own, others)
 
     db.set_frame_rooms(conn, moment_id, chosen)
@@ -272,36 +272,36 @@ def label_rooms(conn, moment_id: str) -> dict[str, int]:
 
 
 def rebuild(conn) -> None:
-    """Put every moment in a space again, oldest first, as if each had just been recorded, and relabel its rooms."""
-    conn.execute("update moment set space_id = null, in_space_map = false")
+    """Put every moment at a place again, oldest first, as if each had just been recorded, and relabel its rooms."""
+    conn.execute("delete from segment")
     conn.execute("update frame set room_id = null")
     conn.execute("delete from room where not named")
-    conn.execute("delete from space where not named")
+    conn.execute("delete from place where not named")
     conn.commit()
 
     for moment_id in reversed([row[0] for row in conn.execute("select id from moment order by started_at desc")]):
-        space_id = file_moment(conn, moment_id, MOMENTS_DIR / moment_id, None)
+        place_id = file_moment(conn, moment_id, MOMENTS_DIR / moment_id, None)
         counts = label_rooms(conn, moment_id)
         build_facts(conn, moment_id)
         conn.commit()
 
-        print(f"{moment_id}: space {space_id}, rooms {counts}")
+        print(f"{moment_id}: place {place_id}, rooms {counts}")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="See and rebuild spaces and the rooms of every frame.")
+    parser = argparse.ArgumentParser(description="See and rebuild places and the rooms of every frame.")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("list", help="list spaces and their rooms")
+    commands.add_parser("list", help="list places and their rooms")
     label = commands.add_parser("label", help="label the rooms of one moment again")
     label.add_argument("moment_id")
-    commands.add_parser("rebuild", help="put every moment in a space again and relabel all rooms")
+    commands.add_parser("rebuild", help="put every moment at a place again and relabel all rooms")
     args = parser.parse_args()
 
     with db.connect() as conn:
         if args.command == "list":
-            for space in db.spaces(conn):
-                print(f"{space['id']}: {space['name'] or '(unnamed)'}, {space['moments']} moments, "
-                      f"{'map' if space['has_map'] else 'no map'}: {', '.join(space['rooms'])}")
+            for place in db.places(conn):
+                print(f"{place['id']}: {place['name'] or '(unnamed)'}, {place['moments']} moments, "
+                      f"{'map' if place['has_map'] else 'no map'}: {', '.join(place['rooms'])}")
         elif args.command == "label":
             print(label_rooms(conn, args.moment_id))
             build_facts(conn, args.moment_id)

@@ -1,16 +1,20 @@
 """OpenAI access shared by every step: one client, prices, and the cost log."""
 
+import contextlib
+import contextvars
 import functools
 import json
 
 import psycopg
 from openai import OpenAI
+from psycopg.types.json import Jsonb
 
 from memory import config
 from memory.config import EMBED_MODEL, SERVER_DIR
 
 PRICES_FILE = SERVER_DIR / "prices.json"
 PRICES = json.loads(PRICES_FILE.read_text())["usd_per_million_tokens"]
+COLLECTED: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar("collected", default=None)
 
 
 def require_price(model: str) -> None:
@@ -36,8 +40,9 @@ def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: i
     return dollars / 1_000_000
 
 
-def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: int | None = None) -> float:
-    """Record one model call in api_cost and return its cost in dollars."""
+def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: int | None = None,
+             request: dict | None = None, response: dict | None = None) -> float:
+    """Record one model call in model_call and return its cost in dollars."""
     input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", 0)
     details = getattr(usage, "input_tokens_details", None)
     cached_tokens = getattr(details, "cached_tokens", 0) or 0
@@ -45,13 +50,29 @@ def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: i
 
     usd = cost_usd(model, input_tokens, cached_tokens, output_tokens)
 
-    conn.execute(
-        "insert into api_cost (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd)"
-        " values (%s, %s, %s, %s, %s, %s, %s)",
-        (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd),
-    )
+    (call_id,) = conn.execute(
+        "insert into model_call (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd, request,"
+        " response) values (%s, %s, %s, %s, %s, %s, %s, %s, %s) returning id",
+        (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd,
+         Jsonb(request) if request is not None else None, Jsonb(response) if response is not None else None),
+    ).fetchone()
+
+    if (collected := COLLECTED.get()) is not None:
+        collected.append(call_id)
 
     return usd
+
+
+@contextlib.contextmanager
+def collect():
+    """Gather the ids of the model calls logged inside the block, in order."""
+    ids: list[int] = []
+    token = COLLECTED.set(ids)
+
+    try:
+        yield ids
+    finally:
+        COLLECTED.reset(token)
 
 
 def embed(conn: psycopg.Connection, texts: list[str], step: str) -> list[str]:

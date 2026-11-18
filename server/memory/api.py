@@ -9,6 +9,7 @@ import threading
 import time
 import wave
 from contextlib import asynccontextmanager
+from datetime import datetime
 from uuid import UUID
 from collections.abc import Iterator
 
@@ -18,7 +19,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from memory import db, glasses, pipeline, spaces
+from memory import db, glasses, pipeline, rooms
 from memory.agent import ask_agent, ask_plain
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
@@ -116,18 +117,18 @@ def process_finished_glasses() -> None:
         for folder in glasses.finished():
             with db.connect() as conn:
                 rate = float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE))
-                upload_id = db.new_upload(conn, rate)
+                job_id = db.new_job(conn, rate)
                 conn.commit()
 
             try:
                 video = glasses.build_video(folder)
             except Exception as error:
                 with db.connect() as conn:
-                    db.update_upload(conn, upload_id, status="failed", error=str(error))
+                    db.update_job(conn, job_id, status="failed", error=str(error))
                 (folder / "video.mp4").touch()
                 continue
 
-            run_upload(upload_id, video, {}, rate, None, "glasses")
+            run_upload(job_id, video, {}, rate, None, "glasses")
 
         time.sleep(CHECK_SECONDS)
 
@@ -198,7 +199,7 @@ def latest_eval() -> dict | None:
 @app.get("/moments")
 def moments(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List every moment, newest first."""
-    places = db.places(conn)
+    places = db.gps_places(conn)
     covers = db.covers(conn)
 
     return [
@@ -230,7 +231,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "has_video": has_video(moment_id),
         "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
         "has_mesh": (MOMENTS_DIR / moment_id / "mesh.obj").is_file(),
-        "space": db.moment_space(conn, moment_id),
+        "space": db.moment_place(conn, moment_id),
     }
 
 
@@ -274,21 +275,21 @@ def save_upload(upload: UploadFile, target) -> None:
         shutil.copyfileobj(upload.file, out, length=1024 * 1024)
 
 
-def run_upload(upload_id, video, extras: dict, frames_per_minute: float, space_id: int | None, source: str) -> None:
-    """Process an uploaded recording, keeping its status up to date."""
+def run_upload(job_id, video, extras: dict, frames_per_minute: float, place_id: int | None, source: str) -> None:
+    """Process an uploaded recording, keeping its job's status up to date."""
     with db.connect() as conn:
         def step(name: str) -> None:
-            db.update_upload(conn, upload_id, step=name)
+            db.update_job(conn, job_id, step=name)
             conn.commit()
 
         try:
-            moment_id = pipeline.process(video, frames_per_minute, extras, space_id=space_id, source=source,
+            moment_id = pipeline.process(video, frames_per_minute, extras, place_id=place_id, source=source,
                                          on_step=step)
-            db.update_upload(conn, upload_id, status="ready", step=None, moment_id=moment_id)
+            db.update_job(conn, job_id, status="ready", step=None, moment_id=moment_id)
             shutil.rmtree(video.parent, ignore_errors=True)
         except Exception as error:
             conn.rollback()
-            db.update_upload(conn, upload_id, status="failed", error=str(error))
+            db.update_job(conn, job_id, status="failed", error=str(error))
 
 
 @app.post("/moments")
@@ -304,10 +305,10 @@ def upload_moment(
     conn: psycopg.Connection = Depends(connection),
 ) -> dict:
     """Receive a recording and its extra files, and process it in the background."""
-    upload_id = db.new_upload(conn, frames_per_minute)
+    job_id = db.new_job(conn, frames_per_minute)
     conn.commit()
 
-    folder = UPLOADS_DIR / str(upload_id)
+    folder = UPLOADS_DIR / str(job_id)
     folder.mkdir(parents=True)
 
     suffix = os.path.splitext(video.filename or "")[1].lower() or ".mov"
@@ -320,9 +321,9 @@ def upload_moment(
             extras[EXTRA_FILES[field]] = folder / EXTRA_FILES[field]
             save_upload(upload, extras[EXTRA_FILES[field]])
 
-    tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute, space_id, source)
+    tasks.add_task(run_upload, job_id, video_path, extras, frames_per_minute, space_id, source)
 
-    return {"id": upload_id, "status": "processing"}
+    return {"id": job_id, "status": "processing"}
 
 
 def current_settings(conn: psycopg.Connection) -> Settings:
@@ -359,7 +360,7 @@ async def glasses_frame(request: Request, x_recording: str = Header(...),
 def glasses_status(conn: psycopg.Connection = Depends(connection)) -> dict:
     """Say whether the glasses are sending, how many photos the current recording has, and what is processing."""
     latest = glasses.latest()
-    (processing,) = conn.execute("select count(*) from upload where status = 'processing'").fetchone()
+    (processing,) = conn.execute("select count(*) from job where status = 'processing'").fetchone()
 
     return {
         "sending": latest is not None and latest["seconds_since_last"] < SENDING_SECONDS,
@@ -371,8 +372,8 @@ def glasses_status(conn: psycopg.Connection = Depends(connection)) -> dict:
 
 @app.get("/uploads")
 def uploads(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
-    """List recent uploads and how far along each is."""
-    return db.uploads(conn)
+    """List recent processing jobs and how far along each is."""
+    return db.jobs(conn)
 
 
 def video_path(moment_id: str):
@@ -408,66 +409,66 @@ def current_extras(moment_id: str) -> dict:
 
 def caption_cost(conn: psycopg.Connection) -> float:
     """Return the average cost of describing one frame so far."""
-    (average,) = conn.execute("select coalesce(avg(usd), 0.006) from api_cost where step = 'caption'").fetchone()
+    (average,) = conn.execute("select coalesce(avg(usd), 0.006) from model_call where step = 'caption'").fetchone()
 
     return float(average)
 
 
-def run_reprocess(upload_id, moment_id: str, frames_per_minute: float) -> None:
+def run_reprocess(job_id, moment_id: str, frames_per_minute: float) -> None:
     """Rebuild a moment's frames at a new rate from its kept video, then caption only what's new."""
     with db.connect() as conn:
         def step(name: str) -> None:
-            db.update_upload(conn, upload_id, step=name)
+            db.update_job(conn, job_id, step=name)
             conn.commit()
 
         try:
             pipeline.process(video_path(moment_id), frames_per_minute, current_extras(moment_id), replace=True,
                              reuse_frames=True, on_step=step)
-            db.update_upload(conn, upload_id, status="ready", step=None)
+            db.update_job(conn, job_id, status="ready", step=None)
         except Exception as error:
             conn.rollback()
-            db.update_upload(conn, upload_id, status="failed", error=str(error))
+            db.update_job(conn, job_id, status="failed", error=str(error))
 
 
 @app.get("/spaces")
 def list_spaces(lat: float | None = None, lon: float | None = None,
                 conn: psycopg.Connection = Depends(connection)) -> list[dict]:
-    """List spaces near a location (or all of them), most recently updated first."""
-    return spaces.nearby(conn, lat, lon)
+    """List places near a location (or all of them), most recently updated first."""
+    return rooms.nearby(conn, lat, lon)
 
 
 @app.get("/world")
 def world(conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Return every space and every moment that has a location, to place on a map."""
+    """Return every place and every moment that has a location, to show on a map."""
     covers = db.covers(conn)
 
     return {
-        "spaces": [space for space in db.spaces(conn) if space["lat"] is not None],
+        "spaces": [place for place in db.places(conn) if place["lat"] is not None],
         "moments": [{**moment, "cover": image_url(covers.get(moment["id"]))} for moment in db.located_moments(conn)],
     }
 
 
 @app.get("/spaces/{space_id}")
 def space(space_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Return a space's rooms and the moments recorded in it."""
-    found = next((space for space in db.spaces(conn) if space["id"] == space_id), None)
+    """Return a place's rooms and the moments recorded there."""
+    found = next((place for place in db.places(conn) if place["id"] == space_id), None)
 
     if found is None:
-        raise HTTPException(404, "no such space")
+        raise HTTPException(404, "no such place")
 
-    return {**found, "rooms": db.space_rooms(conn, space_id), "moment_ids": db.space_moments(conn, space_id)}
+    return {**found, "rooms": db.place_rooms(conn, space_id), "moment_ids": db.place_moments(conn, space_id)}
 
 
 @app.get("/spaces/{space_id}/scene")
 def space_scene(space_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Return every moment that shares a space's map, with its path and frames, in the map's coordinates."""
+    """Return every moment that shares a place's map, with its path and frames, in the map's coordinates."""
     moments = []
     mesh_moment = None
 
-    for moment_id in db.space_moments(conn, space_id):
+    for moment_id in db.place_moments(conn, space_id):
         poses_file = MOMENTS_DIR / moment_id / "poses.json"
 
-        if not (db.moment_space(conn, moment_id) or {}).get("in_map"):
+        if not (db.moment_place(conn, moment_id) or {}).get("in_map"):
             continue
 
         started_at, _, _ = db.moment_info(conn, moment_id)
@@ -486,23 +487,23 @@ def space_scene(space_id: int, conn: psycopg.Connection = Depends(connection)) -
 
 @app.get("/spaces/{space_id}/map")
 def space_map(space_id: int, conn: psycopg.Connection = Depends(connection)) -> FileResponse:
-    """Return a space's saved ARKit map, so the phone can recognise it."""
-    path = db.space_map(conn, space_id)
+    """Return a place's saved ARKit map, so the phone can recognise it."""
+    path = db.place_map(conn, space_id)
     file = (DATA_DIR / path).resolve() if path else None
 
     if file is None or not file.is_file():
-        raise HTTPException(404, "no map for this space")
+        raise HTTPException(404, "no map for this place")
 
     return FileResponse(file, media_type="application/octet-stream")
 
 
 @app.put("/spaces/{space_id}")
 def rename_space(space_id: int, body: NewName, conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Name or rename a space."""
+    """Name or rename a place."""
     name = body.name.strip() if body.name and body.name.strip() else None
 
-    if not db.name_space(conn, space_id, name, by_user=True):
-        raise HTTPException(404, "no such space")
+    if not db.name_place(conn, space_id, name, by_user=True):
+        raise HTTPException(404, "no such place")
 
     return {"id": space_id, "name": name}
 
@@ -516,13 +517,13 @@ def rename_room(room_id: int, body: NewName, tasks: BackgroundTasks,
     if name is None:
         raise HTTPException(422, "a room needs a name")
 
-    space_id = db.name_room(conn, room_id, name)
+    place_id = db.name_room(conn, room_id, name)
 
-    if space_id is None:
+    if place_id is None:
         raise HTTPException(404, "no such room")
 
     conn.commit()
-    tasks.add_task(rebuild_facts, db.space_moments(conn, space_id))
+    tasks.add_task(rebuild_facts, db.place_moments(conn, place_id))
 
     return {"id": room_id, "name": name}
 
@@ -583,13 +584,13 @@ def reprocess(moment_id: str, body: Rate, tasks: BackgroundTasks,
         raise HTTPException(404, "this moment's video wasn't kept, so it can't be reprocessed")
 
     check_higher(moment_id, body.frames_per_minute)
-    upload_id = db.new_upload(conn, body.frames_per_minute)
-    db.update_upload(conn, upload_id, moment_id=moment_id, step="Waiting")
+    job_id = db.new_job(conn, body.frames_per_minute)
+    db.update_job(conn, job_id, moment_id=moment_id, step="Waiting")
     conn.commit()
 
-    tasks.add_task(run_reprocess, upload_id, moment_id, body.frames_per_minute)
+    tasks.add_task(run_reprocess, job_id, moment_id, body.frames_per_minute)
 
-    return {"id": upload_id, "status": "processing"}
+    return {"id": job_id, "status": "processing"}
 
 
 @app.get("/moments/{moment_id}/video")
@@ -686,15 +687,16 @@ def ask_in_conversation(conversation_id: UUID, body: ChatQuestion,
         raise HTTPException(404, "no such conversation")
 
     history = [(turn["question"], turn["answer"]) for turn in turns if turn["answer"]][-HISTORY_TURNS:]
-    result, problem = None, None
+    question = {"role": "user", "at": datetime.now().astimezone(), "content": {"text": body.question}}
 
     try:
-        result = ask_agent(conn, body.question, history=history)
+        replies = ask_agent(conn, body.question, history=history)["messages"]
     except Exception as error:
         conn.rollback()
-        problem = f"The answer failed: {error}"
+        replies = [{"role": "assistant", "at": datetime.now().astimezone(),
+                    "content": {"error": f"The answer failed: {error}"}}]
 
-    turn_id = db.save_turn(conn, conversation_id, body.question, result, problem)
+    turn_id = db.save_messages(conn, conversation_id, [question, *replies])
 
     return turn_json(next(turn for turn in db.conversation_turns(conn, conversation_id) if turn["id"] == turn_id))
 

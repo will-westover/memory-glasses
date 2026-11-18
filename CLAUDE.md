@@ -15,7 +15,9 @@ graded part is the LLM software: embeddings, structured output, tool calling, an
 Recording -> kept frames and audio -> captions and transcript -> small facts, each embedded with its context,
 in Postgres (pgvector) -> agent with search tools -> judge and cost log. An iPhone app sits on top, and the glasses firmware comes last.
 
-Words: a **moment** is one recording, start to finish; a **frame** is one photo kept from it.
+Words: a **moment** is one recording, start to finish; a **frame** is one photo kept from it; a **segment** is a
+stretch of a moment at one **place**, or on the move. Chats are stored as raw **messages**; every model call is a
+**model_call**, linked to the message or frame it was for.
 
 ## Build plan
 
@@ -71,18 +73,20 @@ Everything else is your call.
   background. Recording needs a real iPhone; the Simulator has no camera tracking. With a recording come
   `poses.json` (where the phone was, 10 times a second), and on Pro phones `mesh.obj` (the lidar scan) and
   `world.map` (ARKit's map, used to recognise the place next time).
-- A **space** is a place such as an apartment or a lecture hall: the phone's map when it recognised it, else the
-  space whose frames look most alike (average embedding at least 0.75). Each frame gets a **room** from one model
-  call per moment that sees every frame, its position, the speech and the scan, then a vote of frames within 1.5 m.
-  `memory.spaces list`, `label <moment id>`, `rebuild`. Maps are in `data/spaces/`.
+- A **place** is somewhere such as an apartment or a lecture hall, with an optional name, GPS circle and phone map. A
+  moment is filed at the place the phone's map recognised, else the place whose frames look most alike (average
+  embedding at least 0.75); for now each moment is one segment. GPS points are kept over time in `location`. Each
+  frame gets a **room** from one model call per moment that sees every frame, its position, the speech and the scan,
+  then a vote of frames within 1.5 m. `memory.rooms list`, `label <moment id>`, `rebuild`. Maps are in `data/spaces/`.
+  The API still calls places `spaces`, for the app.
 - A moment can be reprocessed at another frames per minute from its kept video; frames are named by their time,
   so ones that already exist keep their captions.
-- The agent has three tools: search, timeline and nearby (what was seen near a frame, in the same mapped space).
+- The agent has three tools: search, timeline and nearby (what was seen near a frame, in the same mapped place).
   `memory.evals --mode agent --mode no-nearby` compares it with and without nearby.
 - People: `memory.people list`, `name <id> "Sam"`, `merge <id> <into id>`, `forget <id>`, or the People screen in
   the app. Faces use OpenCV's YuNet and SFace models in the ignored `server/models/` (from github.com/opencv/opencv_zoo).
   The user has written consent from the people recorded.
-- Places: `memory.places add "Home" <lat> <lon> --radius 75`, `memory.places list`.
+- Named GPS places: `memory.places add "Home" <lat> <lon> --radius 75`, `memory.places list`.
 - Model prices are in `server/prices.json`. A model with no price there is refused before any call.
 - Phone connection: the server runs with `API_TOKEN` and `--host 0.0.0.0`; Mac and phone both join Tailscale (campus
   Wi-Fi blocks devices reaching each other). `memory.pair` shows a QR code; the iPhone camera opens it in the app.

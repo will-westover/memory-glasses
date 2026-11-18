@@ -120,7 +120,7 @@ class Answer(BaseModel):
 
 def instructions(conn, notes: str) -> str:
     """Return the instructions with the current time and the newest recordings filled in."""
-    places = db.places(conn)
+    places = db.gps_places(conn)
     lines = []
 
     for _, _, started_at, duration, _, _, lat, lon in db.list_moments(conn)[:RECENT_MOMENTS]:
@@ -194,19 +194,29 @@ def find_facts(conn, name: str, arguments: dict) -> list[dict]:
     return fit(db.timeline(conn, start, end))
 
 
-def run_tool(conn, name: str, arguments: dict, seen: dict) -> str:
-    """Run one tool call, remember the facts it returned, and return them as text."""
+def run_tool(conn, name: str, arguments: dict, seen: dict) -> tuple[str, list[dict]]:
+    """Run one tool call, remember the facts it returned, and return them as text and as found."""
     try:
         facts = find_facts(conn, name, arguments)
     except ValueError:
-        return f"error: start and end must be {ISO_TIME}"
+        return f"error: start and end must be {ISO_TIME}", []
 
     seen.update({fact["id"]: fact for fact in facts})
 
     if name == "timeline" and facts and facts[0]["kind"] == "summary":
-        return f"{LONG_STRETCH}\n{fact_lines(facts)}"
+        return f"{LONG_STRETCH}\n{fact_lines(facts)}", facts
 
-    return fact_lines(facts)
+    return fact_lines(facts), facts
+
+
+def fact_record(fact: dict) -> dict:
+    """Return a fact as JSON a stored message can keep."""
+    return {"id": fact["id"], "kind": fact["kind"], "at": fact["at"].isoformat(), "moment_id": fact["moment_id"],
+            "offset_seconds": fact["offset_seconds"], "text": fact["text"], "image_path": fact["image_path"]}
+
+
+def now() -> datetime:
+    return datetime.now().astimezone()
 
 
 def check_sources(cited: list[int], seen: dict) -> list[dict]:
@@ -237,19 +247,20 @@ def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple
 
     send = conversation(list(history), question)
     previous_id = None
+    tools = TOOLS if use_nearby else [tool for tool in TOOLS if tool["name"] != "nearby"]
+    messages = []
 
     for round_number in range(MAX_ROUNDS + 1):
-        response = llm.client().responses.parse(
-            model=model,
-            instructions=prompt,
-            input=send,
-            previous_response_id=previous_id,
-            tools=TOOLS if use_nearby else [tool for tool in TOOLS if tool["name"] != "nearby"],
-            tool_choice="auto" if round_number < MAX_ROUNDS else "none",
-            text_format=Answer,
-            reasoning={"effort": "low"},
-        )
-        usd += llm.log_cost(conn, "agent", model, response.usage)
+        request = {"model": model, "instructions": prompt, "input": send, "previous_response_id": previous_id,
+                   "tools": tools, "tool_choice": "auto" if round_number < MAX_ROUNDS else "none"}
+
+        with llm.collect() as call_ids:
+            response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})
+            received = response.model_dump(mode="json")
+            usd += llm.log_cost(conn, "agent", model, response.usage, request=request, response=received)
+
+        messages.append({"role": "assistant", "at": now(), "content": {"output": received["output"]},
+                         "calls": call_ids})
 
         requests = [item for item in response.output if item.type == "function_call"]
 
@@ -259,14 +270,23 @@ def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple
         send = []
         previous_id = response.id
 
-        for request in requests:
-            arguments = json.loads(request.arguments)
-            calls.append((request.name, arguments))
+        for call in requests:
+            arguments = json.loads(call.arguments)
+            calls.append((call.name, arguments))
 
-            result = run_tool(conn, request.name, arguments, seen)
-            send.append({"type": "function_call_output", "call_id": request.call_id, "output": result})
+            with llm.collect() as call_ids:
+                output, facts = run_tool(conn, call.name, arguments, seen)
 
-    return finish(response.output_parsed, seen, calls, usd, round_number + 1, started)
+            send.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
+            messages.append({"role": "tool", "at": now(), "calls": call_ids, "content": {
+                "call_id": call.call_id, "name": call.name, "arguments": arguments, "output": output,
+                "facts": [fact_record(fact) for fact in facts]}})
+
+    parsed = response.output_parsed
+    messages[-1]["content"]["answer"] = (parsed or Answer(answer="The model gave no answer.", found=False,
+                                                          sources=[])).model_dump()
+
+    return {**finish(parsed, seen, calls, usd, round_number + 1, started), "messages": messages}
 
 
 def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
@@ -277,14 +297,10 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
     facts = search(conn, question, PLAIN_RESULTS)
     seen = {fact["id"]: fact for fact in facts}
 
-    response = llm.client().responses.parse(
-        model=model,
-        instructions=instructions(conn, PLAIN_NOTES),
-        input=f"Question: {question}\n\nFacts:\n{fact_lines(facts)}",
-        text_format=Answer,
-        reasoning={"effort": "low"},
-    )
-    usd = llm.log_cost(conn, "rag", model, response.usage)
+    request = {"model": model, "instructions": instructions(conn, PLAIN_NOTES),
+               "input": f"Question: {question}\n\nFacts:\n{fact_lines(facts)}"}
+    response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})
+    usd = llm.log_cost(conn, "rag", model, response.usage, request=request, response=response.model_dump(mode="json"))
 
     return finish(response.output_parsed, seen, [], usd, 1, started)
 

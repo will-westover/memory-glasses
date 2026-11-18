@@ -210,7 +210,7 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     llm.require_price(SUMMARY_MODEL)
 
     _, lat, lon = db.moment_info(conn, moment_id)
-    place = place_for(lat, lon, db.places(conn))
+    place = place_for(lat, lon, db.gps_places(conn))
 
     frames = db.captioned_frames(conn, moment_id)
     groups = passages(db.transcript_lines(conn, moment_id))

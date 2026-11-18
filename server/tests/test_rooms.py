@@ -1,4 +1,4 @@
-from memory.spaces import smooth, travelled
+from memory.rooms import smooth, travelled
 
 
 def test_a_lone_label_among_neighbours_takes_theirs():
