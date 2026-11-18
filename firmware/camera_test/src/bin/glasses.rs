@@ -44,7 +44,10 @@ fn start_screen(mut i2c: I2cDriver<'static>) -> Option<Screen> {
     let interface = I2CDisplayInterface::new_custom_address(i2c, address);
     let mut screen = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0).into_buffered_graphics_mode();
 
-    screen.init().ok().map(|_| screen)
+    screen.init().ok()?;
+    screen.set_mirror(true).ok()?;
+
+    Some(screen)
 }
 
 struct Settings {
