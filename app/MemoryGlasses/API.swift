@@ -153,9 +153,16 @@ struct FrameRate: Encodable {
     let framesPerMinute: Double
 }
 
-struct GlassesSettings: Codable {
-    var framesPerMinute: Double
-    var displayScale: Double
+struct GlassesSettings: Codable, Equatable {
+    var framesPerMinute = 30.0
+    var displayScale = 1.0
+    var displayX = 0.0
+    var displayY = 0.0
+    var displayBrightness = 1.0
+    var displayLargeText = false
+    var displayMirror = true
+    var displayFlip = false
+    var displayPattern = false
 }
 
 struct PastExchange: Encodable {

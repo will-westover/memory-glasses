@@ -35,7 +35,6 @@ EXTRA_FILES = {"poses": "poses.json", "mesh": "mesh.obj", "world_map": "world.ma
 RECORDING_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 MAX_FRAME_BYTES = 2_000_000
 CHECK_SECONDS = 15
-DISPLAY_SCALE = 1.0
 MIN_DISPLAY_SCALE = 0.3
 
 
@@ -71,13 +70,27 @@ class Merge(BaseModel):
 
 
 class Settings(BaseModel):
-    frames_per_minute: float = Field(ge=0, le=MAX_FRAMES_PER_MINUTE)
-    display_scale: float = Field(DISPLAY_SCALE, ge=MIN_DISPLAY_SCALE, le=1)
+    frames_per_minute: float = Field(FRAMES_PER_MINUTE, ge=0, le=MAX_FRAMES_PER_MINUTE)
+    display_scale: float = Field(1.0, ge=MIN_DISPLAY_SCALE, le=1)
+    display_x: float = Field(0.0, ge=-1, le=1)
+    display_y: float = Field(0.0, ge=-1, le=1)
+    display_brightness: float = Field(1.0, ge=0.05, le=1)
+    display_large_text: bool = False
+    display_mirror: bool = True
+    display_flip: bool = False
+    display_pattern: bool = False
 
 
 class SettingsChange(BaseModel):
     frames_per_minute: float | None = Field(None, ge=0, le=MAX_FRAMES_PER_MINUTE)
     display_scale: float | None = Field(None, ge=MIN_DISPLAY_SCALE, le=1)
+    display_x: float | None = Field(None, ge=-1, le=1)
+    display_y: float | None = Field(None, ge=-1, le=1)
+    display_brightness: float | None = Field(None, ge=0.05, le=1)
+    display_large_text: bool | None = None
+    display_mirror: bool | None = None
+    display_flip: bool | None = None
+    display_pattern: bool | None = None
 
 
 def check_token(authorization: str | None = Header(default=None)) -> None:
@@ -310,8 +323,16 @@ def upload_moment(
 
 
 def current_settings(conn: psycopg.Connection) -> Settings:
-    return Settings(frames_per_minute=float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE)),
-                    display_scale=float(db.setting(conn, "display_scale", DISPLAY_SCALE)))
+    """Return every glasses setting, saved or default."""
+    values = {}
+
+    for name, field in Settings.model_fields.items():
+        saved = db.setting(conn, name, None)
+
+        if saved is not None:
+            values[name] = saved in ("True", "true", "1") if field.annotation is bool else float(saved)
+
+    return Settings(**values)
 
 
 @app.post("/glasses/frames")

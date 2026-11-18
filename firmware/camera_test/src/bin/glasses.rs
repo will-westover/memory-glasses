@@ -2,11 +2,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use camera_test::{start_camera, take_photo};
-use embedded_graphics::mono_font::ascii::FONT_6X10;
+use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::delay::TickType;
@@ -30,8 +30,6 @@ const TOKEN: &str = env!("GLASSES_TOKEN");
 const DISPLAY_ADDRESSES: [u8; 2] = [0x3C, 0x3D];
 const DEFAULT_FRAMES_PER_MINUTE: f64 = 30.0;
 const OUTLINE_FOR: Duration = Duration::from_secs(6);
-const LINE_HEIGHT: i32 = 11;
-const CHAR_WIDTH: i32 = 6;
 const UPLOAD_CHUNK: usize = 8192;
 const SOUND_ONLY_WAIT: Duration = Duration::from_secs(30);
 
@@ -44,75 +42,158 @@ fn start_screen(mut i2c: I2cDriver<'static>) -> Option<Screen> {
     let interface = I2CDisplayInterface::new_custom_address(i2c, address);
     let mut screen = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0).into_buffered_graphics_mode();
 
-    screen.init().ok()?;
-    screen.set_mirror(true).ok()?;
+    screen.init().ok().map(|_| screen)
+}
 
-    Some(screen)
+#[derive(Clone, PartialEq)]
+struct Look {
+    scale: f64,
+    x: f64,
+    y: f64,
+    brightness: f64,
+    large_text: bool,
+    mirror: bool,
+    flip: bool,
+    pattern: bool,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Look { scale: 1.0, x: 0.0, y: 0.0, brightness: 1.0, large_text: false, mirror: true, flip: false, pattern: false }
+    }
 }
 
 struct Settings {
     frames_per_minute: f64,
-    display_scale: f64,
+    look: Look,
 }
 
 fn parse_settings(reply: &[u8]) -> Option<Settings> {
     let json = serde_json::from_slice::<serde_json::Value>(reply).ok()?;
+    let base = Look::default();
+    let number = |name: &str, default: f64| json[name].as_f64().unwrap_or(default);
+    let flag = |name: &str, default: bool| json[name].as_bool().unwrap_or(default);
 
     Some(Settings {
         frames_per_minute: json["frames_per_minute"].as_f64()?,
-        display_scale: json["display_scale"].as_f64().unwrap_or(1.0),
+        look: Look {
+            scale: number("display_scale", base.scale),
+            x: number("display_x", base.x),
+            y: number("display_y", base.y),
+            brightness: number("display_brightness", base.brightness),
+            large_text: flag("display_large_text", base.large_text),
+            mirror: flag("display_mirror", base.mirror),
+            flip: flag("display_flip", base.flip),
+            pattern: flag("display_pattern", base.pattern),
+        },
     })
 }
 
 struct Display {
     screen: Option<Screen>,
-    scale: f64,
+    look: Look,
     outline_until: Option<Instant>,
     lines: Vec<String>,
 }
 
 impl Display {
-    fn set_scale(&mut self, scale: f64) {
-        if (scale - self.scale).abs() < 0.001 {
+    fn new(screen: Option<Screen>) -> Self {
+        let mut display = Display { screen, look: Look::default(), outline_until: None, lines: Vec::new() };
+        display.apply_to_screen();
+
+        display
+    }
+
+    fn apply_to_screen(&mut self) {
+        let Some(screen) = self.screen.as_mut() else { return };
+        let rotation = if self.look.flip { DisplayRotation::Rotate180 } else { DisplayRotation::Rotate0 };
+        let contrast = (self.look.brightness * 255.0).round().clamp(0.0, 255.0) as u8;
+
+        let _ = screen.set_rotation(rotation);
+        let _ = screen.set_mirror(self.look.mirror != self.look.flip);
+        let _ = screen.set_brightness(Brightness::custom(2, contrast));
+    }
+
+    fn set_look(&mut self, look: Look) {
+        if look == self.look {
             return;
         }
 
-        self.scale = scale;
-        self.outline_until = Some(Instant::now() + OUTLINE_FOR);
+        let old = std::mem::replace(&mut self.look, look);
+        let now = &self.look;
 
-        let lines = std::mem::take(&mut self.lines);
-        self.show(&lines.iter().map(String::as_str).collect::<Vec<_>>());
+        if (old.mirror, old.flip, old.brightness) != (now.mirror, now.flip, now.brightness) {
+            self.apply_to_screen();
+        }
+
+        let now = &self.look;
+        if (old.scale, old.x, old.y, old.large_text) != (now.scale, now.x, now.y, now.large_text) {
+            self.outline_until = Some(Instant::now() + OUTLINE_FOR);
+        }
+
+        self.draw();
     }
 
     fn show(&mut self, lines: &[&str]) {
         println!("{}", lines.join(" | "));
         self.lines = lines.iter().map(|line| line.to_string()).collect();
+        self.draw();
+    }
 
-        let Some(screen) = self.screen.as_mut() else { return };
-        let (width, height) = ((128.0 * self.scale).round() as i32, (64.0 * self.scale).round() as i32);
-        let corner = Point::new((128 - width) / 2, (64 - height) / 2);
-        let outlined = self.outline_until.is_some_and(|until| Instant::now() < until);
+    fn area(&self) -> (Point, i32, i32) {
+        let (width, height) = ((128.0 * self.look.scale).round() as i32, (64.0 * self.look.scale).round() as i32);
+        let x = (128 - width) / 2 + ((128 - width) as f64 / 2.0 * self.look.x).round() as i32;
+        let y = (64 - height) / 2 + ((64 - height) as f64 / 2.0 * self.look.y).round() as i32;
 
-        let mut shown: Vec<String> = lines.iter().filter(|line| !line.is_empty()).map(|line| line.to_string()).collect();
-        if outlined {
-            shown.insert(0, format!("{:.0}%", self.scale * 100.0));
+        (Point::new(x, y), width, height)
+    }
+
+    fn draw(&mut self) {
+        let (corner, width, height) = self.area();
+        let outlined = self.look.pattern || self.outline_until.is_some_and(|until| Instant::now() < until);
+        let (font, line_height, char_width) = if self.look.large_text { (&FONT_10X20, 20, 10) } else { (&FONT_6X10, 11, 6) };
+        let style = MonoTextStyle::new(font, BinaryColor::On);
+        let stroke = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
+
+        let mut shown: Vec<String> = self.lines.iter().filter(|line| !line.is_empty()).cloned().collect();
+        if self.look.pattern {
+            shown = vec!["Aa 0123".to_string()];
+        } else if outlined {
+            shown.insert(0, format!("{:.0}%", self.look.scale * 100.0));
         }
 
-        let inset = if outlined { 2 } else { 0 };
-        let rows = ((height - 2 * inset) / LINE_HEIGHT).max(1) as usize;
-        let columns = ((width - 2 * inset) / CHAR_WIDTH).max(1) as usize;
-        let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-
+        let Some(screen) = self.screen.as_mut() else { return };
         let _ = screen.clear(BinaryColor::Off);
 
         if outlined {
-            let outline = Rectangle::new(corner, Size::new(width as u32, height as u32));
-            let _ = outline.into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1)).draw(screen);
+            let _ = Rectangle::new(corner, Size::new(width as u32, height as u32)).into_styled(stroke).draw(screen);
         }
+
+        if self.look.pattern {
+            let middle = corner + Point::new(width / 2, height / 2);
+            let _ = Line::new(Point::new(corner.x, middle.y), Point::new(corner.x + width - 1, middle.y)).into_styled(stroke).draw(screen);
+            let _ = Line::new(Point::new(middle.x, corner.y), Point::new(middle.x, corner.y + height - 1)).into_styled(stroke).draw(screen);
+
+            for step in (2..width / 2 - 2).step_by(2) {
+                let x = corner.x + step;
+                let _ = Line::new(Point::new(x, corner.y + 2), Point::new(x, middle.y - 2)).into_styled(stroke).draw(screen);
+            }
+
+            for step in (2..height / 2 - 2).step_by(2) {
+                let y = middle.y + step;
+                let _ = Line::new(Point::new(middle.x + 2, y), Point::new(corner.x + width - 3, y)).into_styled(stroke).draw(screen);
+            }
+        }
+
+        let inset = if outlined { 2 } else { 0 };
+        let rows = ((height - 2 * inset) / line_height).max(1) as usize;
+        let columns = ((width - 2 * inset) / char_width).max(1) as usize;
+        let text_corner = if self.look.pattern { corner + Point::new(width / 2 + 2, 2) } else { corner + Point::new(inset, inset) };
+        let columns = if self.look.pattern { columns / 2 } else { columns };
 
         for (row, line) in shown.iter().take(rows).enumerate() {
             let text: String = line.chars().take(columns).collect();
-            let at = corner + Point::new(inset, inset + LINE_HEIGHT * row as i32);
+            let at = text_corner + Point::new(0, line_height * row as i32);
             let _ = Text::with_baseline(&text, at, style, Baseline::Top).draw(screen);
         }
 
@@ -226,7 +307,7 @@ fn main() {
     let peripherals = Peripherals::take().unwrap();
     let config = I2cConfig::new().baudrate(400.kHz().into());
     let i2c = I2cDriver::new(peripherals.i2c0, peripherals.pins.gpio5, peripherals.pins.gpio6, &config).unwrap();
-    let mut display = Display { screen: start_screen(i2c), scale: 1.0, outline_until: None, lines: Vec::new() };
+    let mut display = Display::new(start_screen(i2c));
 
     display.show(&["MEMORY GLASSES", "", "Starting camera"]);
     if let Err(error) = start_camera(camera_test::STREAM) {
@@ -270,7 +351,8 @@ fn main() {
 
     if let Some(settings) = fetch_settings(&mut server) {
         rate = settings.frames_per_minute;
-        display.scale = settings.display_scale;
+        display.set_look(settings.look);
+        display.outline_until = None;
     }
 
     let (mut sent, mut failed) = (0u32, 0u32);
@@ -284,7 +366,7 @@ fn main() {
             thread::sleep(SOUND_ONLY_WAIT);
             if let Some(settings) = fetch_settings(&mut server) {
                 rate = settings.frames_per_minute;
-                display.set_scale(settings.display_scale);
+                display.set_look(settings.look);
             }
 
             continue;
@@ -299,7 +381,7 @@ fn main() {
 
                     if let Some(settings) = settings {
                         rate = settings.frames_per_minute;
-                        display.set_scale(settings.display_scale);
+                        display.set_look(settings.look);
                     }
                 }
                 Ok((status, _)) => {
