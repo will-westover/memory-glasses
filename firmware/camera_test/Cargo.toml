@@ -8,6 +8,11 @@ resolver = "2"
 name = "camera_test"
 harness = false
 
+[[bin]]
+name = "display_test"
+path = "src/bin/display_test.rs"
+harness = false
+
 [profile.release]
 opt-level = "s"
 
@@ -19,6 +24,8 @@ opt-level = "z"
 log = "0.4"
 base64 = "0.22"
 esp-idf-svc = "0.53"
+ssd1306 = "0.10"
+embedded-graphics = "0.8"
 
 [build-dependencies]
 embuild = "0.33"

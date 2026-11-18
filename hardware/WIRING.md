@@ -61,8 +61,17 @@ Keep USB unplugged and the battery out until step 7.
 
 ## Test it
 
-Upload `firmware/display_test/display_test.ino` (setup is in the sketch's header comment) before running any wires
-through printed parts. The display should show full white, then a border, then a counter.
+Do this before running any wires through printed parts. From `firmware/camera_test/`, with USB in and the switch off:
+
+1. **Camera:** `espflash flash target/xtensa-esp32s3-espidf/release/camera_test` (build with `cargo build --release`),
+   then `uv run --with pyserial python read_photo.py <port> photo.jpg` saves one photo.
+2. **Display:** flash `display_test` the same way, then `uv run --with pyserial python watch.py`. Every second it prints
+   whether SDA and SCL are high, as they should be at rest; a line stuck `LOW` is touching ground (look for a bridge or
+   stray solder near the OLED's pins). Once the display answers, it shows full white, then a border, then a counter.
+3. **Battery:** with the counter running, switch on and unplug USB. If the counter keeps going, the battery and switch
+   wiring work.
+
+If the board won't take a flash, hold **B** (BOOT) while plugging USB in.
 
 ## What to expect
 
