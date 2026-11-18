@@ -419,11 +419,13 @@ struct SourceChip: View {
                         FrameImage(path: fact.image)
                     } else {
                         Rectangle()
-                            .fill(Color(.tertiarySystemFill))
-                            .overlay {
-                                Image(systemName: fact.isSpeech ? "waveform" : "text.alignleft")
-                                    .font(.title2)
-                                    .foregroundStyle(.secondary)
+                            .fill(Color(.secondarySystemBackground))
+                            .overlay(alignment: .topLeading) {
+                                Text(fact.isSpeech ? "“\(fact.text)”" : fact.text)
+                                    .font(.footnote)
+                                    .lineLimit(4)
+                                    .multilineTextAlignment(.leading)
+                                    .padding(12)
                             }
                     }
 
@@ -444,12 +446,14 @@ struct SourceChip: View {
                 .frame(width: 200, height: 120)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-                Text(fact.text)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .frame(width: 200, alignment: .leading)
+                if fact.image != nil {
+                    Text(fact.text)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(width: 200, alignment: .leading)
+                }
             }
         }
         .buttonStyle(.plain)

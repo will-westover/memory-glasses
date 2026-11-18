@@ -73,11 +73,13 @@ struct HighlightCard: View {
                         FrameImage(path: fact.image)
                     } else {
                         Rectangle()
-                            .fill(Color(.tertiarySystemFill))
-                            .overlay {
-                                Image(systemName: fact.isSpeech ? "waveform" : "text.alignleft")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(.secondary)
+                            .fill(Color(.secondarySystemBackground))
+                            .overlay(alignment: .topLeading) {
+                                Text(fact.isSpeech ? "“\(fact.text)”" : fact.text)
+                                    .font(.body)
+                                    .lineLimit(6)
+                                    .multilineTextAlignment(.leading)
+                                    .padding(16)
                             }
                     }
 
