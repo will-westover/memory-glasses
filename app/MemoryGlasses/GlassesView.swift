@@ -5,6 +5,7 @@ struct GlassesView: View {
     @AppStorage("serverToken") private var token = ""
 
     @State private var framesPerMinute = 30.0
+    @State private var displayScale = 1.0
     @State private var status = "Checking…"
     @State private var connected = false
 
@@ -26,6 +27,23 @@ struct GlassesView: View {
                     Text("Camera")
                 } footer: {
                     Text("How often the glasses take a picture. More pictures remember more and cost more.")
+                }
+
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("\(Int((displayScale * 100).rounded()))% of the screen")
+                            .font(.headline)
+
+                        Slider(value: $displayScale, in: 0.3...1, step: 0.05) { editing in
+                            if !editing { Task { await save() } }
+                        }
+                        .disabled(!connected)
+                        .accessibilityLabel("Display size")
+                    }
+                } header: {
+                    Text("Display")
+                } footer: {
+                    Text("Looking through the lens as you would wearing them, make this smaller until you can see all four edges of the box. The glasses show the box for a few seconds after a change.")
                 }
 
                 Section {
@@ -76,6 +94,7 @@ struct GlassesView: View {
             let settings: GlassesSettings = try await API.current.get("/settings")
 
             framesPerMinute = settings.framesPerMinute
+            displayScale = settings.displayScale
             connected = true
             status = "Connected"
         } catch {
@@ -87,10 +106,11 @@ struct GlassesView: View {
     private func save() async {
         do {
             let saved: GlassesSettings = try await API.current.send(
-                "/settings", method: "PUT", body: GlassesSettings(framesPerMinute: framesPerMinute)
+                "/settings", method: "PUT", body: GlassesSettings(framesPerMinute: framesPerMinute, displayScale: displayScale)
             )
 
             framesPerMinute = saved.framesPerMinute
+            displayScale = saved.displayScale
             status = "Saved"
         } catch {
             status = error.localizedDescription

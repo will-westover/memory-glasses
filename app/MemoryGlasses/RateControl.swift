@@ -89,7 +89,7 @@ struct RateControl: View {
     private func reprocess() async {
         do {
             let started: UploadStarted = try await API.current.send(
-                "/moments/\(momentId)/reprocess", method: "POST", body: GlassesSettings(framesPerMinute: rate)
+                "/moments/\(momentId)/reprocess", method: "POST", body: FrameRate(framesPerMinute: rate)
             )
             working = "Starting…"
             await follow(started.id)

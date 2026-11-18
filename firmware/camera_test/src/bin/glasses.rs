@@ -6,7 +6,8 @@ use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
-use embedded_graphics::text::Text;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
+use embedded_graphics::text::{Baseline, Text};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::delay::TickType;
 use esp_idf_svc::hal::i2c::{I2cConfig, I2cDriver};
@@ -28,7 +29,9 @@ const TOKEN: &str = env!("GLASSES_TOKEN");
 
 const DISPLAY_ADDRESSES: [u8; 2] = [0x3C, 0x3D];
 const DEFAULT_FRAMES_PER_MINUTE: f64 = 30.0;
-const SETTINGS_EVERY_FRAMES: u32 = 10;
+const OUTLINE_FOR: Duration = Duration::from_secs(6);
+const LINE_HEIGHT: i32 = 11;
+const CHAR_WIDTH: i32 = 6;
 const UPLOAD_CHUNK: usize = 8192;
 const SOUND_ONLY_WAIT: Duration = Duration::from_secs(30);
 
@@ -44,19 +47,74 @@ fn start_screen(mut i2c: I2cDriver<'static>) -> Option<Screen> {
     screen.init().ok().map(|_| screen)
 }
 
-fn show(screen: &mut Option<Screen>, lines: &[&str]) {
-    println!("{}", lines.join(" | "));
+struct Settings {
+    frames_per_minute: f64,
+    display_scale: f64,
+}
 
-    let Some(screen) = screen else { return };
-    let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+fn parse_settings(reply: &[u8]) -> Option<Settings> {
+    let json = serde_json::from_slice::<serde_json::Value>(reply).ok()?;
 
-    let _ = screen.clear(BinaryColor::Off);
+    Some(Settings {
+        frames_per_minute: json["frames_per_minute"].as_f64()?,
+        display_scale: json["display_scale"].as_f64().unwrap_or(1.0),
+    })
+}
 
-    for (row, line) in lines.iter().enumerate() {
-        let _ = Text::new(line, Point::new(2, 10 + 12 * row as i32), style).draw(screen);
+struct Display {
+    screen: Option<Screen>,
+    scale: f64,
+    outline_until: Option<Instant>,
+    lines: Vec<String>,
+}
+
+impl Display {
+    fn set_scale(&mut self, scale: f64) {
+        if (scale - self.scale).abs() < 0.001 {
+            return;
+        }
+
+        self.scale = scale;
+        self.outline_until = Some(Instant::now() + OUTLINE_FOR);
+
+        let lines = std::mem::take(&mut self.lines);
+        self.show(&lines.iter().map(String::as_str).collect::<Vec<_>>());
     }
 
-    let _ = screen.flush();
+    fn show(&mut self, lines: &[&str]) {
+        println!("{}", lines.join(" | "));
+        self.lines = lines.iter().map(|line| line.to_string()).collect();
+
+        let Some(screen) = self.screen.as_mut() else { return };
+        let (width, height) = ((128.0 * self.scale).round() as i32, (64.0 * self.scale).round() as i32);
+        let corner = Point::new((128 - width) / 2, (64 - height) / 2);
+        let outlined = self.outline_until.is_some_and(|until| Instant::now() < until);
+
+        let mut shown: Vec<String> = lines.iter().filter(|line| !line.is_empty()).map(|line| line.to_string()).collect();
+        if outlined {
+            shown.insert(0, format!("{:.0}%", self.scale * 100.0));
+        }
+
+        let inset = if outlined { 2 } else { 0 };
+        let rows = ((height - 2 * inset) / LINE_HEIGHT).max(1) as usize;
+        let columns = ((width - 2 * inset) / CHAR_WIDTH).max(1) as usize;
+        let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+
+        let _ = screen.clear(BinaryColor::Off);
+
+        if outlined {
+            let outline = Rectangle::new(corner, Size::new(width as u32, height as u32));
+            let _ = outline.into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1)).draw(screen);
+        }
+
+        for (row, line) in shown.iter().take(rows).enumerate() {
+            let text: String = line.chars().take(columns).collect();
+            let at = corner + Point::new(inset, inset + LINE_HEIGHT * row as i32);
+            let _ = Text::with_baseline(&text, at, style, Baseline::Top).draw(screen);
+        }
+
+        let _ = screen.flush();
+    }
 }
 
 fn join_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> Result<(), EspError> {
@@ -130,23 +188,25 @@ fn exchange(open: &mut Option<EspHttpConnection>, method: Method, path: &str, he
     Ok((status, reply))
 }
 
-fn frames_per_minute(open: &mut Option<EspHttpConnection>) -> Option<f64> {
+fn fetch_settings(open: &mut Option<EspHttpConnection>) -> Option<Settings> {
     let (status, reply) = request(open, Method::Get, "/settings", &[], &[]).ok()?;
 
     if status != 200 {
         return None;
     }
 
-    serde_json::from_slice::<serde_json::Value>(&reply).ok()?["frames_per_minute"].as_f64()
+    parse_settings(&reply)
 }
 
-fn send_frame(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8]) -> Result<u16, EspError> {
+fn send_frame(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8])
+              -> Result<(u16, Option<Settings>), EspError> {
     let headers = [("X-Recording", recording), ("Content-Type", "image/jpeg")];
 
-    request(open, Method::Post, "/glasses/frames", &headers, jpeg).map(|(status, _)| status)
+    request(open, Method::Post, "/glasses/frames", &headers, jpeg).map(|(status, reply)| (status, parse_settings(&reply)))
 }
 
-fn timed_send(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8]) -> Result<u16, EspError> {
+fn timed_send(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8])
+              -> Result<(u16, Option<Settings>), EspError> {
     let started = Instant::now();
     let fresh = open.is_none();
     let result = send_frame(open, recording, jpeg);
@@ -163,18 +223,18 @@ fn main() {
     let peripherals = Peripherals::take().unwrap();
     let config = I2cConfig::new().baudrate(400.kHz().into());
     let i2c = I2cDriver::new(peripherals.i2c0, peripherals.pins.gpio5, peripherals.pins.gpio6, &config).unwrap();
-    let mut screen = start_screen(i2c);
+    let mut display = Display { screen: start_screen(i2c), scale: 1.0, outline_until: None, lines: Vec::new() };
 
-    show(&mut screen, &["MEMORY GLASSES", "", "Starting camera"]);
+    display.show(&["MEMORY GLASSES", "", "Starting camera"]);
     if let Err(error) = start_camera(camera_test::STREAM) {
-        show(&mut screen, &["MEMORY GLASSES", "", "Camera failed", &format!("error {error}")]);
+        display.show(&["MEMORY GLASSES", "", "Camera failed", &format!("error {error}")]);
         loop {
             thread::sleep(Duration::from_secs(60));
         }
     }
 
     if WIFI_NAME.is_empty() || SERVER.is_empty() {
-        show(&mut screen, &["MEMORY GLASSES", "", "No Wi-Fi set", "Fill in glasses.toml"]);
+        display.show(&["MEMORY GLASSES", "", "No Wi-Fi set", "Fill in glasses.toml"]);
         loop {
             thread::sleep(Duration::from_secs(60));
         }
@@ -197,23 +257,33 @@ fn main() {
             None => format!("not seen ({} others)", seen.len()),
         };
 
-        show(&mut screen, &["MEMORY GLASSES", "", "Joining Wi-Fi", WIFI_NAME, &status, &format!("{error}")]);
+        display.show(&["MEMORY GLASSES", "", "Joining Wi-Fi", WIFI_NAME, &status, &format!("{error}")]);
         thread::sleep(Duration::from_secs(3));
     }
 
     let mut server = None;
     let recording = unsafe { format!("{:08x}{:08x}", esp_idf_svc::sys::esp_random(), esp_idf_svc::sys::esp_random()) };
-    let mut rate = frames_per_minute(&mut server).unwrap_or(DEFAULT_FRAMES_PER_MINUTE);
+    let mut rate = DEFAULT_FRAMES_PER_MINUTE;
+
+    if let Some(settings) = fetch_settings(&mut server) {
+        rate = settings.frames_per_minute;
+        display.scale = settings.display_scale;
+    }
+
     let (mut sent, mut failed) = (0u32, 0u32);
     let mut problem = String::new();
 
-    show(&mut screen, &["MEMORY GLASSES", "", "Connected", &format!("{rate:.0} pictures a minute")]);
+    display.show(&["MEMORY GLASSES", "", "Connected", &format!("{rate:.0} pictures a minute")]);
 
     loop {
         if rate <= 0.0 {
-            show(&mut screen, &["MEMORY GLASSES", "", "Sound only", "No pictures"]);
+            display.show(&["MEMORY GLASSES", "", "Sound only", "No pictures"]);
             thread::sleep(SOUND_ONLY_WAIT);
-            rate = frames_per_minute(&mut server).unwrap_or(rate);
+            if let Some(settings) = fetch_settings(&mut server) {
+                rate = settings.frames_per_minute;
+                display.set_scale(settings.display_scale);
+            }
+
             continue;
         }
 
@@ -221,8 +291,15 @@ fn main() {
 
         match take_photo() {
             Some((jpeg, _, _)) => match timed_send(&mut server, &recording, &jpeg) {
-                Ok(200) => sent += 1,
-                Ok(status) => {
+                Ok((200, settings)) => {
+                    sent += 1;
+
+                    if let Some(settings) = settings {
+                        rate = settings.frames_per_minute;
+                        display.set_scale(settings.display_scale);
+                    }
+                }
+                Ok((status, _)) => {
                     failed += 1;
                     problem = format!("server said {status}");
                 }
@@ -242,10 +319,10 @@ fn main() {
         }
 
         let failures = if failed > 0 { format!("Failed {failed}") } else { String::new() };
-        show(&mut screen, &["MEMORY GLASSES", "", &format!("Sent {sent}"), &failures, &problem]);
+        display.show(&[&format!("Sent {sent}"), &failures, &problem]);
 
-        if (sent + failed) % SETTINGS_EVERY_FRAMES == 0 {
-            rate = frames_per_minute(&mut server).unwrap_or(rate);
+        if rate <= 0.0 {
+            continue;
         }
 
         let gap = Duration::from_secs_f64(60.0 / rate);

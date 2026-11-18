@@ -149,8 +149,13 @@ struct Stats: Decodable {
     let eval: EvalRun?
 }
 
+struct FrameRate: Encodable {
+    let framesPerMinute: Double
+}
+
 struct GlassesSettings: Codable {
     var framesPerMinute: Double
+    var displayScale: Double
 }
 
 struct PastExchange: Encodable {

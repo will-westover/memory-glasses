@@ -35,6 +35,8 @@ EXTRA_FILES = {"poses": "poses.json", "mesh": "mesh.obj", "world_map": "world.ma
 RECORDING_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 MAX_FRAME_BYTES = 2_000_000
 CHECK_SECONDS = 15
+DISPLAY_SCALE = 1.0
+MIN_DISPLAY_SCALE = 0.3
 
 
 class Exchange(BaseModel):
@@ -70,6 +72,12 @@ class Merge(BaseModel):
 
 class Settings(BaseModel):
     frames_per_minute: float = Field(ge=0, le=MAX_FRAMES_PER_MINUTE)
+    display_scale: float = Field(DISPLAY_SCALE, ge=MIN_DISPLAY_SCALE, le=1)
+
+
+class SettingsChange(BaseModel):
+    frames_per_minute: float | None = Field(None, ge=0, le=MAX_FRAMES_PER_MINUTE)
+    display_scale: float | None = Field(None, ge=MIN_DISPLAY_SCALE, le=1)
 
 
 def check_token(authorization: str | None = Header(default=None)) -> None:
@@ -301,9 +309,15 @@ def upload_moment(
     return {"id": upload_id, "status": "processing"}
 
 
+def current_settings(conn: psycopg.Connection) -> Settings:
+    return Settings(frames_per_minute=float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE)),
+                    display_scale=float(db.setting(conn, "display_scale", DISPLAY_SCALE)))
+
+
 @app.post("/glasses/frames")
-async def glasses_frame(request: Request, x_recording: str = Header(...)) -> dict:
-    """Receive one JPEG frame from the glasses; frames stop arriving when a recording ends."""
+async def glasses_frame(request: Request, x_recording: str = Header(...),
+                        conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Receive one JPEG frame from the glasses and reply with the current settings."""
     if not RECORDING_ID.match(x_recording):
         raise HTTPException(422, "X-Recording must be letters, digits and dashes")
 
@@ -314,7 +328,7 @@ async def glasses_frame(request: Request, x_recording: str = Header(...)) -> dic
 
     path = glasses.save_frame(x_recording, jpeg)
 
-    return {"recording": x_recording, "frame": path.name}
+    return {"recording": x_recording, "frame": path.name, **current_settings(conn).model_dump()}
 
 
 @app.get("/uploads")
@@ -756,12 +770,13 @@ def stats(conn: psycopg.Connection = Depends(connection)) -> dict:
 @app.get("/settings")
 def get_settings(conn: psycopg.Connection = Depends(connection)) -> Settings:
     """Return the glasses settings."""
-    return Settings(frames_per_minute=float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE)))
+    return current_settings(conn)
 
 
 @app.put("/settings")
-def put_settings(body: Settings, conn: psycopg.Connection = Depends(connection)) -> Settings:
-    """Change the glasses settings."""
-    db.save_setting(conn, "frames_per_minute", body.frames_per_minute)
+def put_settings(body: SettingsChange, conn: psycopg.Connection = Depends(connection)) -> Settings:
+    """Change the glasses settings that the request includes."""
+    for name, value in body.model_dump(exclude_none=True).items():
+        db.save_setting(conn, name, value)
 
-    return body
+    return current_settings(conn)
