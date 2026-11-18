@@ -94,6 +94,10 @@ Everything else is your call.
   Maximize Compatibility.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
   in a new numbered file in `server/migrations/`.
+- Hosting: with `DATABASE_URL` set in `server/.env`, the database is Neon (`memory-glasses` org). With
+  `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET` set, files live in Cloudflare R2 and `data/`
+  is a working copy that fills itself as files are needed (`memory.storage`). `memory.storage sync` uploads what's
+  missing; `check` compares the two. Without them, everything stays local.
 - Test clips, both in the ignored `data/samples/`: `nasa/crew-quarters-tour.webm` (public-domain NASA tour,
   2 minutes, with speech) and `home/IMG_0161.MOV` (the user's own 12-second walk through their home, with
   location). The user's recordings are real data on their own account; don't add test users or fake data.

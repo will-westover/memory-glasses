@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from pydantic import BaseModel, Field
 
-from memory import db, llm
+from memory import db, llm, storage
 from memory.config import DATA_DIR, SUMMARY_MODEL
 from memory.ingest.facts import build_facts
 from memory.ingest.poses import load_poses
@@ -158,12 +158,14 @@ def keep_map(place_id: int, world_map: Path) -> str:
     """Copy a world map into the maps folder and return its path under the data folder."""
     MAPS_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(world_map, MAPS_DIR / f"{place_id}.map")
+    storage.save(MAPS_DIR / f"{place_id}.map")
 
     return f"places/{place_id}.map"
 
 
 def file_moment(conn, moment_id: str, moment_dir: Path, recognised: int | None) -> int | None:
     """Put a moment at a place: the one the phone recognised, one that looks the same, or a new one."""
+    storage.fetch_folder(moment_dir)
     world_map = moment_dir / "world.map"
     poses_file = moment_dir / "poses.json"
     has_map = world_map.is_file() and not (poses_file.is_file() and travelled(load_poses(poses_file)))
@@ -234,6 +236,7 @@ def ask_for_labels(conn, moment_id: str, frames: list[dict], known: list[dict]) 
 
 def label_rooms(conn, moment_id: str) -> dict[str, int]:
     """Decide the room of every frame in a moment, name the place if it has no name, and return frames per room."""
+    storage.fetch_folder(MOMENTS_DIR / moment_id)
     place = db.moment_place(conn, moment_id)
     frames = db.captioned_frames(conn, moment_id)
 

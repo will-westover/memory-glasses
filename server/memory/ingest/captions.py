@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from memory import db, llm
+from memory import db, llm, storage
 from memory.config import CAPTION_MODEL, DATA_DIR
 
 IMAGE_WIDTH = 1080
@@ -87,6 +87,7 @@ def save_result(conn, totals: dict, frame_id: int, caption: Caption, usage, mode
 def caption_moment(conn, moment_id: str, limit: int | None = None, model: str = CAPTION_MODEL) -> dict:
     """Caption the moment's frames that have no caption yet, several at a time."""
     llm.require_price(model)
+    storage.fetch_folder(DATA_DIR / "moments" / moment_id)
 
     frames = db.frames_without_caption(conn, moment_id, limit)
     started = time.monotonic()

@@ -9,7 +9,7 @@ import sys
 import cv2
 import numpy as np
 
-from memory import db
+from memory import db, storage
 from memory.config import DATA_DIR, SERVER_DIR
 
 MODELS_DIR = SERVER_DIR / "models"
@@ -96,6 +96,7 @@ def vector(embedding: np.ndarray) -> str:
 def find_faces(conn, moment_id: str) -> dict[str, int]:
     """Replace the moment's faces and assign each one to a person, creating people as needed."""
     detector, recognizer = load_models()
+    storage.fetch_folder(DATA_DIR / "moments" / moment_id)
     frames = db.frame_images(conn, moment_id)
 
     db.clear_faces(conn, moment_id)

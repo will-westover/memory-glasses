@@ -20,7 +20,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from memory import chat, db, glasses, pipeline, rooms
+from memory import chat, db, glasses, pipeline, rooms, storage
 from memory.agent import answer_events, ask_agent, fact_record
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
@@ -117,6 +117,7 @@ def process_finished_glasses() -> None:
                 with db.connect() as conn:
                     db.update_job(conn, job_id, status="failed", error=str(error))
                 (folder / "video.mp4").touch()
+                storage.save(folder / "video.mp4")
                 continue
 
             run_upload(job_id, video, {}, rate, None, "glasses")
@@ -243,7 +244,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "summaries": [fact_json(fact) for fact in db.summaries(conn, moment_id)],
         "has_video": has_video(moment_id),
         "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
-        "has_mesh": (MOMENTS_DIR / moment_id / "mesh.obj").is_file(),
+        "has_mesh": storage.exists(MOMENTS_DIR / moment_id / "mesh.obj"),
         "place": db.moment_place(conn, moment_id),
     }
 
@@ -276,7 +277,7 @@ def audio(moment_id: str, start: float, end: float) -> Response:
 
     file = (MOMENTS_DIR / moment_id / "audio.wav").resolve()
 
-    if not file.is_relative_to(MOMENTS_DIR) or not file.is_file():
+    if not file.is_relative_to(MOMENTS_DIR) or storage.local(file) is None:
         raise HTTPException(404, "no sound for this moment")
 
     return Response(audio_clip(file, start, end), media_type="audio/wav")
@@ -296,10 +297,14 @@ def run_upload(job_id, video, extras: dict, frames_per_minute: float, place_id: 
             conn.commit()
 
         try:
+            storage.fetch_folder(video.parent, videos=True)
             moment_id = pipeline.process(video, frames_per_minute, extras, place_id=place_id, source=source,
                                          on_step=step)
             db.update_job(conn, job_id, status="ready", step=None, moment_id=moment_id)
-            shutil.rmtree(video.parent, ignore_errors=True)
+
+            if video.parent.parent == UPLOADS_DIR:
+                shutil.rmtree(video.parent, ignore_errors=True)
+                storage.remove(video.parent)
         except Exception as error:
             conn.rollback()
             db.update_job(conn, job_id, status="failed", error=str(error))
@@ -334,6 +339,7 @@ def upload_moment(
             extras[EXTRA_FILES[field]] = folder / EXTRA_FILES[field]
             save_upload(upload, extras[EXTRA_FILES[field]])
 
+    storage.mirror(folder)
     tasks.add_task(run_upload, job_id, video_path, extras, frames_per_minute, place_id, source)
 
     return {"id": job_id, "status": "processing"}
@@ -389,35 +395,42 @@ def uploads(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     return db.jobs(conn)
 
 
-def video_path(moment_id: str):
+def video_path(moment_id: str, download: bool = True):
     """Return the path of a moment's original video, or None if it wasn't kept."""
     folder = (MOMENTS_DIR / moment_id).resolve()
-    manifest = folder / "manifest.json"
+    video_file = manifest_of(moment_id).get("video_file")
 
-    if not folder.is_relative_to(MOMENTS_DIR) or not manifest.is_file():
+    if not folder.is_relative_to(MOMENTS_DIR) or not video_file:
         return None
 
-    video_file = json.loads(manifest.read_text()).get("video_file")
+    path = folder / video_file
 
-    return folder / video_file if video_file and (folder / video_file).is_file() else None
+    if not download:
+        return path if storage.exists(path) else None
+
+    return storage.local(path)
 
 
 def has_video(moment_id: str) -> bool:
-    return video_path(moment_id) is not None
+    return video_path(moment_id, download=False) is not None
 
 
 def manifest_of(moment_id: str) -> dict:
     """Return a moment's manifest, or an empty one if it can't be read."""
     path = (MOMENTS_DIR / moment_id / "manifest.json").resolve()
 
-    return json.loads(path.read_text()) if path.is_relative_to(MOMENTS_DIR) and path.is_file() else {}
+    if not path.is_relative_to(MOMENTS_DIR) or storage.local(path) is None:
+        return {}
+
+    return json.loads(path.read_text())
 
 
 def current_extras(moment_id: str) -> dict:
     """Return the extra files kept with a moment, by name."""
     folder = MOMENTS_DIR / moment_id
 
-    return {name: folder / name for name in manifest_of(moment_id).get("extras", []) if (folder / name).is_file()}
+    return {name: folder / name for name in manifest_of(moment_id).get("extras", [])
+            if storage.local(folder / name) is not None}
 
 
 def caption_cost(conn: psycopg.Connection) -> float:
@@ -488,11 +501,11 @@ def place_scene(place_id: int, conn: psycopg.Connection = Depends(connection)) -
         moments.append({
             "id": moment_id,
             "started_at": started_at,
-            "path": thin(load_poses(poses_file), 300) if poses_file.is_file() else [],
+            "path": thin(load_poses(poses_file), 300) if storage.local(poses_file) else [],
             "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
         })
 
-        if mesh_moment is None and (MOMENTS_DIR / moment_id / "mesh.obj").is_file():
+        if mesh_moment is None and storage.exists(MOMENTS_DIR / moment_id / "mesh.obj"):
             mesh_moment = moment_id
 
     return {"id": place_id, "mesh_moment": mesh_moment, "moments": moments}
@@ -504,7 +517,7 @@ def place_map_file(place_id: int, conn: psycopg.Connection = Depends(connection)
     path = db.place_map(conn, place_id)
     file = (DATA_DIR / path).resolve() if path else None
 
-    if file is None or not file.is_file():
+    if file is None or storage.local(file) is None:
         raise HTTPException(404, "no map for this place")
 
     return FileResponse(file, media_type="application/octet-stream")
@@ -546,7 +559,7 @@ def moment_path(moment_id: str) -> dict:
     """Return where the phone went during a moment: [seconds, x, y, z, yaw] in metres and radians."""
     poses_file = (MOMENTS_DIR / moment_id / "poses.json").resolve()
 
-    if not poses_file.is_relative_to(MOMENTS_DIR) or not poses_file.is_file():
+    if not poses_file.is_relative_to(MOMENTS_DIR) or storage.local(poses_file) is None:
         return {"points": []}
 
     return {"points": thin(load_poses(poses_file))}
@@ -557,7 +570,7 @@ def moment_mesh(moment_id: str) -> FileResponse:
     """Return the mesh the phone's lidar captured during a moment, as OBJ."""
     mesh = (MOMENTS_DIR / moment_id / "mesh.obj").resolve()
 
-    if not mesh.is_relative_to(MOMENTS_DIR) or not mesh.is_file():
+    if not mesh.is_relative_to(MOMENTS_DIR) or storage.local(mesh) is None:
         raise HTTPException(404, "no mesh for this moment")
 
     return FileResponse(mesh, media_type="model/obj")
@@ -622,7 +635,7 @@ def image(path: str) -> FileResponse:
     """Serve one frame's JPEG."""
     file = (MOMENTS_DIR / path).resolve()
 
-    if not file.is_relative_to(MOMENTS_DIR) or file.suffix != ".jpg" or not file.is_file():
+    if not file.is_relative_to(MOMENTS_DIR) or file.suffix != ".jpg" or storage.local(file) is None:
         raise HTTPException(404, "no such image")
 
     return FileResponse(file, media_type="image/jpeg")
@@ -878,7 +891,8 @@ def forget_person(person_id: int, tasks: BackgroundTasks, conn: psycopg.Connecti
 def face(face_id: int, conn: psycopg.Connection = Depends(connection)) -> Response:
     """Return one face, cropped from its photo with a little margin, as JPEG."""
     found = db.face_crop(conn, face_id)
-    image = cv2.imread(str(DATA_DIR / found[0])) if found else None
+    photo = storage.local(DATA_DIR / found[0]) if found else None
+    image = cv2.imread(str(photo)) if photo else None
 
     if image is None:
         raise HTTPException(404, "no such face")

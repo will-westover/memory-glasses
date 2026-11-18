@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from memory import db, llm
+from memory import db, llm, storage
 from memory.config import DATA_DIR, TRANSCRIBE_MODEL, clock
 
 UPLOAD_KBPS = 48
@@ -55,7 +55,7 @@ def transcribe_moment(conn, moment_id: str, redo: bool = False) -> dict | None:
     moment_dir = DATA_DIR / "moments" / moment_id
     audio_path = moment_dir / "audio.wav"
 
-    if not audio_path.exists() or (db.transcript(conn, moment_id) and not redo):
+    if storage.local(audio_path) is None or (db.transcript(conn, moment_id) and not redo):
         return None
 
     llm.require_price(TRANSCRIBE_MODEL)

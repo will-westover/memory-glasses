@@ -5,10 +5,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from memory import storage
 from memory.config import DATA_DIR
 
 GLASSES_DIR = DATA_DIR / "glasses"
 IDLE_SECONDS = 60
+LIST_SECONDS = 30
+REMOTE = {"at": float("-inf"), "files": {}}
 
 
 def save_frame(recording: str, jpeg: bytes, now: float | None = None) -> Path:
@@ -19,12 +22,15 @@ def save_frame(recording: str, jpeg: bytes, now: float | None = None) -> Path:
 
     folder.mkdir(parents=True, exist_ok=True)
 
-    if not started_file.exists():
+    if storage.local(started_file) is None:
         started_file.write_text(repr(now))
+        storage.save(started_file)
 
     offset = round((now - float(started_file.read_text())) * 1000)
     path = folder / f"{offset:09d}.jpg"
     path.write_bytes(jpeg)
+
+    storage.save(path)
 
     return path
 
@@ -39,6 +45,7 @@ def frame_durations(names: list[str]) -> list[float]:
 
 def build_video(folder: Path) -> Path:
     """Join a recording's frames into an MP4 that keeps their timing and the time it started."""
+    storage.fetch_folder(folder)
     frames = sorted(path.name for path in folder.glob("*.jpg"))
     started = datetime.fromtimestamp(float((folder / "started").read_text())).astimezone()
 
@@ -54,46 +61,71 @@ def build_video(folder: Path) -> Path:
         check=True,
     )
 
+    storage.save(video)
+
     return video
+
+
+def recordings() -> dict[str, dict]:
+    """Return each recording's photo count, newest photo time and whether it has become a video, locally and in R2."""
+    files = {}
+
+    if GLASSES_DIR.is_dir():
+        for path in GLASSES_DIR.glob("*/*"):
+            files[f"{path.parent.name}/{path.name}"] = path.stat().st_mtime
+
+    for name, modified in remote_files().items():
+        files.setdefault(name, modified)
+
+    return summarise(files)
+
+
+def remote_files() -> dict[str, float]:
+    """Return the glasses files in R2 by recording/file, listing the bucket at most every LIST_SECONDS."""
+    if not storage.enabled():
+        return {}
+
+    if time.monotonic() - REMOTE["at"] > LIST_SECONDS:
+        listed = storage.listing(storage.key(GLASSES_DIR) + "/")
+        REMOTE.update(at=time.monotonic(), files={name.split("/", 1)[1]: item["modified"]
+                                                  for name, item in listed.items()})
+
+    return REMOTE["files"]
+
+
+def summarise(files: dict[str, float]) -> dict[str, dict]:
+    """Group files named recording/file by recording: photos, when the last arrived, and whether there is a video."""
+    found = {}
+
+    for name, modified in files.items():
+        recording, file = name.split("/", 1)
+        entry = found.setdefault(recording, {"photos": 0, "last": None, "done": False})
+
+        if file == "video.mp4":
+            entry["done"] = True
+        elif file.endswith(".jpg"):
+            entry["photos"] += 1
+            entry["last"] = modified if entry["last"] is None else max(entry["last"], modified)
+
+    return {recording: entry for recording, entry in found.items() if entry["photos"]}
 
 
 def finished(now: float | None = None) -> list[Path]:
     """Return the recordings whose last frame arrived more than IDLE_SECONDS ago."""
     now = time.time() if now is None else now
 
-    if not GLASSES_DIR.is_dir():
-        return []
-
-    done = []
-
-    for folder in sorted(GLASSES_DIR.iterdir()):
-        frames = list(folder.glob("*.jpg"))
-
-        if (folder / "video.mp4").exists() or not frames:
-            continue
-
-        if now - max(frame.stat().st_mtime for frame in frames) > IDLE_SECONDS:
-            done.append(folder)
-
-    return done
-
+    return [GLASSES_DIR / recording for recording, entry in sorted(recordings().items())
+            if not entry["done"] and now - entry["last"] > IDLE_SECONDS]
 
 
 def latest(now: float | None = None) -> dict | None:
     """Return how many photos the newest unfinished recording has and how long ago the last one arrived."""
     now = time.time() if now is None else now
+    open_ones = [entry for entry in recordings().values() if not entry["done"]]
 
-    if not GLASSES_DIR.is_dir():
+    if not open_ones:
         return None
 
-    open_folders = [folder for folder in GLASSES_DIR.iterdir() if not (folder / "video.mp4").exists()]
-    frames_by_folder = {folder: list(folder.glob("*.jpg")) for folder in open_folders}
-    frames_by_folder = {folder: frames for folder, frames in frames_by_folder.items() if frames}
+    newest = max(open_ones, key=lambda entry: entry["last"])
 
-    if not frames_by_folder:
-        return None
-
-    last = {folder: max(frame.stat().st_mtime for frame in frames) for folder, frames in frames_by_folder.items()}
-    newest = max(last, key=last.get)
-
-    return {"photos": len(frames_by_folder[newest]), "seconds_since_last": round(now - last[newest], 1)}
+    return {"photos": newest["photos"], "seconds_since_last": round(now - newest["last"], 1)}

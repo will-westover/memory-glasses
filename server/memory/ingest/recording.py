@@ -11,7 +11,7 @@ from pathlib import Path
 
 import psycopg
 
-from memory import db
+from memory import db, storage
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
 from memory.ingest.poses import load_poses, nearest_pose
@@ -335,6 +335,8 @@ def ingest(
     moment_dir = data_dir / "moments" / moment_id
     build_dir = data_dir / "moments" / f"{moment_id}.building"
 
+    storage.fetch_folder(moment_dir)
+
     if moment_dir.exists() and not replace:
         raise IngestError(f"{moment_dir} already exists. Pass --replace to build it again.")
 
@@ -352,6 +354,7 @@ def ingest(
 
     shutil.rmtree(moment_dir, ignore_errors=True)
     build_dir.rename(moment_dir)
+    storage.mirror(moment_dir)
 
     return moment_dir
 
