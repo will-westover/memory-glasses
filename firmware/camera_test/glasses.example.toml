@@ -1,0 +1,4 @@
+wifi_name = "Your iPhone's hotspot name"
+wifi_password = "its password"
+server = "https://your-mac.your-tailnet.ts.net"
+token = "API_TOKEN from server/.env"

@@ -17,3 +17,6 @@ target/
 xcuserdata/
 .embuild/
 server/models/
+
+# Glasses Wi-Fi and server token
+glasses.toml

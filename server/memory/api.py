@@ -3,18 +3,22 @@
 import io
 import json
 import os
+import re
 import shutil
+import threading
+import time
 import wave
+from contextlib import asynccontextmanager
 from uuid import UUID
 from collections.abc import Iterator
 
 import psycopg
 import cv2
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from memory import db, pipeline, spaces
+from memory import db, glasses, pipeline, spaces
 from memory.agent import ask_agent, ask_plain
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
@@ -28,6 +32,9 @@ MOMENTS_DIR = (DATA_DIR / "moments").resolve()
 MAX_CLIP_SECONDS = 120
 UPLOADS_DIR = DATA_DIR / "uploads"
 EXTRA_FILES = {"poses": "poses.json", "mesh": "mesh.obj", "world_map": "world.map"}
+RECORDING_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
+MAX_FRAME_BYTES = 2_000_000
+CHECK_SECONDS = 15
 
 
 class Exchange(BaseModel):
@@ -79,7 +86,35 @@ def connection() -> Iterator[psycopg.Connection]:
         yield conn
 
 
-app = FastAPI(title="Memory Glasses", dependencies=[Depends(check_token)])
+def process_finished_glasses() -> None:
+    """Every few seconds, turn glasses recordings that have stopped into videos and process them."""
+    while True:
+        for folder in glasses.finished():
+            with db.connect() as conn:
+                rate = float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE))
+                upload_id = db.new_upload(conn, rate)
+                conn.commit()
+
+            try:
+                video = glasses.build_video(folder)
+            except Exception as error:
+                with db.connect() as conn:
+                    db.update_upload(conn, upload_id, status="failed", error=str(error))
+                (folder / "video.mp4").touch()
+                continue
+
+            run_upload(upload_id, video, {}, rate, None, "glasses")
+
+        time.sleep(CHECK_SECONDS)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    threading.Thread(target=process_finished_glasses, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Memory Glasses", dependencies=[Depends(check_token)], lifespan=lifespan)
 
 
 def image_url(image_path: str | None) -> str | None:
@@ -264,6 +299,22 @@ def upload_moment(
     tasks.add_task(run_upload, upload_id, video_path, extras, frames_per_minute, space_id, source)
 
     return {"id": upload_id, "status": "processing"}
+
+
+@app.post("/glasses/frames")
+async def glasses_frame(request: Request, x_recording: str = Header(...)) -> dict:
+    """Receive one JPEG frame from the glasses; frames stop arriving when a recording ends."""
+    if not RECORDING_ID.match(x_recording):
+        raise HTTPException(422, "X-Recording must be letters, digits and dashes")
+
+    jpeg = await request.body()
+
+    if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > MAX_FRAME_BYTES:
+        raise HTTPException(422, "the body must be one JPEG under 2 MB")
+
+    path = glasses.save_frame(x_recording, jpeg)
+
+    return {"recording": x_recording, "frame": path.name}
 
 
 @app.get("/uploads")

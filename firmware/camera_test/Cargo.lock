@@ -149,7 +149,9 @@ dependencies = [
  "embedded-graphics",
  "embuild",
  "esp-idf-svc",
+ "heapless",
  "log",
+ "serde_json",
  "ssd1306",
 ]
 
