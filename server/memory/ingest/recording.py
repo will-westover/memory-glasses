@@ -1,7 +1,6 @@
 """Turn a recorded video into a moment folder of kept frames, audio and a page to check them."""
 
 import argparse
-import html
 import json
 import shutil
 import subprocess
@@ -13,7 +12,7 @@ from pathlib import Path
 import psycopg
 
 from memory import db
-from memory.config import DATA_DIR, FRAMES_PER_MINUTE, clock
+from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
 from memory.ingest.poses import load_poses, nearest_pose
 from memory.places import parse_location
@@ -141,86 +140,6 @@ def extract_audio(video: Path, audio_path: Path) -> None:
     ])
 
 
-def caption_html(caption: dict | None) -> str:
-    """Return the HTML shown under a frame for its caption."""
-    if not caption:
-        return ""
-
-    parts = [f'<p>{html.escape(caption["summary"])}</p>']
-
-    for name, location in caption["objects"]:
-        parts.append(f'<p class="dim">{html.escape(f"{name}: {location}")}</p>')
-
-    for text, surface in caption["texts"]:
-        parts.append(f'<p class="dim">Text on {html.escape(surface)}: {html.escape(text)}</p>')
-
-    return "".join(parts)
-
-
-def write_page(
-    moment_dir: Path,
-    manifest: dict,
-    captions: dict[str, dict] | None = None,
-    transcript: list[tuple] | None = None,
-) -> None:
-    """Write index.html: the kept frames, with captions and the transcript where they exist."""
-    captions = captions or {}
-
-    cards = "\n".join(
-        f'<figure><img src="{html.escape(frame["file"])}" loading="lazy">'
-        f'<figcaption>{clock(frame["offset_seconds"])}'
-        f'{caption_html(captions.get(Path(frame["file"]).name))}</figcaption></figure>'
-        for frame in manifest["frames"]
-    )
-
-    audio = '<audio controls src="audio.wav"></audio>' if manifest["audio"] else "<p>No sound in this recording.</p>"
-
-    spoken = "\n".join(
-        f'<p><span class="dim">{clock(offset)} {html.escape(speaker or "?")}</span> {html.escape(text)}</p>'
-        for offset, speaker, text in transcript or []
-    )
-
-    page = f"""<!doctype html>
-<meta charset="utf-8">
-<title>Moment {html.escape(manifest["id"])}</title>
-<style>
-  body {{ font: 15px system-ui; margin: 24px; background: #111; color: #eee; }}
-  .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }}
-  figure {{ margin: 0; }}
-  img {{ width: 100%; border-radius: 6px; display: block; }}
-  figcaption {{ color: #aaa; padding-top: 4px; }}
-  figcaption p {{ margin: 4px 0 0; color: #eee; }}
-  figcaption p.dim {{ color: #999; font-size: 13px; }}
-  .spoken {{ max-width: 70ch; margin: 12px 0 24px; }}
-  .spoken p {{ margin: 4px 0; }}
-  .spoken .dim {{ color: #999; font-size: 13px; margin-right: 6px; }}
-</style>
-<h1>Moment {html.escape(manifest["id"])}</h1>
-<p>From {html.escape(manifest["video"])}, {clock(manifest["duration_seconds"])} long.
-Kept {manifest["frames_kept"]} of {manifest["frames_sampled"]} frames, sampled at
-{manifest["frames_per_minute"]:g} a minute. {manifest.get("frames_blurry", 0)} were too blurry and the rest
-looked the same as the frame before.</p>
-{audio}
-<div class="spoken">
-{spoken}
-</div>
-<div class="grid">
-{cards}
-</div>
-"""
-
-    (moment_dir / "index.html").write_text(page)
-
-
-def refresh_page(conn, moment_dir: Path) -> None:
-    """Rewrite a moment's index.html from the database."""
-    manifest = json.loads((moment_dir / "manifest.json").read_text())
-
-    captions = {Path(frame["image_path"]).name: frame for frame in db.captioned_frames(conn, manifest["id"])}
-
-    write_page(moment_dir, manifest, captions, db.transcript(conn, manifest["id"]))
-
-
 def keep_file(source: Path, target: Path) -> None:
     """Put a copy of a file at target, as a hard link when both are on the same disk."""
     try:
@@ -294,7 +213,6 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frame
     }
 
     (build_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    write_page(build_dir, manifest)
 
 
 def frame_offset(index: int, seconds_per_frame: float) -> float:
@@ -464,7 +382,6 @@ def print_report(moment_dir: Path) -> None:
     print(f"Kept {manifest['frames_kept']} of {manifest['frames_sampled']} frames"
           f" ({manifest['frames_blurry']} too blurry).")
     print(f"Sound: {'audio.wav' if manifest['audio'] else 'none'}")
-    print(f"Look at: {moment_dir / 'index.html'}")
 
 
 def save_to_database(moment_dir: Path) -> None:

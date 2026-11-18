@@ -1,11 +1,12 @@
 [package]
-name = "camera_test"
+name = "glasses"
 version = "0.1.0"
 edition = "2021"
 resolver = "2"
 
 [[bin]]
 name = "camera_test"
+path = "src/bin/camera_test.rs"
 harness = false
 
 [[bin]]

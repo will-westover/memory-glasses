@@ -1,14 +1,11 @@
 # Memory Glasses
 
 Camera glasses that record what the wearer sees and hears, and an agent that answers any question about it:
-what a sign said, who they talked to, what they were doing, where something is. CS class final project. The
-graded part is the LLM software: embeddings, structured output, tool calling, and a judge model.
+what a sign said, who they talked to, what they were doing, where something is. CS class final project.
 
 ## Goals
 
-- A question gets a correct answer with its sources, or an honest "I don't know".
-- Evals show how often it's right and what each answer costs.
-- Small enough to explain in a class report.
+- Create really robust and cool glasses / phone app that answers questions about your day
 
 ## Shape
 
@@ -23,7 +20,7 @@ stretch of a moment at one **place**, or on the move. Chats are stored as raw **
 
 Each part runs by itself and ends with something to look at. Parts 1 to 8 work from a recorded video.
 
-1. **Recording to moment** (done): a video becomes kept frames, audio and a page showing them.
+1. **Recording to moment** (done): a video becomes kept frames and audio.
 2. **Database** (done): moments and frames stored in Postgres.
 3. **Captions** (done): each frame gets a summary, objects with where each one is, and text seen.
 4. **Speech-to-text** (done): the audio becomes timed transcript lines.
@@ -38,7 +35,7 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 9. **iPhone app** (done): SwiftUI in `app/`, with Ask (chats saved on the server, with follow-ups), Timeline,
    Stats and Glasses screens. Tapping a source opens its frame: the photo, nearby frames, what was said, audio. Build and run
    it in the iOS Simulator with the server running on port 8000.
-10. **Glasses firmware** (photos work, audio next): `firmware/camera_test` builds `camera_test`, `display_test` and
+10. **Glasses firmware** (photos work, audio next): `firmware/glasses` builds `camera_test`, `display_test` and
     `glasses`. The glasses join the iPhone's hotspot and send a photo at the frames-per-minute setting to
     `POST /glasses/frames`; frames that stop for a minute become a moment. They run on the iPhone's USB-C power; the
     battery isn't working yet.
@@ -77,8 +74,7 @@ Everything else is your call.
   moment is filed at the place the phone's map recognised, else the place whose frames look most alike (average
   embedding at least 0.75); for now each moment is one segment. GPS points are kept over time in `location`. Each
   frame gets a **room** from one model call per moment that sees every frame, its position, the speech and the scan,
-  then a vote of frames within 1.5 m. `memory.rooms list`, `label <moment id>`, `rebuild`. Maps are in `data/spaces/`.
-  The API still calls places `spaces`, for the app.
+  then a vote of frames within 1.5 m. `memory.rooms list`, `label <moment id>`, `rebuild`. Maps are in `data/places/`.
 - A moment can be reprocessed at another frames per minute from its kept video; frames are named by their time,
   so ones that already exist keep their captions.
 - The agent has three tools: search, timeline and nearby (what was seen near a frame, in the same mapped place).
@@ -91,7 +87,7 @@ Everything else is your call.
 - Phone connection: the server runs with `API_TOKEN` and `--host 0.0.0.0`; Mac and phone both join Tailscale (campus
   Wi-Fi blocks devices reaching each other). `memory.pair` shows a QR code; the iPhone camera opens it in the app.
 - Glasses connection: Tailscale Funnel (`tailscale funnel --bg 8000`) gives the server a public HTTPS address, since the
-  board can't run Tailscale. Wi-Fi name, password, server and token go in the ignored `firmware/camera_test/glasses.toml`
+  board can't run Tailscale. Wi-Fi name, password, server and token go in the ignored `firmware/glasses/glasses.toml`
   (see `glasses.example.toml`). The board needs its antenna attached and a 2.4 GHz network: turn on the hotspot's
   Maximize Compatibility.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go

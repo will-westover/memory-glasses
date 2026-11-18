@@ -627,7 +627,7 @@ def located_moments(conn: psycopg.Connection) -> list[dict]:
 
     return [
         {"id": moment_id, "source": source, "started_at": started_at, "duration_seconds": duration, "lat": lat,
-         "lon": lon, "space": {"id": place_id, "name": name} if place_id else None}
+         "lon": lon, "place": {"id": place_id, "name": name} if place_id else None}
         for moment_id, source, started_at, duration, lat, lon, place_id, name in rows
     ]
 

@@ -195,7 +195,7 @@ struct MomentView: View {
                 if path.count > 1 {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            SectionTitle(detail.space?.name.map { "Where you went in \($0)" } ?? "Where you went")
+                            SectionTitle(detail.place?.name.map { "Where you went in \($0)" } ?? "Where you went")
                             Spacer()
 
                             if detail.hasMesh {

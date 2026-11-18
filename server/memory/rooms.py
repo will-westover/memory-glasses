@@ -21,7 +21,7 @@ from memory.ingest.facts import build_facts
 from memory.ingest.poses import load_poses
 from memory.places import distance_m
 
-MAPS_DIR = DATA_DIR / "spaces"
+MAPS_DIR = DATA_DIR / "places"
 MOMENTS_DIR = DATA_DIR / "moments"
 NEARBY_METRES = 150
 SAME_PLACE = 0.75
@@ -159,7 +159,7 @@ def keep_map(place_id: int, world_map: Path) -> str:
     MAPS_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(world_map, MAPS_DIR / f"{place_id}.map")
 
-    return f"spaces/{place_id}.map"
+    return f"places/{place_id}.map"
 
 
 def file_moment(conn, moment_id: str, moment_dir: Path, recognised: int | None) -> int | None:

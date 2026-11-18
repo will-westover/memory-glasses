@@ -70,15 +70,15 @@ struct MomentDetail: Decodable {
     let hasVideo: Bool
     let framesPerMinute: Double?
     let hasMesh: Bool
-    let space: SpaceTag?
+    let place: PlaceTag?
 }
 
-struct SpaceTag: Decodable, Hashable {
+struct PlaceTag: Decodable, Hashable {
     let id: Int
     let name: String?
 }
 
-struct Space: Decodable, Identifiable, Hashable {
+struct Place: Decodable, Identifiable, Hashable {
     let id: Int
     let name: String?
     let updatedAt: Date
@@ -96,7 +96,7 @@ struct RoomInfo: Decodable, Identifiable, Hashable {
     let frames: Int
 }
 
-struct SpaceDetail: Decodable {
+struct PlaceInfo: Decodable {
     let id: Int
     let name: String?
     let rooms: [RoomInfo]
@@ -328,16 +328,16 @@ struct WorldMoment: Decodable, Identifiable, Hashable {
     let durationSeconds: Double
     let lat: Double
     let lon: Double
-    let space: SpaceTag?
+    let place: PlaceTag?
     let cover: String?
 }
 
 struct World: Decodable {
-    let spaces: [WorldSpace]
+    let places: [WorldPlace]
     let moments: [WorldMoment]
 }
 
-struct WorldSpace: Decodable, Identifiable, Hashable {
+struct WorldPlace: Decodable, Identifiable, Hashable {
     let id: Int
     let name: String?
     let lat: Double
@@ -356,7 +356,7 @@ struct SceneMoment: Decodable, Identifiable {
     let frames: [Frame]
 }
 
-struct SpaceSceneData: Decodable {
+struct PlaceSceneData: Decodable {
     let id: Int
     let meshMoment: String?
     let moments: [SceneMoment]

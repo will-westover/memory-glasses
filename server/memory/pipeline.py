@@ -49,7 +49,6 @@ def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: d
 
         on_step(STEPS[5])
         facts.build_facts(conn, moment_id)
-        recording.refresh_page(conn, moment_dir)
 
     return moment_id
 

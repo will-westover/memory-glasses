@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 
 from memory import db, llm
 from memory.config import CAPTION_MODEL, DATA_DIR
-from memory.ingest.recording import refresh_page
 
 IMAGE_WIDTH = 1080
 PARALLEL_CALLS = 8
@@ -151,8 +150,6 @@ def main() -> int:
             db.clear_captions(conn, args.moment_id)
 
         totals = caption_moment(conn, args.moment_id, args.limit, args.model)
-
-        refresh_page(conn, moment_dir)
 
         remaining = len(db.frames_without_caption(conn, args.moment_id))
 

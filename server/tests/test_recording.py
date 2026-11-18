@@ -39,7 +39,6 @@ def test_two_scenes_become_two_frames(tmp_path):
     on_disk = sorted(path.name for path in (moment_dir / "frames").glob("*.jpg"))
     assert on_disk == [Path(frame["file"]).name for frame in manifest["frames"]]
     assert (moment_dir / "audio.wav").stat().st_size > 0
-    assert (moment_dir / "index.html").exists()
 
 
 def test_frames_are_named_by_their_time_so_a_new_rate_finds_the_same_names():

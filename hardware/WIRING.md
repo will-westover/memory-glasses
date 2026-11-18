@@ -61,7 +61,7 @@ Keep USB unplugged and the battery out until step 7.
 
 ## Test it
 
-Do this before running any wires through printed parts. From `firmware/camera_test/`, with USB in and the switch off:
+Do this before running any wires through printed parts. From `firmware/glasses/`, with USB in and the switch off:
 
 1. **Camera:** `espflash flash target/xtensa-esp32s3-espidf/release/camera_test` (build with `cargo build --release`),
    then `uv run --with pyserial python read_photo.py <port> photo.jpg` saves one photo.

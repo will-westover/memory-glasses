@@ -2,8 +2,8 @@ use std::thread;
 use std::time::Duration;
 
 use base64::Engine;
-use camera_test::start_camera;
-use camera_test::take_photo;
+use glasses::start_camera;
+use glasses::take_photo;
 
 const LINE_LENGTH: usize = 76;
 
@@ -23,7 +23,7 @@ fn main() {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    if let Err(error) = start_camera(camera_test::PHOTO) {
+    if let Err(error) = start_camera(glasses::PHOTO) {
         log::error!("camera failed to start: error {error}");
         return;
     }

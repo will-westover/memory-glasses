@@ -220,7 +220,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "has_video": has_video(moment_id),
         "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
         "has_mesh": (MOMENTS_DIR / moment_id / "mesh.obj").is_file(),
-        "space": db.moment_place(conn, moment_id),
+        "place": db.moment_place(conn, moment_id),
     }
 
 
@@ -289,7 +289,7 @@ def upload_moment(
     poses: UploadFile | None = File(None),
     mesh: UploadFile | None = File(None),
     world_map: UploadFile | None = File(None),
-    space_id: int | None = Form(None),
+    place_id: int | None = Form(None),
     source: str = Form("iphone", pattern="^(iphone|glasses|video)$"),
     conn: psycopg.Connection = Depends(connection),
 ) -> dict:
@@ -310,7 +310,7 @@ def upload_moment(
             extras[EXTRA_FILES[field]] = folder / EXTRA_FILES[field]
             save_upload(upload, extras[EXTRA_FILES[field]])
 
-    tasks.add_task(run_upload, job_id, video_path, extras, frames_per_minute, space_id, source)
+    tasks.add_task(run_upload, job_id, video_path, extras, frames_per_minute, place_id, source)
 
     return {"id": job_id, "status": "processing"}
 
@@ -419,8 +419,8 @@ def run_reprocess(job_id, moment_id: str, frames_per_minute: float) -> None:
             db.update_job(conn, job_id, status="failed", error=str(error))
 
 
-@app.get("/spaces")
-def list_spaces(lat: float | None = None, lon: float | None = None,
+@app.get("/places")
+def list_places(lat: float | None = None, lon: float | None = None,
                 conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List places near a location (or all of them), most recently updated first."""
     return rooms.nearby(conn, lat, lon)
@@ -432,29 +432,29 @@ def world(conn: psycopg.Connection = Depends(connection)) -> dict:
     covers = db.covers(conn)
 
     return {
-        "spaces": [place for place in db.places(conn) if place["lat"] is not None],
+        "places": [place for place in db.places(conn) if place["lat"] is not None],
         "moments": [{**moment, "cover": image_url(covers.get(moment["id"]))} for moment in db.located_moments(conn)],
     }
 
 
-@app.get("/spaces/{space_id}")
-def space(space_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
+@app.get("/places/{place_id}")
+def place_detail(place_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Return a place's rooms and the moments recorded there."""
-    found = next((place for place in db.places(conn) if place["id"] == space_id), None)
+    found = next((place for place in db.places(conn) if place["id"] == place_id), None)
 
     if found is None:
         raise HTTPException(404, "no such place")
 
-    return {**found, "rooms": db.place_rooms(conn, space_id), "moment_ids": db.place_moments(conn, space_id)}
+    return {**found, "rooms": db.place_rooms(conn, place_id), "moment_ids": db.place_moments(conn, place_id)}
 
 
-@app.get("/spaces/{space_id}/scene")
-def space_scene(space_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
+@app.get("/places/{place_id}/scene")
+def place_scene(place_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Return every moment that shares a place's map, with its path and frames, in the map's coordinates."""
     moments = []
     mesh_moment = None
 
-    for moment_id in db.place_moments(conn, space_id):
+    for moment_id in db.place_moments(conn, place_id):
         poses_file = MOMENTS_DIR / moment_id / "poses.json"
 
         if not (db.moment_place(conn, moment_id) or {}).get("in_map"):
@@ -471,13 +471,13 @@ def space_scene(space_id: int, conn: psycopg.Connection = Depends(connection)) -
         if mesh_moment is None and (MOMENTS_DIR / moment_id / "mesh.obj").is_file():
             mesh_moment = moment_id
 
-    return {"id": space_id, "mesh_moment": mesh_moment, "moments": moments}
+    return {"id": place_id, "mesh_moment": mesh_moment, "moments": moments}
 
 
-@app.get("/spaces/{space_id}/map")
-def space_map(space_id: int, conn: psycopg.Connection = Depends(connection)) -> FileResponse:
+@app.get("/places/{place_id}/map")
+def place_map_file(place_id: int, conn: psycopg.Connection = Depends(connection)) -> FileResponse:
     """Return a place's saved ARKit map, so the phone can recognise it."""
-    path = db.place_map(conn, space_id)
+    path = db.place_map(conn, place_id)
     file = (DATA_DIR / path).resolve() if path else None
 
     if file is None or not file.is_file():
@@ -486,15 +486,15 @@ def space_map(space_id: int, conn: psycopg.Connection = Depends(connection)) -> 
     return FileResponse(file, media_type="application/octet-stream")
 
 
-@app.put("/spaces/{space_id}")
-def rename_space(space_id: int, body: NewName, conn: psycopg.Connection = Depends(connection)) -> dict:
+@app.put("/places/{place_id}")
+def rename_place(place_id: int, body: NewName, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Name or rename a place."""
     name = body.name.strip() if body.name and body.name.strip() else None
 
-    if not db.name_place(conn, space_id, name, by_user=True):
+    if not db.name_place(conn, place_id, name, by_user=True):
         raise HTTPException(404, "no such place")
 
-    return {"id": space_id, "name": name}
+    return {"id": place_id, "name": name}
 
 
 @app.put("/rooms/{room_id}")

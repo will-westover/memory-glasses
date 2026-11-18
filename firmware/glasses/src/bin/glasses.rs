@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use camera_test::{start_camera, take_photo};
+use glasses::{start_camera, take_photo};
 use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -316,7 +316,7 @@ fn main() {
     let mut display = Display::new(start_screen(i2c));
 
     display.show(&["Starting"]);
-    if let Err(error) = start_camera(camera_test::STREAM) {
+    if let Err(error) = start_camera(glasses::STREAM) {
         println!("camera failed to start: error {error}");
         display.show(&["Cam err", &format!("{error}")]);
         loop {

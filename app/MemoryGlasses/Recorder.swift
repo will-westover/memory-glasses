@@ -42,8 +42,8 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     private var lastPose: TimeInterval = 0
     private var startedAt = Date()
     private var outputURL: URL?
-    private var candidate: Space?
-    private var recognised: Space?
+    private var candidate: Place?
+    private var recognised: Place?
     private var lookedSince = Date()
 
     override init() {
@@ -73,7 +73,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
 
         let configuration = freshConfiguration()
 
-        if let (known, map) = await nearestSpaceMap() {
+        if let (known, map) = await nearestPlaceMap() {
             candidate = known
             configuration.initialWorldMap = map
         } else {
@@ -95,15 +95,15 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         return configuration
     }
 
-    private func nearestSpaceMap() async -> (Space, ARWorldMap)? {
-        var path = "/spaces"
+    private func nearestPlaceMap() async -> (Place, ARWorldMap)? {
+        var path = "/places"
 
         if let location {
             path += "?lat=\(location.coordinate.latitude)&lon=\(location.coordinate.longitude)"
         }
 
-        guard let spaces: [Space] = try? await API.current.get(path), let latest = spaces.first(where: \.hasMap),
-              let data = try? await API.current.image("/spaces/\(latest.id)/map"),
+        guard let places: [Place] = try? await API.current.get(path), let latest = places.first(where: \.hasMap),
+              let data = try? await API.current.image("/places/\(latest.id)/map"),
               let map = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data)
         else { return nil }
 
@@ -366,7 +366,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         stage = .uploading(0)
 
         do {
-            try await API.current.uploadMoment(video: outputURL, framesPerMinute: framesPerMinute, spaceId: recognised?.id,
+            try await API.current.uploadMoment(video: outputURL, framesPerMinute: framesPerMinute, placeId: recognised?.id,
                                                extras: extras) { progress in
                 DispatchQueue.main.async { self.stage = .uploading(progress) }
             }

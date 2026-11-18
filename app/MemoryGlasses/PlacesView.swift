@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct PlacesView: View {
-    @State private var spaces: [Space] = []
+    @State private var places: [Place] = []
     @State private var loaded = false
     @State private var problem: String?
 
@@ -9,19 +9,19 @@ struct PlacesView: View {
         Group {
             if let problem {
                 ServerProblem(message: problem, retry: load)
-            } else if loaded && spaces.isEmpty {
+            } else if loaded && places.isEmpty {
                 ContentUnavailableView("No places yet", systemImage: "house",
                                        description: Text("Places and their rooms appear here after a recording is processed."))
             } else {
-                List(spaces) { space in
+                List(places) { place in
                     NavigationLink {
-                        PlaceDetail(space: space)
+                        PlaceDetail(place: place)
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(space.label)
+                            Text(place.label)
                                 .font(.body.weight(.medium))
 
-                            Text(space.rooms.isEmpty ? momentCount(space.moments) : space.rooms.joined(separator: ", "))
+                            Text(place.rooms.isEmpty ? momentCount(place.moments) : place.rooms.joined(separator: ", "))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
@@ -39,7 +39,7 @@ struct PlacesView: View {
 
     private func load() async {
         do {
-            spaces = try await API.current.get("/spaces")
+            places = try await API.current.get("/places")
             problem = nil
         } catch {
             problem = error.localizedDescription
@@ -54,10 +54,10 @@ func momentCount(_ count: Int) -> String {
 }
 
 struct PlaceDetail: View {
-    let space: Space
+    let place: Place
 
     @State private var name = ""
-    @State private var detail: SpaceDetail?
+    @State private var detail: PlaceInfo?
     @State private var status: String?
 
     var body: some View {
@@ -68,11 +68,11 @@ struct PlaceDetail: View {
                     .onSubmit { Task { await saveName() } }
 
                 Button("Save name") { Task { await saveName() } }
-                    .disabled(name.trimmingCharacters(in: .whitespaces) == (space.name ?? ""))
+                    .disabled(name.trimmingCharacters(in: .whitespaces) == (place.name ?? ""))
             } header: {
                 Text("Place")
             } footer: {
-                Text(status ?? "\(momentCount(space.moments)) recorded here.")
+                Text(status ?? "\(momentCount(place.moments)) recorded here.")
             }
 
             if let detail, !detail.rooms.isEmpty {
@@ -99,17 +99,17 @@ struct PlaceDetail: View {
                 }
             }
         }
-        .navigationTitle(space.label)
+        .navigationTitle(place.label)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { name = space.name ?? "" }
-        .task { detail = try? await API.current.get("/spaces/\(space.id)") }
+        .onAppear { name = place.name ?? "" }
+        .task { detail = try? await API.current.get("/places/\(place.id)") }
     }
 
     private func saveName() async {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
 
         do {
-            let _: SpaceTag = try await API.current.send("/spaces/\(space.id)", method: "PUT",
+            let _: PlaceTag = try await API.current.send("/places/\(place.id)", method: "PUT",
                                                         body: PersonName(name: trimmed.isEmpty ? nil : trimmed))
             status = "Saved."
         } catch {
@@ -146,7 +146,7 @@ struct RoomDetail: View {
 
     private func save() async {
         do {
-            let _: SpaceTag = try await API.current.send("/rooms/\(room.id)", method: "PUT",
+            let _: PlaceTag = try await API.current.send("/rooms/\(room.id)", method: "PUT",
                                                         body: PersonName(name: name.trimmingCharacters(in: .whitespaces)))
             status = "Saved."
         } catch {

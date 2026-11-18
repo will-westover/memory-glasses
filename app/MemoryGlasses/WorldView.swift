@@ -6,7 +6,7 @@ struct WorldView: View {
     @State private var world: World?
     @State private var problem: String?
     @State private var camera: MapCameraPosition = .automatic
-    @State private var openSpace: WorldSpace?
+    @State private var openPlace: WorldPlace?
     @State private var openMoment: MomentLink?
 
     var body: some View {
@@ -21,10 +21,10 @@ struct WorldView: View {
                 }
             }
             .navigationTitle("World")
-            .navigationDestination(for: WorldSpace.self) { SpaceSceneView(space: $0) }
+            .navigationDestination(for: WorldPlace.self) { PlaceSceneView(place: $0) }
             .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
             .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
-            .navigationDestination(item: $openSpace) { SpaceSceneView(space: $0) }
+            .navigationDestination(item: $openPlace) { PlaceSceneView(place: $0) }
             .navigationDestination(item: $openMoment) { MomentView(link: $0) }
             .task { await load() }
         }
@@ -45,13 +45,13 @@ struct WorldView: View {
                         .listRowSeparator(.hidden)
                 }
 
-                if !world.spaces.isEmpty {
+                if !world.places.isEmpty {
                     Section {
-                        ForEach(world.spaces) { space in
-                            if space.hasMap {
-                                NavigationLink(value: space) { spaceRow(space, icon: "cube.transparent") }
+                        ForEach(world.places) { place in
+                            if place.hasMap {
+                                NavigationLink(value: place) { spaceRow(place, icon: "cube.transparent") }
                             } else {
-                                spaceRow(space, icon: "house")
+                                spaceRow(place, icon: "house")
                             }
                         }
                     } header: {
@@ -60,7 +60,7 @@ struct WorldView: View {
                 }
 
                 Section {
-                    ForEach(world.moments.filter { $0.space == nil }) { moment in
+                    ForEach(world.moments.filter { $0.place == nil }) { moment in
                         NavigationLink(value: MomentLink(id: moment.id, startedAt: moment.startedAt)) {
                             Label(moment.startedAt.formatted(.dateTime.weekday(.abbreviated).month().day().hour().minute()),
                                   systemImage: sourceIcon(moment.source).symbol)
@@ -75,11 +75,11 @@ struct WorldView: View {
         }
     }
 
-    private func spaceRow(_ space: WorldSpace, icon: String) -> some View {
+    private func spaceRow(_ place: WorldPlace, icon: String) -> some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text(space.label).font(.body.weight(.medium))
-                Text(space.rooms.isEmpty ? momentCount(space.moments) : space.rooms.joined(separator: ", "))
+                Text(place.label).font(.body.weight(.medium))
+                Text(place.rooms.isEmpty ? momentCount(place.moments) : place.rooms.joined(separator: ", "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -91,9 +91,9 @@ struct WorldView: View {
 
     private func map(_ world: World) -> some View {
         Map(position: $camera) {
-            ForEach(world.spaces) { space in
-                Annotation(space.label, coordinate: CLLocationCoordinate2D(latitude: space.lat, longitude: space.lon)) {
-                    Button { if space.hasMap { openSpace = space } } label: {
+            ForEach(world.places) { place in
+                Annotation(place.label, coordinate: CLLocationCoordinate2D(latitude: place.lat, longitude: place.lon)) {
+                    Button { if place.hasMap { openPlace = place } } label: {
                         Image(systemName: "house.fill")
                             .font(.caption)
                             .foregroundStyle(Color(.systemBackground))
@@ -103,7 +103,7 @@ struct WorldView: View {
                 }
             }
 
-            ForEach(world.moments.filter { $0.space == nil }) { moment in
+            ForEach(world.moments.filter { $0.place == nil }) { moment in
                 Annotation("", coordinate: CLLocationCoordinate2D(latitude: moment.lat, longitude: moment.lon)) {
                     Button { openMoment = MomentLink(id: moment.id, startedAt: moment.startedAt) } label: {
                         FrameImage(path: moment.cover)
@@ -127,11 +127,11 @@ struct WorldView: View {
     }
 }
 
-struct SpaceSceneView: View {
+struct PlaceSceneView: View {
     static let colors: [UIColor] = [.systemOrange, .systemBlue, .systemGreen, .systemPink, .systemPurple, .systemTeal,
                                     .systemYellow, .systemIndigo]
 
-    let space: WorldSpace
+    let place: WorldPlace
 
     @State private var scene: SCNScene?
     @State private var rooms: [(name: String, frames: [(moment: SceneMoment, frame: Frame)])] = []
@@ -151,7 +151,7 @@ struct SpaceSceneView: View {
                     .frame(maxHeight: .infinity)
             }
         }
-        .navigationTitle(space.label)
+        .navigationTitle(place.label)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $opened) { FrameView(fact: $0) }
         .task { await load() }
@@ -187,7 +187,7 @@ struct SpaceSceneView: View {
 
     private func load() async {
         do {
-            let loaded: SpaceSceneData = try await API.current.get("/spaces/\(space.id)/scene")
+            let loaded: PlaceSceneData = try await API.current.get("/places/\(place.id)/scene")
             var mesh: URL?
 
             if let meshMoment = loaded.meshMoment {

@@ -8,7 +8,6 @@ from pathlib import Path
 
 from memory import db, llm
 from memory.config import DATA_DIR, TRANSCRIBE_MODEL, clock
-from memory.ingest.recording import refresh_page
 
 UPLOAD_KBPS = 48
 UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024
@@ -49,7 +48,6 @@ def print_report(lines: list[tuple], seconds: float, usage, usd: float, moment_d
 
     print(f"\n{len(lines)} lines from {len(speakers)} speakers in {seconds:.0f} s with {TRANSCRIBE_MODEL}.")
     print(f"Tokens: {usage.input_tokens:,} in, {usage.output_tokens:,} out. Cost: ${usd:.4f}.")
-    print(f"Look at: {moment_dir / 'index.html'}")
 
 
 def transcribe_moment(conn, moment_id: str, redo: bool = False) -> dict | None:
@@ -69,8 +67,6 @@ def transcribe_moment(conn, moment_id: str, redo: bool = False) -> dict | None:
     with conn.transaction():
         db.save_transcript(conn, moment_id, segments)
         usd = llm.log_cost(conn, "transcript", TRANSCRIBE_MODEL, usage)
-
-    refresh_page(conn, moment_dir)
 
     return {"lines": db.transcript(conn, moment_id), "seconds": seconds, "usage": usage, "usd": usd}
 
