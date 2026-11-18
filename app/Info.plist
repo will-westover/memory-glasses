@@ -24,6 +24,8 @@
 	<string>Connects to your Memory Glasses server on this network.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Notes where each moment was recorded.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Turns what you say into a question when you hold the microphone button.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Records what was said during a moment.</string>
 </dict>

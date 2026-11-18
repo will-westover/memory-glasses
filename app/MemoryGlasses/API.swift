@@ -60,6 +60,18 @@ struct Fact: Codable, Identifiable, Hashable {
     let offsetSeconds: Double
     let text: String
     let image: String?
+    var endSeconds: Double? = nil
+    var audioUrl: String? = nil
+    var speaker: String? = nil
+    var people: [PersonTag]? = nil
+    var place: SourcePlace? = nil
+}
+
+struct SourcePlace: Codable, Hashable {
+    let id: Int
+    let name: String?
+    let lat: Double?
+    let lon: Double?
 }
 
 struct MomentDetail: Decodable {
@@ -110,6 +122,22 @@ struct Answer: Codable {
     let modelCalls: Int
     let seconds: Double
     let usd: Double
+    var highlight: Int? = nil
+    var highlightReason: String? = nil
+    var layout: String? = nil
+    var followUps: [String]? = nil
+    var nextSteps: [NextStep]? = nil
+
+    var highlighted: Fact? {
+        guard let highlight, sources.indices.contains(highlight) else { return nil }
+
+        return sources[highlight]
+    }
+}
+
+struct NextStep: Codable, Hashable {
+    let label: String
+    let question: String
 }
 
 struct Counts: Decodable {

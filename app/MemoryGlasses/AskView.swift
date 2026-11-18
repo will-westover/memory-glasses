@@ -8,7 +8,7 @@ struct AskView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            let groups = store.groups(matching: search)
+            let groups = store.groups()
 
             chats(groups)
                 .searchable(text: $search, prompt: "Search chats")
@@ -24,8 +24,15 @@ struct AskView: View {
                 }
                 .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
                 .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
-                .task { await store.refresh() }
+                .task(id: search) {
+                    if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
+
+                    guard !Task.isCancelled else { return }
+
+                    await store.search(search)
+                }
         }
+        .environment(\.openSource) { path.append($0) }
     }
 
     @ViewBuilder
@@ -88,7 +95,7 @@ struct ConversationRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(conversation.title)
+            Text(conversation.label)
                 .font(.body.weight(.medium))
                 .lineLimit(1)
 

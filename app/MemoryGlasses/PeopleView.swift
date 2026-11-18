@@ -11,7 +11,7 @@ struct Person: Decodable, Identifiable, Hashable {
     var label: String { name ?? "Unnamed person" }
 }
 
-struct PersonTag: Decodable, Hashable {
+struct PersonTag: Codable, Hashable {
     let id: Int
     let name: String?
     let face: String?
