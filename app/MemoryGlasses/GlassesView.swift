@@ -2,7 +2,7 @@ import SwiftUI
 
 struct GlassesView: View {
     @AppStorage("serverAddress") private var address = API.defaultAddress
-    @AppStorage("serverToken") private var token = ""
+    @AppStorage("serverToken") private var token = API.defaultToken
 
     @State private var settings = GlassesSettings()
     @State private var glasses: GlassesStatus?

@@ -20,3 +20,6 @@ server/models/
 
 # Glasses Wi-Fi and server token
 glasses.toml
+
+# The app's built-in server token
+app/Local.xcconfig

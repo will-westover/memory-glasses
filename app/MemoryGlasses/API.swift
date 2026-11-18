@@ -215,18 +215,29 @@ enum APIError: LocalizedError {
 }
 
 struct API {
-    static let defaultAddress = "http://127.0.0.1:8000"
+    static let defaultAddress = built("ServerAddress") ?? "http://127.0.0.1:8000"
+    static let defaultToken = built("ServerToken") ?? ""
 
     let address: String
     let token: String
 
     static var current: API {
-        let defaults = UserDefaults.standard
-
         return API(
-            address: defaults.string(forKey: "serverAddress") ?? defaultAddress,
-            token: defaults.string(forKey: "serverToken") ?? ""
+            address: saved("serverAddress") ?? defaultAddress,
+            token: saved("serverToken") ?? defaultToken
         )
+    }
+
+    private static func built(_ key: String) -> String? {
+        let value = Bundle.main.object(forInfoDictionaryKey: key) as? String
+
+        return value?.isEmpty == false ? value : nil
+    }
+
+    private static func saved(_ key: String) -> String? {
+        let value = UserDefaults.standard.string(forKey: key)
+
+        return value?.isEmpty == false ? value : nil
     }
 
     static let decoder: JSONDecoder = {

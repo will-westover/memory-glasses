@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>ServerAddress</key>
+	<string>$(MEMORY_SERVER)</string>
+	<key>ServerToken</key>
+	<string>$(MEMORY_TOKEN)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
