@@ -31,7 +31,7 @@ const DISPLAY_ADDRESSES: [u8; 2] = [0x3C, 0x3D];
 const DEFAULT_FRAMES_PER_MINUTE: f64 = 30.0;
 const OUTLINE_FOR: Duration = Duration::from_secs(6);
 const UPLOAD_CHUNK: usize = 8192;
-const SOUND_ONLY_WAIT: Duration = Duration::from_secs(30);
+const PAUSED_CHECK: Duration = Duration::from_secs(3);
 
 type Screen = Ssd1306<I2CInterface<I2cDriver<'static>>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>;
 
@@ -65,6 +65,7 @@ impl Default for Look {
 
 struct Settings {
     frames_per_minute: f64,
+    recording: bool,
     look: Look,
 }
 
@@ -76,6 +77,7 @@ fn parse_settings(reply: &[u8]) -> Option<Settings> {
 
     Some(Settings {
         frames_per_minute: json["frames_per_minute"].as_f64()?,
+        recording: flag("recording", true),
         look: Look {
             scale: number("display_scale", base.scale),
             x: number("display_x", base.x),
@@ -300,6 +302,10 @@ fn timed_send(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8]
     result
 }
 
+fn new_recording_id() -> String {
+    unsafe { format!("{:08x}{:08x}", esp_idf_svc::sys::esp_random(), esp_idf_svc::sys::esp_random()) }
+}
+
 fn main() {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -309,16 +315,18 @@ fn main() {
     let i2c = I2cDriver::new(peripherals.i2c0, peripherals.pins.gpio5, peripherals.pins.gpio6, &config).unwrap();
     let mut display = Display::new(start_screen(i2c));
 
-    display.show(&["MEMORY GLASSES", "", "Starting camera"]);
+    display.show(&["Starting"]);
     if let Err(error) = start_camera(camera_test::STREAM) {
-        display.show(&["MEMORY GLASSES", "", "Camera failed", &format!("error {error}")]);
+        println!("camera failed to start: error {error}");
+        display.show(&["Cam err", &format!("{error}")]);
         loop {
             thread::sleep(Duration::from_secs(60));
         }
     }
 
     if WIFI_NAME.is_empty() || SERVER.is_empty() {
-        display.show(&["MEMORY GLASSES", "", "No Wi-Fi set", "Fill in glasses.toml"]);
+        println!("no Wi-Fi or server in glasses.toml");
+        display.show(&["No WiFi", "setup"]);
         loop {
             thread::sleep(Duration::from_secs(60));
         }
@@ -328,6 +336,7 @@ fn main() {
     let nvs = EspDefaultNvsPartition::take().ok();
     let mut wifi = BlockingWifi::wrap(EspWifi::new(peripherals.modem, sysloop.clone(), nvs).unwrap(), sysloop).unwrap();
 
+    display.show(&["WiFi..."]);
     while let Err(error) = join_wifi(&mut wifi) {
         let seen = wifi.scan().unwrap_or_default();
         let found = seen.iter().find(|network| network.ssid.as_str() == WIFI_NAME);
@@ -336,36 +345,38 @@ fn main() {
             println!("  sees \"{}\" signal {} channel {}", network.ssid, network.signal_strength, network.channel);
         }
 
-        let status = match found {
-            Some(network) => format!("seen, signal {}", network.signal_strength),
-            None => format!("not seen ({} others)", seen.len()),
-        };
-
-        display.show(&["MEMORY GLASSES", "", "Joining Wi-Fi", WIFI_NAME, &status, &format!("{error}")]);
+        println!("joining {WIFI_NAME} failed: {error}");
+        display.show(&["WiFi...", if found.is_some() { "seen" } else { "no hotspot" }]);
         thread::sleep(Duration::from_secs(3));
     }
 
     let mut server = None;
-    let recording = unsafe { format!("{:08x}{:08x}", esp_idf_svc::sys::esp_random(), esp_idf_svc::sys::esp_random()) };
-    let mut rate = DEFAULT_FRAMES_PER_MINUTE;
+    let mut recording_id = new_recording_id();
+    let (mut rate, mut recording) = (DEFAULT_FRAMES_PER_MINUTE, true);
 
     if let Some(settings) = fetch_settings(&mut server) {
-        rate = settings.frames_per_minute;
+        (rate, recording) = (settings.frames_per_minute, settings.recording);
         display.set_look(settings.look);
         display.outline_until = None;
     }
 
-    let (mut sent, mut failed) = (0u32, 0u32);
+    let mut sent = 0u32;
     let mut problem = String::new();
 
-    display.show(&["MEMORY GLASSES", "", "Connected", &format!("{rate:.0} pictures a minute")]);
+    display.show(&["Ready"]);
 
     loop {
-        if rate <= 0.0 {
-            display.show(&["MEMORY GLASSES", "", "Sound only", "No pictures"]);
-            thread::sleep(SOUND_ONLY_WAIT);
+        if !recording || rate <= 0.0 {
+            display.show(&[if recording { "No pics" } else { "Paused" }]);
+            thread::sleep(PAUSED_CHECK);
+
             if let Some(settings) = fetch_settings(&mut server) {
-                rate = settings.frames_per_minute;
+                if !recording && settings.recording {
+                    recording_id = new_recording_id();
+                    sent = 0;
+                }
+
+                (rate, recording) = (settings.frames_per_minute, settings.recording);
                 display.set_look(settings.look);
             }
 
@@ -375,38 +386,35 @@ fn main() {
         let started = Instant::now();
 
         match take_photo() {
-            Some((jpeg, _, _)) => match timed_send(&mut server, &recording, &jpeg) {
+            Some((jpeg, _, _)) => match timed_send(&mut server, &recording_id, &jpeg) {
                 Ok((200, settings)) => {
                     sent += 1;
+                    problem.clear();
 
                     if let Some(settings) = settings {
-                        rate = settings.frames_per_minute;
+                        (rate, recording) = (settings.frames_per_minute, settings.recording);
                         display.set_look(settings.look);
                     }
                 }
                 Ok((status, _)) => {
-                    failed += 1;
-                    problem = format!("server said {status}");
+                    println!("server said {status}");
+                    problem = format!("Err {status}");
                 }
                 Err(error) => {
-                    failed += 1;
-                    problem = format!("{error}");
+                    println!("upload failed: {error}");
+                    problem = "No net".to_string();
 
                     if !wifi.is_connected().unwrap_or(false) {
                         let _ = join_wifi(&mut wifi);
                     }
                 }
             },
-            None => {
-                failed += 1;
-                problem = "no picture".to_string();
-            }
+            None => problem = "No pic".to_string(),
         }
 
-        let failures = if failed > 0 { format!("Failed {failed}") } else { String::new() };
-        display.show(&[&format!("Sent {sent}"), &failures, &problem]);
+        display.show(&[&format!("Rec {sent}"), &problem]);
 
-        if rate <= 0.0 {
+        if !recording || rate <= 0.0 {
             continue;
         }
 

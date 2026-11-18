@@ -163,6 +163,14 @@ struct GlassesSettings: Codable, Equatable {
     var displayMirror = true
     var displayFlip = false
     var displayPattern = false
+    var recording = true
+}
+
+struct GlassesStatus: Decodable {
+    let sending: Bool
+    let photos: Int
+    let secondsSinceLast: Double?
+    let processing: Int
 }
 
 struct PastExchange: Encodable {

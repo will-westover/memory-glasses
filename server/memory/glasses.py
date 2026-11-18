@@ -77,3 +77,23 @@ def finished(now: float | None = None) -> list[Path]:
 
     return done
 
+
+
+def latest(now: float | None = None) -> dict | None:
+    """Return how many photos the newest unfinished recording has and how long ago the last one arrived."""
+    now = time.time() if now is None else now
+
+    if not GLASSES_DIR.is_dir():
+        return None
+
+    open_folders = [folder for folder in GLASSES_DIR.iterdir() if not (folder / "video.mp4").exists()]
+    frames_by_folder = {folder: list(folder.glob("*.jpg")) for folder in open_folders}
+    frames_by_folder = {folder: frames for folder, frames in frames_by_folder.items() if frames}
+
+    if not frames_by_folder:
+        return None
+
+    last = {folder: max(frame.stat().st_mtime for frame in frames) for folder, frames in frames_by_folder.items()}
+    newest = max(last, key=last.get)
+
+    return {"photos": len(frames_by_folder[newest]), "seconds_since_last": round(now - last[newest], 1)}

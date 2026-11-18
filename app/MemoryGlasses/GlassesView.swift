@@ -5,12 +5,27 @@ struct GlassesView: View {
     @AppStorage("serverToken") private var token = ""
 
     @State private var settings = GlassesSettings()
+    @State private var glasses: GlassesStatus?
     @State private var status = "Checking…"
     @State private var connected = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Toggle(isOn: $settings.recording) {
+                        Label("Recording", systemImage: settings.recording ? "record.circle.fill" : "pause.circle")
+                    }
+                    .disabled(!connected)
+
+                    Label(glassesLabel, systemImage: glasses?.sending == true ? "dot.radiowaves.up.forward" : "eyeglasses")
+                        .foregroundStyle(glasses?.sending == true ? .green : .secondary)
+                } header: {
+                    Text("Glasses")
+                } footer: {
+                    Text("While this is off, the glasses take no pictures. Turning it back on starts a new moment.")
+                }
+
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(rateLabel)
@@ -75,11 +90,34 @@ struct GlassesView: View {
             }
             .navigationTitle("Glasses")
             .task(id: address + token) { await load() }
+            .task(id: address + token) { await watchGlasses() }
+            .onChange(of: settings.recording) { Task { await save() } }
         }
     }
 
     private var rateLabel: String {
         settings.framesPerMinute == 0 ? "Sound only, no pictures" : "\(Int(settings.framesPerMinute)) pictures a minute"
+    }
+
+    private var glassesLabel: String {
+        guard let glasses else { return "Checking the glasses…" }
+
+        if glasses.sending {
+            return "Sending, \(glasses.photos) pictures in this moment"
+        }
+
+        if glasses.processing > 0 {
+            return glasses.processing == 1 ? "Processing a moment" : "Processing \(glasses.processing) moments"
+        }
+
+        return settings.recording ? "Not sending. Plug them into the iPhone with the hotspot on." : "Paused"
+    }
+
+    private func watchGlasses() async {
+        while !Task.isCancelled {
+            glasses = try? await API.current.get("/glasses/status")
+            try? await Task.sleep(for: .seconds(5))
+        }
     }
 
     private func load() async {

@@ -29,3 +29,15 @@ def test_only_recordings_quiet_for_a_while_are_finished(tmp_path, monkeypatch):
     os.utime(tmp_path / "new" / "000000000.jpg", (990, 990))
 
     assert [folder.name for folder in glasses.finished(now=1000.0)] == ["old"]
+
+
+def test_latest_reports_the_newest_unfinished_recording(tmp_path, monkeypatch):
+    monkeypatch.setattr(glasses, "GLASSES_DIR", tmp_path)
+    glasses.save_frame("done", b"\xff\xd8", now=0.0)
+    (tmp_path / "done" / "video.mp4").touch()
+    glasses.save_frame("live", b"\xff\xd8", now=0.0)
+    glasses.save_frame("live", b"\xff\xd8", now=1.0)
+    os.utime(tmp_path / "live" / "000000000.jpg", (90, 90))
+    os.utime(tmp_path / "live" / "000001000.jpg", (95, 95))
+
+    assert glasses.latest(now=100.0) == {"photos": 2, "seconds_since_last": 5.0}

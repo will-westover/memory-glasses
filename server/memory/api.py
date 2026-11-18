@@ -36,6 +36,7 @@ RECORDING_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 MAX_FRAME_BYTES = 2_000_000
 CHECK_SECONDS = 15
 MIN_DISPLAY_SCALE = 0.3
+SENDING_SECONDS = 20
 
 
 class Exchange(BaseModel):
@@ -79,6 +80,7 @@ class Settings(BaseModel):
     display_mirror: bool = True
     display_flip: bool = False
     display_pattern: bool = False
+    recording: bool = True
 
 
 class SettingsChange(BaseModel):
@@ -91,6 +93,7 @@ class SettingsChange(BaseModel):
     display_mirror: bool | None = None
     display_flip: bool | None = None
     display_pattern: bool | None = None
+    recording: bool | None = None
 
 
 def check_token(authorization: str | None = Header(default=None)) -> None:
@@ -350,6 +353,20 @@ async def glasses_frame(request: Request, x_recording: str = Header(...),
     path = glasses.save_frame(x_recording, jpeg)
 
     return {"recording": x_recording, "frame": path.name, **current_settings(conn).model_dump()}
+
+
+@app.get("/glasses/status")
+def glasses_status(conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Say whether the glasses are sending, how many photos the current recording has, and what is processing."""
+    latest = glasses.latest()
+    (processing,) = conn.execute("select count(*) from upload where status = 'processing'").fetchone()
+
+    return {
+        "sending": latest is not None and latest["seconds_since_last"] < SENDING_SECONDS,
+        "photos": latest["photos"] if latest else 0,
+        "seconds_since_last": latest["seconds_since_last"] if latest else None,
+        "processing": processing,
+    }
 
 
 @app.get("/uploads")
