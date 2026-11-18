@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": {
+    "": "Builds the Memory Glasses headset concept: soft strap, one rigid print, display boom 8 inches out."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}
