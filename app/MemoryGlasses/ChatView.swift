@@ -5,6 +5,7 @@ struct ChatView: View {
     let newChat: () -> Void
 
     @Environment(ConversationStore.self) private var store
+    @Environment(Router.self) private var router
 
     @State private var draft = ""
     @State private var suggestions: [String]?
@@ -122,6 +123,7 @@ struct ChatView: View {
         guard !question.isEmpty else { return }
 
         draft = ""
+        router.clear()
         Task { await store.ask(question, in: id) }
     }
 }
@@ -236,7 +238,7 @@ struct TurnView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
 
             if let answer = turn.answer {
-                AnswerView(answer: answer, latest: latest, ask: ask)
+                AnswerView(answer: answer, question: turn.question, latest: latest, ask: ask)
             } else if let problem = turn.problem {
                 Label(problem, systemImage: "exclamationmark.circle")
                     .font(.subheadline)
@@ -329,10 +331,15 @@ struct Thinking: View {
 
 struct AnswerView: View {
     let answer: Answer
+    var question = ""
     var latest = false
     var ask: (String) -> Void = { _ in }
 
-    @Environment(\.openSource) private var openSource
+    @Environment(Router.self) private var router
+
+    private var openSource: (Fact) -> Void {
+        { [router, answer, question] fact in router.open(fact, answer: answer, question: question) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -396,6 +403,7 @@ struct AnswerView: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
+        .environment(\.openSource, openSource)
     }
 
     private var others: [Fact] {
@@ -411,8 +419,10 @@ struct SourceChip: View {
     let fact: Fact
     var number: Int? = nil
 
+    @Environment(\.openSource) private var openSource
+
     var body: some View {
-        NavigationLink(value: fact) {
+        Button { openSource(fact) } label: {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .bottomLeading) {
                     if fact.image != nil {

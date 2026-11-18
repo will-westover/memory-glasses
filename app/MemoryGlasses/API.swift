@@ -412,3 +412,7 @@ final class TokenStaysHome: NSObject, URLSessionTaskDelegate {
         return next
     }
 }
+
+struct SearchHits: Decodable {
+    let results: [Fact]
+}

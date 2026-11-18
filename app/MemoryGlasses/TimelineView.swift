@@ -1,17 +1,26 @@
 import SwiftUI
 
 struct TimelineView: View {
+    @Environment(Router.self) private var router
+
     @State private var moments: [MomentSummary] = []
+    @State private var query = ""
+    @State private var results: [Fact] = []
+    @State private var searching = false
     @State private var uploads: [UploadStatus] = []
     @State private var problem: String?
     @State private var loaded = false
     @State private var recording = false
 
     var body: some View {
-        NavigationStack {
+        @Bindable var router = router
+
+        NavigationStack(path: $router.timelinePath) {
             Group {
                 if let problem {
                     ServerProblem(message: problem, retry: load)
+                } else if !query.isEmpty {
+                    SearchResults(query: query, results: results, moments: moments, searching: searching)
                 } else if loaded && moments.isEmpty {
                     ContentUnavailableView("Nothing recorded yet", systemImage: "clock")
                 } else {
@@ -26,7 +35,17 @@ struct TimelineView: View {
                             Section {
                                 ForEach(moments.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }) { moment in
                                     NavigationLink(value: MomentLink(id: moment.id, startedAt: moment.startedAt)) {
-                                        MomentRow(moment: moment)
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            MomentRow(moment: moment)
+
+                                            let marks = router.numbers(in: moment.id)
+
+                                            if !marks.isEmpty {
+                                                MarkerStrip(duration: moment.durationSeconds,
+                                                            marks: marks.map { ($0.number, $0.fact.offsetSeconds) })
+                                                    .padding(.leading, 70)
+                                            }
+                                        }
                                     }
                                 }
                             } header: {
@@ -41,7 +60,11 @@ struct TimelineView: View {
                     .refreshable { await load() }
                 }
             }
+            .safeAreaInset(edge: .top) {
+                if router.trail != nil { TrailPill() }
+            }
             .navigationTitle("Timeline")
+            .searchable(text: $query, prompt: "Search your memories")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { recording = true } label: { Image(systemName: "record.circle") }
@@ -53,6 +76,29 @@ struct TimelineView: View {
             .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
             .task { await load() }
             .task(id: active.map(\.id)) { await watchUploads() }
+            .task(id: query) { await search() }
+        }
+    }
+
+    private func search() async {
+        let text = query.trimmingCharacters(in: .whitespaces)
+
+        guard !text.isEmpty else {
+            results = []
+            return
+        }
+
+        try? await Task.sleep(for: .milliseconds(350))
+
+        guard !Task.isCancelled else { return }
+
+        searching = true
+        let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
+        let found: SearchHits? = try? await API.current.get("/search?q=\(encoded)&limit=40")
+
+        if !Task.isCancelled {
+            results = found?.results ?? []
+            searching = false
         }
     }
 
@@ -124,6 +170,8 @@ struct MomentRow: View {
 struct MomentView: View {
     let link: MomentLink
 
+    @Environment(Router.self) private var router
+
     @State private var detail: MomentDetail?
     @State private var problem: String?
     @State private var showTranscript = false
@@ -135,15 +183,22 @@ struct MomentView: View {
     var body: some View {
         Group {
             if let detail {
-                ScrollView {
-                    content(detail)
-                        .padding(.vertical, 12)
+                ScrollViewReader { scroller in
+                    ScrollView {
+                        content(detail)
+                            .padding(.vertical, 12)
+                    }
+                    .onChange(of: router.focusToken) { applyFocus(scroller) }
+                    .onAppear { applyFocus(scroller) }
                 }
             } else if let problem {
                 ServerProblem(message: problem, retry: load)
             } else {
                 ProgressView()
             }
+        }
+        .safeAreaInset(edge: .top) {
+            if router.trail != nil { TrailPill() }
         }
         .navigationTitle(link.startedAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
         .navigationBarTitleDisplayMode(.inline)
@@ -162,7 +217,12 @@ struct MomentView: View {
                 let frame = detail.frames[min(index, detail.frames.count - 1)]
 
                 VStack(alignment: .leading, spacing: 14) {
-                    PhotoPager(frames: detail.frames, index: $index)
+                    PhotoPager(frames: detail.frames, index: $index, markers: markers(detail), range: focusRange)
+
+                    if let focused, focused.isSpeech {
+                        QuoteCard(fact: focused)
+                            .padding(.horizontal, 20)
+                    }
 
                     VStack(alignment: .leading, spacing: 12) {
                         if detail.hasVideo {
@@ -178,9 +238,15 @@ struct MomentView: View {
 
                         PeopleChips(people: frame.people)
 
-                        Text(frame.summary)
+                        Text(Highlight.mark(frame.summary, marked(frame.offsetSeconds)))
                             .font(.subheadline)
                             .lineSpacing(2)
+
+                        ForEach(frame.texts, id: \.self) { seen in
+                            Text(Highlight.mark("Text on \(seen.surface): \(seen.text)", marked(frame.offsetSeconds)))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
 
                         NavigationLink(value: frameFact(frame)) {
                             Label("Listen and see details", systemImage: "waveform")
@@ -214,7 +280,16 @@ struct MomentView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionTitle("Summary")
 
-                        ForEach(detail.summaries) { Text($0.text).lineSpacing(3) }
+                        ForEach(detail.summaries) { summary in
+                            let current = focused?.id == summary.id
+
+                            Text(Highlight.mark(summary.text, current ? router.focusWords : []))
+                                .lineSpacing(3)
+                                .padding(current ? 10 : 0)
+                                .background(current ? Color.yellow.opacity(0.15) : .clear,
+                                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .id("summary-\(summary.id)")
+                        }
                     }
                 }
 
@@ -239,20 +314,92 @@ struct MomentView: View {
         DisclosureGroup(isExpanded: $showTranscript) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(lines, id: \.self) { line in
+                    let spoken = said(line)
+
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Text(clock(line.start))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.tertiary)
 
-                        Text(line.text)
+                        Text(Highlight.mark(line.text, spoken ? router.focusWords : []))
                             .font(.subheadline)
                     }
+                    .padding(spoken ? 8 : 0)
+                    .background(spoken ? Color.yellow.opacity(0.15) : .clear,
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .id("line-\(line.start)")
                 }
             }
             .padding(.top, 10)
         } label: {
             Label("Transcript", systemImage: "waveform")
                 .font(.subheadline.weight(.medium))
+        }
+    }
+
+    private var focused: Fact? {
+        guard let fact = router.focus, fact.momentId == link.id else { return nil }
+
+        return fact
+    }
+
+    private var focusRange: ClosedRange<Double>? {
+        guard let focused, focused.kind == "summary" || focused.isSpeech else { return nil }
+
+        let end = focused.endSeconds ?? focused.offsetSeconds + (focused.kind == "summary" ? 60 : 8)
+
+        return focused.offsetSeconds...max(end, focused.offsetSeconds)
+    }
+
+    private func marked(_ offset: Double) -> Set<String> {
+        guard let focused else { return [] }
+
+        if let focusRange, focusRange.contains(offset) { return router.focusWords }
+
+        return abs(focused.offsetSeconds - offset) < 1 ? router.focusWords : []
+    }
+
+    private func said(_ line: SpokenLine) -> Bool {
+        guard let focused, focused.isSpeech, let focusRange else { return false }
+
+        return line.end >= focusRange.lowerBound && line.start <= focusRange.upperBound
+    }
+
+    private func markers(_ detail: MomentDetail) -> [Int: Int] {
+        var result: [Int: Int] = [:]
+
+        for (number, fact) in router.numbers(in: link.id) {
+            if let position = nearest(fact.offsetSeconds, in: detail.frames), result[position] == nil {
+                result[position] = number
+            }
+        }
+
+        return result
+    }
+
+    private func nearest(_ offset: Double, in frames: [Frame]) -> Int? {
+        frames.indices.min { abs(frames[$0].offsetSeconds - offset) < abs(frames[$1].offsetSeconds - offset) }
+    }
+
+    private func applyFocus(_ scroller: ScrollViewProxy) {
+        guard let focused, let detail else { return }
+
+        if let position = nearest(focused.offsetSeconds, in: detail.frames) {
+            withAnimation(.snappy) { index = position }
+        }
+
+        if focused.isSpeech, let line = detail.transcript.first(where: said) {
+            showTranscript = true
+            scroll(scroller, to: "line-\(line.start)")
+        } else if focused.kind == "summary" {
+            scroll(scroller, to: "summary-\(focused.id)")
+        }
+    }
+
+    private func scroll(_ scroller: ScrollViewProxy, to target: String) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            withAnimation(.snappy) { scroller.scrollTo(target, anchor: .center) }
         }
     }
 
@@ -304,5 +451,171 @@ struct UploadRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+struct TrailPill: View {
+    @Environment(Router.self) private var router
+
+    var body: some View {
+        if let trail = router.trail {
+            HStack(spacing: 10) {
+                Button {
+                    trail.fromSearch ? router.clear() : router.backToChat()
+                } label: {
+                    Label(trail.fromSearch ? "Done" : "Back to chat",
+                          systemImage: trail.fromSearch ? "xmark" : "chevron.left")
+                        .font(.subheadline.weight(.semibold))
+                }
+
+                Spacer()
+
+                if trail.sources.count > 1 {
+                    Button { router.step(by: -1) } label: { Image(systemName: "chevron.left") }
+                        .disabled(trail.index == 0)
+                        .accessibilityLabel("Previous source")
+
+                    Text("\(trail.fromSearch ? "Result" : "Source") \(trail.index + 1) of \(trail.sources.count)")
+                        .font(.subheadline.monospacedDigit())
+
+                    Button { router.step(by: 1) } label: { Image(systemName: "chevron.right") }
+                        .disabled(trail.index == trail.sources.count - 1)
+                        .accessibilityLabel("Next source")
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+            .padding(.horizontal, 16)
+            .padding(.bottom, 4)
+        }
+    }
+}
+
+struct MarkerStrip: View {
+    let duration: Double
+    let marks: [(number: Int, offset: Double)]
+
+    var body: some View {
+        GeometryReader { space in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color(.tertiarySystemFill))
+                    .frame(height: 4)
+
+                ForEach(marks, id: \.number) { mark in
+                    Text("\(mark.number)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.black)
+                        .frame(width: 15, height: 15)
+                        .background(Color.yellow, in: Circle())
+                        .offset(x: position(mark.offset, width: space.size.width))
+                }
+            }
+            .frame(height: 16)
+        }
+        .frame(height: 16)
+    }
+
+    private func position(_ offset: Double, width: CGFloat) -> CGFloat {
+        let share = duration > 0 ? min(max(offset / duration, 0), 1) : 0
+
+        return share * (width - 15)
+    }
+}
+
+struct SearchResults: View {
+    let query: String
+    let results: [Fact]
+    let moments: [MomentSummary]
+    let searching: Bool
+
+    @Environment(Router.self) private var router
+
+    var body: some View {
+        if results.isEmpty {
+            if searching {
+                ProgressView()
+            } else {
+                ContentUnavailableView.search(text: query)
+            }
+        } else {
+            List {
+                ForEach(groups, id: \.momentId) { group in
+                    Section {
+                        ForEach(group.hits, id: \.fact.id) { hit in
+                            Button { router.openSearch(results, at: hit.position, query: query) } label: {
+                                HitRow(fact: hit.fact, marked: Highlight.shared(source: hit.fact.text, context: query))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } header: {
+                        header(group)
+                    }
+                }
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private struct HitGroup {
+        let momentId: String
+        let hits: [(position: Int, fact: Fact)]
+    }
+
+    private var groups: [HitGroup] {
+        var order: [String] = []
+        var hits: [String: [(position: Int, fact: Fact)]] = [:]
+
+        for (position, fact) in results.enumerated() {
+            if hits[fact.momentId] == nil { order.append(fact.momentId) }
+
+            hits[fact.momentId, default: []].append((position, fact))
+        }
+
+        return order.map { HitGroup(momentId: $0, hits: hits[$0] ?? []) }
+    }
+
+    private func header(_ group: HitGroup) -> some View {
+        let moment = moments.first { $0.id == group.momentId }
+        let start = moment?.startedAt ?? group.hits[0].fact.moment.startedAt
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(start.formatted(.dateTime.weekday(.wide).month().day().hour().minute()))
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+                .textCase(nil)
+
+            if let moment {
+                MarkerStrip(duration: moment.durationSeconds,
+                            marks: group.hits.map { ($0.position + 1, $0.fact.offsetSeconds) })
+            }
+        }
+    }
+}
+
+struct HitRow: View {
+    let fact: Fact
+    let marked: Set<String>
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            FrameImage(path: fact.image)
+                .frame(width: 64, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(fact.at.formatted(date: .omitted, time: .shortened))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                Text(Highlight.mark(fact.text, marked))
+                    .font(.subheadline)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }

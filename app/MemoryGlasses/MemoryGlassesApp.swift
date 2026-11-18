@@ -3,28 +3,35 @@ import SwiftUI
 @main
 struct MemoryGlassesApp: App {
     @State private var store = ConversationStore()
+    @State private var router = Router()
     @State private var pairing: Pairing?
 
     var body: some Scene {
         WindowGroup {
-            TabView {
+            TabView(selection: $router.tab) {
                 AskView()
                     .tabItem { Label("Ask", systemImage: "bubble.left.and.text.bubble.right") }
+                    .tag(AppTab.ask)
 
                 TimelineView()
                     .tabItem { Label("Timeline", systemImage: "clock") }
+                    .tag(AppTab.timeline)
 
                 WorldView()
                     .tabItem { Label("World", systemImage: "map") }
+                    .tag(AppTab.world)
 
                 StatsView()
                     .tabItem { Label("Stats", systemImage: "chart.bar") }
+                    .tag(AppTab.stats)
 
                 GlassesView()
                     .tabItem { Label("Glasses", systemImage: "eyeglasses") }
+                    .tag(AppTab.glasses)
             }
             .tint(.primary)
             .environment(store)
+            .environment(router)
             .onOpenURL { pairing = Pairing(url: $0) }
             .alert("Connect to this server?", isPresented: Binding(get: { pairing != nil }, set: { if !$0 { pairing = nil } }),
                    presenting: pairing) { found in

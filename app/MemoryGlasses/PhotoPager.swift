@@ -3,6 +3,8 @@ import SwiftUI
 struct PhotoPager: View {
     let frames: [Frame]
     @Binding var index: Int
+    var markers: [Int: Int] = [:]
+    var range: ClosedRange<Double>? = nil
 
     @State private var asking: FrameContext?
 
@@ -40,7 +42,7 @@ struct PhotoPager: View {
             }
             .padding(.horizontal, 20)
 
-            Filmstrip(frames: frames, index: $index)
+            Filmstrip(frames: frames, index: $index, markers: markers, range: range)
         }
         .sheet(item: $asking) { FrameChat(context: $0) }
     }
@@ -66,6 +68,8 @@ struct PhotoPager: View {
 struct Filmstrip: View {
     let frames: [Frame]
     @Binding var index: Int
+    var markers: [Int: Int] = [:]
+    var range: ClosedRange<Double>? = nil
 
     var body: some View {
         ScrollViewReader { strip in
@@ -77,20 +81,37 @@ struct Filmstrip: View {
                             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                             .overlay {
                                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(Color.primary, lineWidth: position == index ? 2.5 : 0)
+                                    .stroke(inRange(position) ? Color.yellow : Color.primary,
+                                            lineWidth: position == index ? 2.5 : inRange(position) ? 2 : 0)
                             }
-                            .opacity(position == index ? 1 : 0.55)
+                            .overlay(alignment: .topLeading) {
+                                if let number = markers[position] {
+                                    Text("\(number)")
+                                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                        .foregroundStyle(.black)
+                                        .frame(width: 16, height: 16)
+                                        .background(Color.yellow, in: Circle())
+                                        .offset(x: -3, y: -3)
+                                }
+                            }
+                            .opacity(position == index || inRange(position) || markers[position] != nil ? 1 : 0.55)
                             .onTapGesture { withAnimation(.snappy) { index = position } }
                             .id(position)
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 2)
+                .padding(.vertical, 5)
             }
-            .frame(height: 46)
+            .frame(height: 52)
             .onAppear { strip.scrollTo(index, anchor: .center) }
             .onChange(of: index) { withAnimation(.snappy) { strip.scrollTo(index, anchor: .center) } }
         }
+    }
+
+    private func inRange(_ position: Int) -> Bool {
+        guard let range else { return false }
+
+        return range.contains(frames[position].offsetSeconds)
     }
 }
 
@@ -104,6 +125,7 @@ struct FrameChat: View {
     let context: FrameContext
 
     @Environment(ConversationStore.self) private var store
+    @Environment(Router.self) private var router
     @Environment(\.dismiss) private var dismiss
 
     @State private var path = NavigationPath()
@@ -126,10 +148,9 @@ struct FrameChat: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
-            .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
         }
-        .environment(\.openSource) { path.append($0) }
+        .environment(\.openSource) { [router] in router.open($0) }
+        .onChange(of: router.focusToken) { dismiss() }
         .task { if chat == nil { await begin() } }
     }
 

@@ -3,17 +3,6 @@ import MapKit
 import Speech
 import SwiftUI
 
-private struct OpenSourceKey: EnvironmentKey {
-    static let defaultValue: (Fact) -> Void = { _ in }
-}
-
-extension EnvironmentValues {
-    var openSource: (Fact) -> Void {
-        get { self[OpenSourceKey.self] }
-        set { self[OpenSourceKey.self] = newValue }
-    }
-}
-
 struct CitedText: View {
     let text: String
     let sources: [Fact]
@@ -65,8 +54,10 @@ struct HighlightCard: View {
     let fact: Fact
     let reason: String?
 
+    @Environment(\.openSource) private var openSource
+
     var body: some View {
-        NavigationLink(value: fact) {
+        Button { openSource(fact) } label: {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .bottomLeading) {
                     if fact.image != nil {
@@ -259,11 +250,13 @@ struct PlaceCard: View {
 struct TimelineStrip: View {
     let sources: [Fact]
 
+    @Environment(\.openSource) private var openSource
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 0) {
                 ForEach(Array(sources.enumerated()), id: \.element.id) { position, fact in
-                    NavigationLink(value: fact) {
+                    Button { openSource(fact) } label: {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 6) {
                                 Circle()

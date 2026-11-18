@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AskView: View {
     @Environment(ConversationStore.self) private var store
+    @Environment(Router.self) private var router
 
     @State private var path = NavigationPath()
     @State private var search = ""
@@ -22,8 +23,6 @@ struct AskView: View {
                 .navigationDestination(for: UUID.self) { id in
                     ChatView(id: id, newChat: newChat)
                 }
-                .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
-                .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
                 .task(id: search) {
                     if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
 
@@ -32,7 +31,7 @@ struct AskView: View {
                     await store.search(search)
                 }
         }
-        .environment(\.openSource) { path.append($0) }
+        .environment(\.openSource) { [router] in router.open($0) }
     }
 
     @ViewBuilder
