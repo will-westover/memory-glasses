@@ -160,7 +160,7 @@ struct GlassesSettings: Codable, Equatable {
     var displayY = 0.0
     var displayBrightness = 1.0
     var displayLargeText = false
-    var displayMirror = true
+    var displayMirror = false
     var displayFlip = false
     var displayPattern = false
     var recording = true

@@ -77,7 +77,7 @@ class Settings(BaseModel):
     display_y: float = Field(0.0, ge=-1, le=1)
     display_brightness: float = Field(1.0, ge=0.05, le=1)
     display_large_text: bool = False
-    display_mirror: bool = True
+    display_mirror: bool = False
     display_flip: bool = False
     display_pattern: bool = False
     recording: bool = True

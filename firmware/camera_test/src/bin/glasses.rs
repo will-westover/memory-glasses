@@ -59,7 +59,7 @@ struct Look {
 
 impl Default for Look {
     fn default() -> Self {
-        Look { scale: 1.0, x: 0.0, y: 0.0, brightness: 1.0, large_text: false, mirror: true, flip: false, pattern: false }
+        Look { scale: 1.0, x: 0.0, y: 0.0, brightness: 1.0, large_text: false, mirror: false, flip: false, pattern: false }
     }
 }
 

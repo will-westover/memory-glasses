@@ -182,7 +182,7 @@ struct DisplaySetup: View {
             } header: {
                 Text("Which way round")
             } footer: {
-                Text("The cube reflects the display, so text needs mirroring to read the right way round.")
+                Text("Turn on mirroring if the display is seen in a mirror or beam-splitter cube, so text reads the right way round.")
             }
         }
         .navigationTitle("Display")
