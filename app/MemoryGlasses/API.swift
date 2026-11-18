@@ -9,6 +9,7 @@ struct MomentSummary: Decodable, Identifiable, Hashable {
     let hasSound: Bool
     let place: String?
     let cover: String?
+    var title: String? = nil
 }
 
 struct SeenObject: Decodable, Hashable {
@@ -32,6 +33,7 @@ struct Frame: Decodable, Identifiable {
     let people: [PersonTag]
     let position: Position?
     let room: String?
+    var short: String? = nil
 }
 
 struct Position: Decodable, Hashable {
@@ -83,6 +85,25 @@ struct MomentDetail: Decodable {
     let framesPerMinute: Double?
     let hasMesh: Bool
     let place: PlaceTag?
+    var title: String? = nil
+    var overview: String? = nil
+    var chapters: [Chapter]? = nil
+}
+
+struct Chapter: Decodable, Identifiable, Hashable {
+    let id: Int
+    let start: Double
+    let end: Double
+    let title: String?
+    let text: String
+
+    var label: String {
+        if let title, !title.isEmpty { return title }
+
+        let words = text.split(separator: " ")
+
+        return words.prefix(6).joined(separator: " ") + (words.count > 6 ? "…" : "")
+    }
 }
 
 struct PlaceTag: Decodable, Hashable {

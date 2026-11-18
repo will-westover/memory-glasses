@@ -5,6 +5,7 @@ struct PhotoPager: View {
     @Binding var index: Int
     var markers: [Int: Int] = [:]
     var range: ClosedRange<Double>? = nil
+    var ticks: Set<Int> = []
 
     @State private var asking: FrameContext?
 
@@ -42,7 +43,7 @@ struct PhotoPager: View {
             }
             .padding(.horizontal, 20)
 
-            Filmstrip(frames: frames, index: $index, markers: markers, range: range)
+            Filmstrip(frames: frames, index: $index, markers: markers, range: range, ticks: ticks)
         }
         .sheet(item: $asking) { FrameChat(context: $0) }
     }
@@ -70,6 +71,7 @@ struct Filmstrip: View {
     @Binding var index: Int
     var markers: [Int: Int] = [:]
     var range: ClosedRange<Double>? = nil
+    var ticks: Set<Int> = []
 
     var body: some View {
         ScrollViewReader { strip in
@@ -95,6 +97,14 @@ struct Filmstrip: View {
                                 }
                             }
                             .opacity(position == index || inRange(position) || markers[position] != nil ? 1 : 0.55)
+                            .overlay(alignment: .leading) {
+                                if ticks.contains(position) && position > 0 {
+                                    Capsule()
+                                        .fill(Color.primary.opacity(0.7))
+                                        .frame(width: 2, height: 50)
+                                        .offset(x: -4)
+                                }
+                            }
                             .onTapGesture { withAnimation(.snappy) { index = position } }
                             .id(position)
                     }

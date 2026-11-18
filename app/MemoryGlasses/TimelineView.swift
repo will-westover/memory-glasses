@@ -143,8 +143,9 @@ struct MomentRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(moment.startedAt.formatted(date: .omitted, time: .shortened))
+                    Text(moment.title ?? moment.startedAt.formatted(date: .omitted, time: .shortened))
                         .font(.body.weight(.medium))
+                        .lineLimit(1)
 
                     Image(systemName: sourceIcon(moment.source).symbol)
                         .font(.footnote)
@@ -161,7 +162,8 @@ struct MomentRow: View {
     }
 
     private var details: String {
-        let parts = [moment.place, clock(moment.durationSeconds), "\(moment.frames) frames"]
+        let time = moment.title == nil ? nil : moment.startedAt.formatted(date: .omitted, time: .shortened)
+        let parts = [time, moment.place, clock(moment.durationSeconds), "\(moment.frames) frames"]
 
         return parts.compactMap { $0 }.joined(separator: " · ")
     }
@@ -175,6 +177,7 @@ struct MomentView: View {
     @State private var detail: MomentDetail?
     @State private var problem: String?
     @State private var showTranscript = false
+    @State private var showDetails = false
     @State private var index = 0
     @State private var playingFrom: Double?
     @State private var path: [[Double]] = []
@@ -212,48 +215,27 @@ struct MomentView: View {
     }
 
     private func content(_ detail: MomentDetail) -> some View {
-        VStack(alignment: .leading, spacing: 28) {
+        let chapters = chapters(of: detail)
+        let offset = currentOffset(detail)
+
+        return VStack(alignment: .leading, spacing: 28) {
+            header(detail, chapters: chapters)
+                .padding(.horizontal, 20)
+
             if !detail.frames.isEmpty {
                 let frame = detail.frames[min(index, detail.frames.count - 1)]
 
                 VStack(alignment: .leading, spacing: 14) {
-                    PhotoPager(frames: detail.frames, index: $index, markers: markers(detail), range: focusRange)
+                    PhotoPager(frames: detail.frames, index: $index, markers: markers(detail), range: focusRange,
+                               ticks: ticks(chapters, in: detail.frames))
 
                     if let focused, focused.isSpeech {
                         QuoteCard(fact: focused)
                             .padding(.horizontal, 20)
                     }
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        if detail.hasVideo {
-                            Button { playingFrom = frame.offsetSeconds } label: {
-                                Label("Play video from here", systemImage: "play.fill")
-                                    .font(.subheadline.weight(.medium))
-                            }
-                        }
-
-                        Text([clock(frame.offsetSeconds) + " in", frame.room].compactMap { $0 }.joined(separator: " · "))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-
-                        PeopleChips(people: frame.people)
-
-                        Text(Highlight.mark(frame.summary, marked(frame.offsetSeconds)))
-                            .font(.subheadline)
-                            .lineSpacing(2)
-
-                        ForEach(frame.texts, id: \.self) { seen in
-                            Text(Highlight.mark("Text on \(seen.surface): \(seen.text)", marked(frame.offsetSeconds)))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        NavigationLink(value: frameFact(frame)) {
-                            Label("Listen and see details", systemImage: "waveform")
-                                .font(.subheadline.weight(.medium))
-                        }
-                    }
-                    .padding(.horizontal, 20)
+                    thisPhoto(frame, hasVideo: detail.hasVideo)
+                        .padding(.horizontal, 20)
                 }
             }
 
@@ -276,25 +258,22 @@ struct MomentView: View {
                     }
                 }
 
-                if !detail.summaries.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionTitle("Summary")
+                if !chapters.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionTitle("Chapters")
 
-                        ForEach(detail.summaries) { summary in
-                            let current = focused?.id == summary.id
-
-                            Text(Highlight.mark(summary.text, current ? router.focusWords : []))
-                                .lineSpacing(3)
-                                .padding(current ? 10 : 0)
-                                .background(current ? Color.yellow.opacity(0.15) : .clear,
-                                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .id("summary-\(summary.id)")
+                        ForEach(chapters) { chapter in
+                            chapterRow(chapter, open: owner(offset, in: chapters)?.id == chapter.id || focused?.id == chapter.id,
+                                       lines: detail.transcript.filter { owner($0.start, in: chapters)?.id == chapter.id },
+                                       detail: detail)
                         }
                     }
                 }
 
-                if !detail.transcript.isEmpty {
-                    transcript(detail.transcript)
+                let outside = detail.transcript.filter { owner($0.start, in: chapters) == nil }
+
+                if !outside.isEmpty {
+                    transcript(outside, title: chapters.isEmpty ? "Transcript" : "Also said", hasVideo: detail.hasVideo)
                 }
 
                 if detail.hasVideo {
@@ -305,34 +284,206 @@ struct MomentView: View {
         }
     }
 
+    private func header(_ detail: MomentDetail, chapters: [Chapter]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(detail.title ?? link.startedAt.formatted(.dateTime.weekday(.wide).hour().minute()))
+                .font(.title3.weight(.semibold))
+
+            if let overview = detail.overview, !overview.isEmpty {
+                Text(overview)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+            }
+
+            Text([link.startedAt.formatted(date: .abbreviated, time: .shortened), clock(length(detail, chapters))]
+                .joined(separator: " · "))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func thisPhoto(_ frame: Frame, hasVideo: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("This photo")
+                    .font(.subheadline.weight(.semibold))
+
+                Text(clock(frame.offsetSeconds))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+
+                Spacer()
+
+                if hasVideo {
+                    Button { playingFrom = frame.offsetSeconds } label: {
+                        Label("Play from here", systemImage: "play.fill")
+                            .font(.subheadline.weight(.medium))
+                    }
+                }
+            }
+
+            PeopleChips(people: frame.people)
+
+            Text(Highlight.mark(frame.short ?? firstSentence(frame.summary), marked(frame.offsetSeconds)))
+                .font(.body)
+                .lineSpacing(2)
+
+            DisclosureGroup(isExpanded: $showDetails) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(Highlight.mark(frame.summary, marked(frame.offsetSeconds)))
+                        .font(.subheadline)
+                        .lineSpacing(2)
+
+                    ForEach(frame.objects, id: \.self) { object in
+                        Text("\(object.name): \(object.location)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(frame.texts, id: \.self) { seen in
+                        Text(Highlight.mark("Text on \(seen.surface): \(seen.text)", marked(frame.offsetSeconds)))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    NavigationLink(value: frameFact(frame)) {
+                        Label("Listen and see more", systemImage: "waveform")
+                            .font(.subheadline.weight(.medium))
+                    }
+                }
+                .padding(.top, 8)
+            } label: {
+                Text("Details")
+                    .font(.subheadline.weight(.medium))
+            }
+        }
+    }
+
+    private func chapterRow(_ chapter: Chapter, open: Bool, lines: [SpokenLine], detail: MomentDetail) -> some View {
+        let focusedHere = focused?.id == chapter.id
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Button { jump(to: chapter, in: detail.frames) } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("\(clock(chapter.start))–\(clock(chapter.end))")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 78, alignment: .leading)
+
+                    Text(chapter.label)
+                        .font(.subheadline.weight(open ? .semibold : .regular))
+                        .lineLimit(open ? 2 : 1)
+                        .multilineTextAlignment(.leading)
+
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if open {
+                Text(Highlight.mark(chapter.text, focusedHere ? router.focusWords : []))
+                    .font(.subheadline)
+                    .lineSpacing(3)
+
+                ForEach(lines, id: \.self) { line in
+                    spokenLine(line, hasVideo: detail.hasVideo)
+                }
+            }
+        }
+        .padding(12)
+        .background(open ? (focusedHere ? Color.yellow.opacity(0.18) : Color(.secondarySystemBackground)) : .clear,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .animation(.snappy, value: open)
+        .id("chapter-\(chapter.id)")
+    }
+
+    private func spokenLine(_ line: SpokenLine, hasVideo: Bool) -> some View {
+        let spoken = said(line)
+
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            if hasVideo {
+                Button { playingFrom = line.start } label: {
+                    Image(systemName: "play.circle")
+                        .font(.subheadline)
+                }
+                .accessibilityLabel("Play from \(clock(line.start))")
+            }
+
+            Text(clock(line.start))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
+
+            Text(Highlight.mark("\(line.speaker.map { "\($0): " } ?? "")\(line.text)", spoken ? router.focusWords : []))
+                .font(.subheadline)
+        }
+        .padding(spoken ? 8 : 0)
+        .background(spoken ? Color.yellow.opacity(0.18) : .clear,
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .id("line-\(line.start)")
+    }
+
+    private func chapters(of detail: MomentDetail) -> [Chapter] {
+        if let chapters = detail.chapters, !chapters.isEmpty { return chapters }
+
+        let summaries = detail.summaries.sorted { $0.offsetSeconds < $1.offsetSeconds }
+
+        return summaries.indices.map { position in
+            let summary = summaries[position]
+            let next = position + 1 < summaries.count ? summaries[position + 1].offsetSeconds : nil
+            let end = next ?? summary.endSeconds ?? summary.offsetSeconds + 60
+
+            return Chapter(id: summary.id, start: summary.offsetSeconds, end: end, title: nil, text: summary.text)
+        }
+    }
+
+    private func owner(_ offset: Double, in chapters: [Chapter]) -> Chapter? {
+        chapters.last { $0.start <= offset }
+    }
+
+    private func length(_ detail: MomentDetail, _ chapters: [Chapter]) -> Double {
+        max(detail.frames.last?.offsetSeconds ?? 0, detail.transcript.last?.end ?? 0, chapters.last?.end ?? 0)
+    }
+
+    private func currentOffset(_ detail: MomentDetail) -> Double {
+        if !detail.frames.isEmpty { return detail.frames[min(index, detail.frames.count - 1)].offsetSeconds }
+
+        return focused?.offsetSeconds ?? 0
+    }
+
+    private func ticks(_ chapters: [Chapter], in frames: [Frame]) -> Set<Int> {
+        Set(chapters.compactMap { chapter in frames.firstIndex { $0.offsetSeconds >= chapter.start } })
+    }
+
+    private func jump(to chapter: Chapter, in frames: [Frame]) {
+        guard let position = frames.firstIndex(where: { $0.offsetSeconds >= chapter.start })
+                ?? nearest(chapter.start, in: frames) else { return }
+
+        withAnimation(.snappy) { index = position }
+    }
+
+    private func firstSentence(_ text: String) -> String {
+        guard let end = text.firstIndex(where: { ".!?".contains($0) }) else { return text }
+
+        return String(text[...end])
+    }
+
     private func frameFact(_ frame: Frame) -> Fact {
         Fact(id: -frame.id, kind: "frame", at: frame.at, momentId: link.id, offsetSeconds: frame.offsetSeconds,
              text: frame.summary, image: frame.image)
     }
 
-    private func transcript(_ lines: [SpokenLine]) -> some View {
+    private func transcript(_ lines: [SpokenLine], title: String, hasVideo: Bool) -> some View {
         DisclosureGroup(isExpanded: $showTranscript) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(lines, id: \.self) { line in
-                    let spoken = said(line)
-
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(clock(line.start))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-
-                        Text(Highlight.mark(line.text, spoken ? router.focusWords : []))
-                            .font(.subheadline)
-                    }
-                    .padding(spoken ? 8 : 0)
-                    .background(spoken ? Color.yellow.opacity(0.15) : .clear,
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .id("line-\(line.start)")
+                    spokenLine(line, hasVideo: hasVideo)
                 }
             }
             .padding(.top, 10)
         } label: {
-            Label("Transcript", systemImage: "waveform")
+            Label(title, systemImage: "waveform")
                 .font(.subheadline.weight(.medium))
         }
     }
@@ -388,11 +539,16 @@ struct MomentView: View {
             withAnimation(.snappy) { index = position }
         }
 
+        let chapters = chapters(of: detail)
+
         if focused.isSpeech, let line = detail.transcript.first(where: said) {
-            showTranscript = true
+            if owner(line.start, in: chapters) == nil { showTranscript = true }
+
             scroll(scroller, to: "line-\(line.start)")
         } else if focused.kind == "summary" {
-            scroll(scroller, to: "summary-\(focused.id)")
+            if let chapter = chapters.first(where: { $0.id == focused.id }) ?? owner(focused.offsetSeconds, in: chapters) {
+                scroll(scroller, to: "chapter-\(chapter.id)")
+            }
         }
     }
 
