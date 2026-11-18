@@ -36,8 +36,10 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 9. **iPhone app** (done): SwiftUI in `app/`, with Ask (chats saved on the server, with follow-ups), Timeline,
    Stats and Glasses screens. Tapping a source opens its frame: the photo, nearby frames, what was said, audio. Build and run
    it in the iOS Simulator with the server running on port 8000.
-10. **Glasses firmware**: the glasses upload frames and audio. Start with a test that takes one photo, since
-    Rust has to call Espressif's C camera driver.
+10. **Glasses firmware** (photos work, audio next): `firmware/camera_test` builds `camera_test`, `display_test` and
+    `glasses`. The glasses join the iPhone's hotspot and send a photo at the frames-per-minute setting to
+    `POST /glasses/frames`; frames that stop for a minute become a moment. They run on the iPhone's USB-C power; the
+    battery isn't working yet.
 
 ## Constraints
 
@@ -84,6 +86,10 @@ Everything else is your call.
 - Model prices are in `server/prices.json`. A model with no price there is refused before any call.
 - Phone connection: the server runs with `API_TOKEN` and `--host 0.0.0.0`; Mac and phone both join Tailscale (campus
   Wi-Fi blocks devices reaching each other). `memory.pair` shows a QR code; the iPhone camera opens it in the app.
+- Glasses connection: Tailscale Funnel (`tailscale funnel --bg 8000`) gives the server a public HTTPS address, since the
+  board can't run Tailscale. Wi-Fi name, password, server and token go in the ignored `firmware/camera_test/glasses.toml`
+  (see `glasses.example.toml`). The board needs its antenna attached and a 2.4 GHz network: turn on the hotspot's
+  Maximize Compatibility.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
   in a new numbered file in `server/migrations/`.
 - Test clips, both in the ignored `data/samples/`: `nasa/crew-quarters-tour.webm` (public-domain NASA tour,

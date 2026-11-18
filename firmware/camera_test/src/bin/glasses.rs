@@ -29,6 +29,7 @@ const TOKEN: &str = env!("GLASSES_TOKEN");
 const DISPLAY_ADDRESSES: [u8; 2] = [0x3C, 0x3D];
 const DEFAULT_FRAMES_PER_MINUTE: f64 = 30.0;
 const SETTINGS_EVERY_FRAMES: u32 = 10;
+const UPLOAD_CHUNK: usize = 8192;
 const SOUND_ONLY_WAIT: Duration = Duration::from_secs(30);
 
 type Screen = Ssd1306<I2CInterface<I2cDriver<'static>>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>;
@@ -71,15 +72,34 @@ fn join_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> Result<(), EspError> 
     }
 
     wifi.connect()?;
-    wifi.wait_netif_up()
+    wifi.wait_netif_up()?;
+
+    esp_idf_svc::sys::esp!(unsafe { esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE) })
 }
 
-fn request(method: Method, path: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<(u16, Vec<u8>), EspError> {
-    let mut connection = EspHttpConnection::new(&HttpConfiguration {
-        crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
-        timeout: Some(Duration::from_secs(20)),
-        ..Default::default()
-    })?;
+fn request(open: &mut Option<EspHttpConnection>, method: Method, path: &str, headers: &[(&str, &str)], body: &[u8])
+           -> Result<(u16, Vec<u8>), EspError> {
+    let reply = exchange(open, method, path, headers, body);
+
+    if reply.is_err() {
+        *open = None;
+    }
+
+    reply
+}
+
+fn exchange(open: &mut Option<EspHttpConnection>, method: Method, path: &str, headers: &[(&str, &str)], body: &[u8])
+            -> Result<(u16, Vec<u8>), EspError> {
+    if open.is_none() {
+        *open = Some(EspHttpConnection::new(&HttpConfiguration {
+            crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+            timeout: Some(Duration::from_secs(20)),
+            buffer_size_tx: Some(UPLOAD_CHUNK),
+            ..Default::default()
+        })?);
+    }
+
+    let connection = open.as_mut().unwrap();
 
     let url = format!("{SERVER}{path}");
     let authorization = format!("Bearer {TOKEN}");
@@ -110,8 +130,8 @@ fn request(method: Method, path: &str, headers: &[(&str, &str)], body: &[u8]) ->
     Ok((status, reply))
 }
 
-fn frames_per_minute() -> Option<f64> {
-    let (status, reply) = request(Method::Get, "/settings", &[], &[]).ok()?;
+fn frames_per_minute(open: &mut Option<EspHttpConnection>) -> Option<f64> {
+    let (status, reply) = request(open, Method::Get, "/settings", &[], &[]).ok()?;
 
     if status != 200 {
         return None;
@@ -120,10 +140,20 @@ fn frames_per_minute() -> Option<f64> {
     serde_json::from_slice::<serde_json::Value>(&reply).ok()?["frames_per_minute"].as_f64()
 }
 
-fn send_frame(recording: &str, jpeg: &[u8]) -> Result<u16, EspError> {
+fn send_frame(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8]) -> Result<u16, EspError> {
     let headers = [("X-Recording", recording), ("Content-Type", "image/jpeg")];
 
-    request(Method::Post, "/glasses/frames", &headers, jpeg).map(|(status, _)| status)
+    request(open, Method::Post, "/glasses/frames", &headers, jpeg).map(|(status, _)| status)
+}
+
+fn timed_send(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8]) -> Result<u16, EspError> {
+    let started = Instant::now();
+    let fresh = open.is_none();
+    let result = send_frame(open, recording, jpeg);
+
+    println!("sent {} bytes in {} ms{}", jpeg.len(), started.elapsed().as_millis(), if fresh { " (new connection)" } else { "" });
+
+    result
 }
 
 fn main() {
@@ -136,7 +166,7 @@ fn main() {
     let mut screen = start_screen(i2c);
 
     show(&mut screen, &["MEMORY GLASSES", "", "Starting camera"]);
-    if let Err(error) = start_camera() {
+    if let Err(error) = start_camera(camera_test::STREAM) {
         show(&mut screen, &["MEMORY GLASSES", "", "Camera failed", &format!("error {error}")]);
         loop {
             thread::sleep(Duration::from_secs(60));
@@ -155,12 +185,25 @@ fn main() {
     let mut wifi = BlockingWifi::wrap(EspWifi::new(peripherals.modem, sysloop.clone(), nvs).unwrap(), sysloop).unwrap();
 
     while let Err(error) = join_wifi(&mut wifi) {
-        show(&mut screen, &["MEMORY GLASSES", "", "Joining Wi-Fi", WIFI_NAME, &format!("failed: {error}")]);
+        let seen = wifi.scan().unwrap_or_default();
+        let found = seen.iter().find(|network| network.ssid.as_str() == WIFI_NAME);
+
+        for network in &seen {
+            println!("  sees \"{}\" signal {} channel {}", network.ssid, network.signal_strength, network.channel);
+        }
+
+        let status = match found {
+            Some(network) => format!("seen, signal {}", network.signal_strength),
+            None => format!("not seen ({} others)", seen.len()),
+        };
+
+        show(&mut screen, &["MEMORY GLASSES", "", "Joining Wi-Fi", WIFI_NAME, &status, &format!("{error}")]);
         thread::sleep(Duration::from_secs(3));
     }
 
+    let mut server = None;
     let recording = unsafe { format!("{:08x}{:08x}", esp_idf_svc::sys::esp_random(), esp_idf_svc::sys::esp_random()) };
-    let mut rate = frames_per_minute().unwrap_or(DEFAULT_FRAMES_PER_MINUTE);
+    let mut rate = frames_per_minute(&mut server).unwrap_or(DEFAULT_FRAMES_PER_MINUTE);
     let (mut sent, mut failed) = (0u32, 0u32);
     let mut problem = String::new();
 
@@ -170,14 +213,14 @@ fn main() {
         if rate <= 0.0 {
             show(&mut screen, &["MEMORY GLASSES", "", "Sound only", "No pictures"]);
             thread::sleep(SOUND_ONLY_WAIT);
-            rate = frames_per_minute().unwrap_or(rate);
+            rate = frames_per_minute(&mut server).unwrap_or(rate);
             continue;
         }
 
         let started = Instant::now();
 
         match take_photo() {
-            Some((jpeg, _, _)) => match send_frame(&recording, &jpeg) {
+            Some((jpeg, _, _)) => match timed_send(&mut server, &recording, &jpeg) {
                 Ok(200) => sent += 1,
                 Ok(status) => {
                     failed += 1;
@@ -202,7 +245,7 @@ fn main() {
         show(&mut screen, &["MEMORY GLASSES", "", &format!("Sent {sent}"), &failures, &problem]);
 
         if (sent + failed) % SETTINGS_EVERY_FRAMES == 0 {
-            rate = frames_per_minute().unwrap_or(rate);
+            rate = frames_per_minute(&mut server).unwrap_or(rate);
         }
 
         let gap = Duration::from_secs_f64(60.0 / rate);
