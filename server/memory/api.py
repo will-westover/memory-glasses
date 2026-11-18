@@ -25,7 +25,7 @@ from memory import chat, db, glasses, pipeline, rooms, storage
 from memory.agent import answer_events, ask_agent, fact_record
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE, STRETCH_SECONDS
 from memory.evals import RUNS_DIR
-from memory.ingest.facts import build_facts
+from memory.ingest.facts import build_facts, first_sentence
 from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
@@ -204,6 +204,11 @@ def position_json(pose) -> dict | None:
     return dict(zip(("x", "y", "z", "yaw"), pose)) if pose else None
 
 
+def db_duration(conn: psycopg.Connection, moment_id: str) -> float:
+    """Return how long a moment lasts, in seconds."""
+    return float(conn.execute("select duration_seconds from moment where id = %s", (moment_id,)).fetchone()[0])
+
+
 def frame_json(frame: dict) -> dict:
     """Return a captioned frame in the shape the app reads."""
     return {
@@ -212,6 +217,7 @@ def frame_json(frame: dict) -> dict:
         "offset_seconds": frame["offset_seconds"],
         "image": image_url(frame["image_path"]),
         "summary": frame["summary"],
+        "short": first_sentence(frame["summary"]) if frame["summary"] else None,
         "objects": [{"name": name, "location": location} for name, location in frame["objects"]],
         "texts": [{"text": text, "surface": surface} for text, surface in frame["texts"]],
         "people": [
@@ -261,8 +267,9 @@ def moments(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
             "has_sound": has_sound,
             "place": place_for(lat, lon, places),
             "cover": image_url(covers.get(moment_id)),
+            "title": title,
         }
-        for moment_id, source, started_at, duration, frames, has_sound, lat, lon in db.list_moments(conn)
+        for moment_id, source, started_at, duration, frames, has_sound, lat, lon, title in db.list_moments(conn)
     ]
 
 
@@ -272,8 +279,17 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
     if not db.moment_info(conn, moment_id):
         raise HTTPException(404, "no such moment")
 
+    title, overview = db.moment_overview(conn, moment_id)
+    summaries = db.summaries(conn, moment_id)
+    titles = db.chapter_titles(conn, moment_id)
+    ends = [fact["offset_seconds"] for fact in summaries[1:]] + [db_duration(conn, moment_id)]
+
     return {
         "id": moment_id,
+        "title": title,
+        "overview": overview,
+        "chapters": [{"id": fact["id"], "start": fact["offset_seconds"], "end": end, "title": titles.get(fact["id"]),
+                      "text": fact["text"]} for fact, end in zip(summaries, ends)],
         "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
         "transcript": db.transcript_lines(conn, moment_id),
         "summaries": [fact_json(fact) for fact in db.summaries(conn, moment_id)],

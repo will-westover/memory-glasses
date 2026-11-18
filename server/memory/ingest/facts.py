@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from memory import db, llm
 from memory.config import STRETCH_SECONDS, SUMMARY_MODEL
+from memory.overview import write_overview
 from memory.places import place_for
 
 PASSAGE_WORDS = 60
@@ -223,6 +224,8 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
 
     with conn.transaction():
         db.replace_facts(conn, moment_id, facts, vectors)
+
+    write_overview(conn, moment_id)
 
     return count_kinds(facts)
 

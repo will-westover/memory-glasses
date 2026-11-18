@@ -145,7 +145,7 @@ def list_moments(conn: psycopg.Connection) -> list[tuple]:
     """Return every moment, newest first, with where it started if known."""
     return conn.execute(
         "select s.id, s.source, s.started_at, s.duration_seconds, count(f.id), s.audio_path is not null,"
-        "       l.lat, l.lon"
+        "       l.lat, l.lon, s.title"
         f" from moment s left join frame f on f.moment_id = s.id{FIRST_LOCATION}"
         " group by s.id, l.lat, l.lon order by s.started_at desc"
     ).fetchall()
@@ -375,6 +375,38 @@ def step_cost(conn: psycopg.Connection, step: str) -> float:
     (usd,) = conn.execute("select coalesce(sum(usd), 0) from model_call where step = %s", (step,)).fetchone()
 
     return float(usd)
+
+
+def save_overview(conn: psycopg.Connection, moment_id: str, title: str, overview: str, chapters: dict) -> None:
+    """Store a moment's title and overview, and the chapter title of each of its summaries."""
+    conn.execute("update moment set title = %s, overview = %s where id = %s", (title, overview, moment_id))
+
+    with conn.cursor() as cursor:
+        cursor.executemany("update fact set title = %s where id = %s", [(name, fact_id) for fact_id, name in chapters.items()])
+
+
+def moments_without_title(conn: psycopg.Connection) -> list[str]:
+    """Return the moments that have summaries but no title yet, oldest first."""
+    rows = conn.execute(
+        "select m.id from moment m where m.title is null"
+        " and exists (select 1 from fact f where f.moment_id = m.id and f.kind = 'summary') order by m.started_at"
+    )
+
+    return [moment_id for (moment_id,) in rows]
+
+
+def moment_overview(conn: psycopg.Connection, moment_id: str) -> tuple:
+    """Return (title, overview) for a moment."""
+    return conn.execute("select title, overview from moment where id = %s", (moment_id,)).fetchone() or (None, None)
+
+
+def chapter_titles(conn: psycopg.Connection, moment_id: str) -> dict[int, str]:
+    """Return the chapter title of each of a moment's summaries, by fact id."""
+    rows = conn.execute(
+        "select id, title from fact where moment_id = %s and kind = 'summary' and title is not null", (moment_id,)
+    )
+
+    return dict(rows.fetchall())
 
 
 def summaries(conn: psycopg.Connection, moment_id: str) -> list[dict]:
@@ -934,7 +966,7 @@ def jobs(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
 def print_moments(rows: list[tuple]) -> None:
     print(f"{'moment':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
 
-    for moment_id, source, _, duration, frames, has_sound, _, _ in rows:
+    for moment_id, source, _, duration, frames, has_sound, _, _, _ in rows:
         print(f"{moment_id:<21} {source:<10} {clock(duration):>7} {frames:>7}  {'yes' if has_sound else 'no'}")
 
     if not rows:

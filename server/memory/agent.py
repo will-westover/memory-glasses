@@ -149,7 +149,7 @@ def instructions(conn, notes: str) -> str:
     places = db.gps_places(conn)
     lines = []
 
-    for _, _, started_at, duration, _, _, lat, lon in db.list_moments(conn)[:RECENT_MOMENTS]:
+    for _, _, started_at, duration, _, _, lat, lon, _ in db.list_moments(conn)[:RECENT_MOMENTS]:
         place = place_for(lat, lon, places)
 
         start = started_at.astimezone()
