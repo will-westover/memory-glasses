@@ -63,7 +63,7 @@ gcloud run jobs add-iam-policy-binding "$JOB" --region "$REGION" --project "$PRO
 echo "Server"
 gcloud run deploy "$SERVICE" --image "$IMAGE" --region "$REGION" --project "$PROJECT" \
   --service-account "$IDENTITY" --allow-unauthenticated \
-  --cpu 1 --memory 1Gi --min-instances 0 --max-instances 2 --concurrency 20 --timeout 300 \
+  --cpu 1 --memory 1Gi --min-instances 0 --max-instances 4 --concurrency 20 --timeout 300 \
   --set-env-vars "${SETTINGS},WORKER_JOB=${JOB},WORKER_REGION=${REGION}" --set-secrets "$SECRET_FLAGS" >/dev/null
 
 URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format "value(status.url)")

@@ -27,7 +27,7 @@ def connect() -> psycopg.Connection:
 
 POOL = {}
 POOL_LOCK = threading.Lock()
-POOL_SIZE = 4
+POOL_SIZE = 10
 IDLE_SECONDS = 120
 
 

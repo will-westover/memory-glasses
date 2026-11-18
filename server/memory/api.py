@@ -2,6 +2,7 @@
 
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -26,7 +27,6 @@ from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.evals import RUNS_DIR
 from memory.ingest.facts import build_facts
 from memory.ingest.poses import load_poses, thin
-from memory.ingest.recording import kept_frames, planned_frames
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
 from memory.tasks import on_cloud_run, start as start_job
@@ -699,11 +699,12 @@ def reprocess_estimate(moment_id: str, frames_per_minute: float,
 
     check_higher(moment_id, frames_per_minute)
 
-    planned = planned_frames(path, frames_per_minute, kept_frames(MOMENTS_DIR / moment_id))
-    new = sum(1 for frame in planned if not frame["reused"])
+    manifest = manifest_of(moment_id)
+    slots = math.ceil(manifest.get("duration_seconds", 0) * frames_per_minute / 60)
+    kept = min(len(manifest.get("frames", [])), slots)
 
-    return {"frames": len(planned), "new_frames": new, "kept_captions": len(planned) - new,
-            "usd": round(new * caption_cost(conn), 4)}
+    return {"frames": slots, "new_frames": slots - kept, "kept_captions": kept,
+            "usd": round((slots - kept) * caption_cost(conn), 4)}
 
 
 @app.post("/moments/{moment_id}/reprocess")
