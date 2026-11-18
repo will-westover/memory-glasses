@@ -8,6 +8,7 @@ from pathlib import Path
 import psycopg
 from psycopg.types.json import Jsonb
 
+from memory.citations import renumber
 from memory.config import DATABASE_URL, SERVER_DIR, STRETCH_SECONDS, clock
 
 MIGRATIONS_DIR = SERVER_DIR / "migrations"
@@ -287,7 +288,7 @@ def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], v
 
 FACT_COLUMNS = (
     "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds, fact.text, frame.image_path,"
-    "       frame.x, frame.z, room.name"
+    "       frame.x, frame.z, room.name, fact.frame_id"
     "  from fact left join frame on frame.id = fact.frame_id"
     "  join moment on moment.id = fact.moment_id left join room on room.id = frame.room_id"
 )
@@ -296,8 +297,9 @@ FACT_COLUMNS = (
 def fact_rows(rows) -> list[dict]:
     return [
         {"id": fact_id, "kind": kind, "at": at, "moment_id": moment_id, "offset_seconds": float(offset),
-         "text": text, "image_path": image_path, "position": [x, z] if x is not None else None, "room": room}
-        for fact_id, kind, at, moment_id, offset, text, image_path, x, z, room in rows
+         "text": text, "image_path": image_path, "position": [x, z] if x is not None else None, "room": room,
+         "frame_id": frame_id}
+        for fact_id, kind, at, moment_id, offset, text, image_path, x, z, room, frame_id in rows
     ]
 
 
@@ -392,18 +394,21 @@ def save_setting(conn: psycopg.Connection, name: str, value) -> None:
     )
 
 
-def conversations(conn: psycopg.Connection) -> list[dict]:
-    """Return every conversation with its first question and latest answer, newest first."""
+def conversations(conn: psycopg.Connection, query: str | None = None) -> list[dict]:
+    """Return conversations newest first, with a title and the latest answer; only those matching `query` if given."""
     rows = conn.execute(
         "select c.id, c.updated_at,"
-        "       (select content->>'text' from message"
-        "         where conversation_id = c.id and role = 'user' order by created_at limit 1),"
+        "       coalesce(c.title, (select content->>'text' from message"
+        "         where conversation_id = c.id and role = 'user' order by created_at limit 1)),"
         "       (select coalesce(content->'answer'->>'answer', content->>'error') from message"
         "         where conversation_id = c.id and role = 'assistant' and (content ? 'answer' or content ? 'error')"
         "         order by created_at desc limit 1)"
         "  from conversation c"
         " where exists (select 1 from message where conversation_id = c.id and role = 'user')"
-        " order by c.updated_at desc"
+        "   and (%(query)s::text is null or c.title ilike %(like)s or exists (select 1 from message"
+        "         where conversation_id = c.id and role in ('user', 'assistant') and content::text ilike %(like)s))"
+        " order by c.updated_at desc",
+        {"query": query, "like": f"%{query}%" if query else None},
     )
 
     return [
@@ -412,9 +417,21 @@ def conversations(conn: psycopg.Connection) -> list[dict]:
     ]
 
 
+def set_title(conn: psycopg.Connection, conversation_id, title: str) -> None:
+    """Give a conversation its title."""
+    conn.execute("update conversation set title = %s where id = %s", (title, conversation_id))
+
+
+def conversation_title(conn: psycopg.Connection, conversation_id) -> str | None:
+    """Return a conversation's title, if it has one."""
+    row = conn.execute("select title from conversation where id = %s", (conversation_id,)).fetchone()
+
+    return row[0] if row else None
+
+
 def turn_from(question: dict, replies: list[dict]) -> dict:
     """Work out one question's answer, sources, problem, calls, time and cost from the messages that followed it."""
-    facts: dict = {}
+    facts: dict = {fact["id"]: fact for fact in question["content"].get("facts", [])}
     answer, answered_at, problem = None, None, None
 
     for message in replies:
@@ -427,21 +444,27 @@ def turn_from(question: dict, replies: list[dict]) -> dict:
         if "error" in content:
             problem = content["error"]
 
-    cited = [facts[fact_id] for fact_id in dict.fromkeys(answer["sources"]) if fact_id in facts] if answer else []
-    sources = [{**fact, "at": datetime.fromisoformat(fact["at"]), "offset_seconds": float(fact["offset_seconds"])}
-               for fact in cited]
+    text, kept = renumber(answer["answer"], answer["sources"], facts) if answer else (None, [])
+    sources = [{**facts[fact_id], "at": datetime.fromisoformat(facts[fact_id]["at"]),
+                "offset_seconds": float(facts[fact_id]["offset_seconds"])} for fact_id in kept]
+    highlight = answer.get("highlight") if answer else None
 
     return {
         "id": question["id"],
         "asked_at": question["created_at"],
         "question": question["content"].get("text", ""),
-        "answer": answer["answer"] if answer else None,
+        "answer": text,
         "found": answer["found"] if answer else None,
         "problem": problem if answer is None else None,
         "model_calls": sum(message["model_calls"] for message in replies),
         "seconds": (answered_at - question["created_at"]).total_seconds() if answered_at else None,
         "usd": sum(message["usd"] for message in replies),
         "sources": sources,
+        "highlight": kept.index(highlight) if highlight in kept else None,
+        "highlight_reason": answer.get("highlight_reason") if highlight in kept else None,
+        "layout": (answer or {}).get("layout") or "text",
+        "follow_ups": (answer or {}).get("follow_ups") or [],
+        "next_steps": (answer or {}).get("next_steps") or [] if answer and not answer["found"] else [],
     }
 
 
@@ -508,6 +531,57 @@ def save_messages(conn: psycopg.Connection, conversation_id, messages: list[dict
 def delete_conversation(conn: psycopg.Connection, conversation_id) -> bool:
     """Delete a conversation and everything in it. Return whether it existed."""
     return conn.execute("delete from conversation where id = %s", (conversation_id,)).rowcount > 0
+
+
+def frame_fact(conn: psycopg.Connection, frame_id: int) -> dict | None:
+    """Return the fact that describes a frame as a whole."""
+    found = fact_rows(conn.execute(f"{FACT_COLUMNS} where fact.frame_id = %s and fact.kind = 'frame' limit 1",
+                                   (frame_id,)))
+
+    return found[0] if found else None
+
+
+def source_details(conn: psycopg.Connection, facts: list[dict]) -> dict:
+    """Return, for each fact id, the people in its frame, its place, and for speech its speaker and end."""
+    ids = [fact["id"] for fact in facts]
+    rows = conn.execute(
+        "select f.id, f.frame_id, p.id, p.name, p.lat, p.lon,"
+        "       (select coalesce(json_agg(distinct jsonb_build_object('id', pe.id, 'name', pe.name)), '[]')"
+        "          from face fa join person pe on pe.id = fa.person_id where fa.frame_id = f.frame_id),"
+        "       (select a.speaker from audio_segment a where a.moment_id = f.moment_id"
+        "         and a.offset_seconds >= f.offset_seconds - 0.01 order by a.offset_seconds limit 1),"
+        "       (select max(a.offset_seconds + extract(epoch from a.end_at - a.start_at)) from audio_segment a"
+        "         where a.moment_id = f.moment_id and a.offset_seconds >= f.offset_seconds - 0.01"
+        "           and a.offset_seconds < coalesce((select min(n.offset_seconds) from fact n"
+        "                where n.moment_id = f.moment_id and n.kind = f.kind and n.offset_seconds > f.offset_seconds),"
+        "               'infinity'))"
+        "  from fact f"
+        "  left join segment s on s.moment_id = f.moment_id and f.at between s.start_at and s.end_at"
+        "  left join place p on p.id = s.place_id"
+        " where f.id = any(%s)",
+        (ids,),
+    )
+
+    return {
+        fact_id: {"people": people, "speaker": speaker, "end_seconds": float(end) if end is not None else None,
+                  "place": {"id": place_id, "name": name, "lat": lat, "lon": lon} if place_id else None}
+        for fact_id, _, place_id, name, lat, lon, people, speaker, end in rows
+    }
+
+
+def recent_facts(conn: psycopg.Connection, limit: int = 40) -> list[dict]:
+    """Return the newest summaries, speech, text and people facts, newest first."""
+    return fact_rows(conn.execute(
+        f"{FACT_COLUMNS} where fact.kind in ('summary', 'said', 'text', 'person') order by fact.at desc limit %s",
+        (limit,),
+    ))
+
+
+def latest_moment_id(conn: psycopg.Connection) -> str | None:
+    """Return the id of the newest moment."""
+    row = conn.execute("select id from moment order by started_at desc limit 1").fetchone()
+
+    return row[0] if row else None
 
 
 def frame_images(conn: psycopg.Connection, moment_id: str) -> list[tuple]:

@@ -31,7 +31,9 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 7. **Evals** (done): `memory.evals` asks every test question in both modes; a judge model grades each
    answer, and the run reports scores, whether the right fact was retrieved, and cost.
 8. **API** (done): `memory/api.py` (FastAPI) serves moments, a moment's timeline, frame images, ask,
-   stats and settings.
+   stats and settings. `POST /conversations/{id}/ask/stream` sends each step, the answer as it is written (with
+   [1] markers for its sources) and then the stored turn, as server-sent events. Chats get a title from a cheap
+   model; `/suggestions` writes questions from the newest records.
 9. **iPhone app** (done): SwiftUI in `app/`, with Ask (chats saved on the server, with follow-ups), Timeline,
    Stats and Glasses screens. Tapping a source opens its frame: the photo, nearby frames, what was said, audio. Build and run
    it in the iOS Simulator with the server running on port 8000.

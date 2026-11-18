@@ -7,9 +7,12 @@ import sys
 import time
 from datetime import datetime, timedelta
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from memory import db, llm
+from memory.citations import partial_string, renumber, shown_so_far
 from memory.config import AGENT_MODEL, clock
 from memory.places import place_for
 from memory.search import search
@@ -36,7 +39,16 @@ If the facts do not answer the question, set found to false, say the record does
 empty. Do not pad the answer with other things that were recorded.
 
 Keep the answer short and direct. If facts differ because something changed over time, say what the latest one
-shows and when. In sources, give the numbers of the facts the answer rests on.
+shows and when. After each claim, put the number of the fact that backs it in brackets, like [412], and list those
+numbers in sources in the order you first use them.
+
+The app shows the answer with its sources. In highlight, give the number of the one fact whose photo or words best
+show the answer, and say why in a few words in highlight_reason; leave both null if none stands out. Choose a layout
+for how the app presents the answer: photo when one picture shows it, quote when it is mainly what someone said,
+people when it is about who was there, place when it is about where, timeline when it is about a stretch of time or
+a sequence of events, and text otherwise. Write two or three short follow-up questions the wearer might ask next, in
+your own words. When found is false, give two or three next_steps: a short label for another way to look, such as a
+wider stretch of time or other words, each with the full question to ask. Leave next_steps empty when found is true.
 
 It is now {now}. Times without a UTC offset are read as this local time.
 Recordings:
@@ -112,10 +124,24 @@ TOOLS = [
 NEARBY_METRES = 1.5
 
 
+class NextStep(BaseModel):
+    label: str = Field(description="A few words, e.g. Search all of last week")
+    question: str = Field(description="The full question to ask instead")
+
+
 class Answer(BaseModel):
-    answer: str = Field(description="The answer, in a sentence or two of plain words")
+    answer: str = Field(description="The answer in a sentence or two of plain words, with [fact number] after each claim")
     found: bool = Field(description="True if the facts answer the question, false if they do not")
-    sources: list[int] = Field(description="Numbers of the facts the answer rests on")
+    sources: list[int] = Field(description="Numbers of the facts the answer rests on, in the order first used")
+    highlight: int | None = Field(description="Number of the fact that best shows the answer, or null")
+    highlight_reason: str | None = Field(description="Why that fact, in a few words, or null")
+    layout: Literal["photo", "quote", "people", "place", "timeline", "text"]
+    follow_ups: list[str] = Field(description="Two or three short questions the wearer might ask next")
+    next_steps: list[NextStep] = Field(description="Other ways to look when found is false; empty otherwise")
+
+
+NO_ANSWER = Answer(answer="The model gave no answer.", found=False, sources=[], highlight=None, highlight_reason=None,
+                   layout="text", follow_ups=[], next_steps=[])
 
 
 def instructions(conn, notes: str) -> str:
@@ -212,7 +238,8 @@ def run_tool(conn, name: str, arguments: dict, seen: dict) -> tuple[str, list[di
 def fact_record(fact: dict) -> dict:
     """Return a fact as JSON a stored message can keep."""
     return {"id": fact["id"], "kind": fact["kind"], "at": fact["at"].isoformat(), "moment_id": fact["moment_id"],
-            "offset_seconds": fact["offset_seconds"], "text": fact["text"], "image_path": fact["image_path"]}
+            "offset_seconds": fact["offset_seconds"], "text": fact["text"], "image_path": fact["image_path"],
+            "frame_id": fact.get("frame_id")}
 
 
 def now() -> datetime:
@@ -234,18 +261,46 @@ def conversation(history: list[tuple[str, str]], question: str) -> list[dict]:
     return messages + [{"role": "user", "content": question}]
 
 
-def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = (),
-              use_nearby: bool = True) -> dict:
-    """Answer a question by letting the model call the tools."""
+def when(text: str | None) -> str:
+    """Return a tool's time argument the way a person would say it."""
+    at = parse_time(text)
+
+    return f"{at:%a} {at:%-I:%M} {at:%p}".replace("AM", "am").replace("PM", "pm") if at else "?"
+
+
+def step_text(name: str, arguments: dict) -> str:
+    """Describe one tool call in plain words."""
+    if name == "search":
+        between = f" from {when(arguments['start'])} to {when(arguments['end'])}" if arguments.get("start") else ""
+
+        return f'Searching for "{arguments["query"]}"{between}'
+
+    if name == "timeline":
+        return f"Looking at what happened from {when(arguments.get('start'))} to {when(arguments.get('end'))}"
+
+    return "Looking at what was nearby"
+
+
+def step(kind: str, text: str, facts: list[dict] = ()) -> tuple[str, dict]:
+    """Return a step event with up to four of the photos its facts came from."""
+    images = list(dict.fromkeys(fact["image_path"] for fact in facts if fact["image_path"]))[:4]
+
+    return "step", {"kind": kind, "text": text, "image_paths": images}
+
+
+def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = (),
+                  use_nearby: bool = True, frame: dict | None = None):
+    """Answer a question by letting the model call the tools, yielding each step and piece of the answer as it comes."""
     llm.require_price(model)
     started = time.monotonic()
     prompt = instructions(conn, AGENT_NOTES)
 
-    seen: dict = {}
+    seen: dict = {frame["id"]: frame} if frame else {}
     calls = []
     usd = 0.0
 
-    send = conversation(list(history), question)
+    asked = f"{question}\n\nThe question is about this frame:\n{fact_line(frame)}" if frame else question
+    send = conversation(list(history), asked)
     previous_id = None
     tools = TOOLS if use_nearby else [tool for tool in TOOLS if tool["name"] != "nearby"]
     messages = []
@@ -254,9 +309,28 @@ def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple
         request = {"model": model, "instructions": prompt, "input": send, "previous_response_id": previous_id,
                    "tools": tools, "tool_choice": "auto" if round_number < MAX_ROUNDS else "none"}
 
+        buffer, shown = "", ""
+
+        with llm.client().responses.stream(**request, text_format=Answer, reasoning={"effort": "low"}) as stream:
+            for event in stream:
+                if event.type != "response.output_text.delta":
+                    continue
+
+                if not buffer:
+                    yield step("answer", "Writing the answer")
+
+                buffer += event.delta
+                text = shown_so_far(partial_string(buffer, "answer"), seen)
+
+                if len(text) > len(shown) and text.startswith(shown):
+                    yield "delta", {"text": text[len(shown):]}
+                    shown = text
+
+            response = stream.get_final_response()
+
+        received = response.model_dump(mode="json")
+
         with llm.collect() as call_ids:
-            response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})
-            received = response.model_dump(mode="json")
             usd += llm.log_cost(conn, "agent", model, response.usage, request=request, response=received)
 
         messages.append({"role": "assistant", "at": now(), "content": {"output": received["output"]},
@@ -273,20 +347,30 @@ def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple
         for call in requests:
             arguments = json.loads(call.arguments)
             calls.append((call.name, arguments))
+            yield step(call.name, step_text(call.name, arguments))
 
             with llm.collect() as call_ids:
                 output, facts = run_tool(conn, call.name, arguments, seen)
+
+            yield step(call.name, step_text(call.name, arguments), facts)
 
             send.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
             messages.append({"role": "tool", "at": now(), "calls": call_ids, "content": {
                 "call_id": call.call_id, "name": call.name, "arguments": arguments, "output": output,
                 "facts": [fact_record(fact) for fact in facts]}})
 
-    parsed = response.output_parsed
-    messages[-1]["content"]["answer"] = (parsed or Answer(answer="The model gave no answer.", found=False,
-                                                          sources=[])).model_dump()
+    parsed = response.output_parsed or NO_ANSWER
+    messages[-1]["content"]["answer"] = parsed.model_dump()
 
-    return {**finish(parsed, seen, calls, usd, round_number + 1, started), "messages": messages}
+    yield "result", {**finish(parsed, seen, calls, usd, round_number + 1, started), "messages": messages}
+
+
+def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = (),
+              use_nearby: bool = True, frame: dict | None = None) -> dict:
+    """Answer a question by letting the model call the tools."""
+    for kind, payload in answer_events(conn, question, model, history, use_nearby, frame):
+        if kind == "result":
+            return payload
 
 
 def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
@@ -307,12 +391,18 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
 
 def finish(answer: Answer | None, seen: dict, calls: list, usd: float, model_calls: int, started: float) -> dict:
     """Bundle an answer with its checked sources and what it took to get."""
-    answer = answer or Answer(answer="The model gave no answer.", found=False, sources=[])
+    answer = answer or NO_ANSWER
+    text, kept = renumber(answer.answer, answer.sources, seen)
 
     return {
-        "answer": answer.answer,
+        "answer": text,
         "found": answer.found,
-        "sources": check_sources(answer.sources, seen),
+        "sources": [seen[fact_id] for fact_id in kept],
+        "highlight": kept.index(answer.highlight) if answer.highlight in kept else None,
+        "highlight_reason": answer.highlight_reason if answer.highlight in kept else None,
+        "layout": answer.layout,
+        "follow_ups": answer.follow_ups,
+        "next_steps": [step.model_dump() for step in answer.next_steps] if not answer.found else [],
         "shown": list(seen.values()),
         "calls": calls,
         "model_calls": model_calls,
