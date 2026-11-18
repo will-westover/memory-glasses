@@ -55,16 +55,24 @@ def small_jpeg(path: Path) -> bytes:
     return result.stdout
 
 
+def image_link(path: Path) -> str:
+    """Return how the model gets the image: a short-lived R2 link when R2 holds it, else the bytes inline."""
+    if storage.enabled() and storage.size(path) is not None:
+        return storage.download_url(path, "image/jpeg", seconds=3600)
+
+    return f"data:image/jpeg;base64,{base64.b64encode(small_jpeg(path)).decode()}"
+
+
 def caption_image(path: Path, model: str = CAPTION_MODEL):
     """Ask the model to describe one image. Return (Caption, usage)."""
-    encoded = base64.b64encode(small_jpeg(path)).decode()
+    image_url = image_link(path)
 
     response = llm.client().responses.parse(
         model=model,
         instructions=INSTRUCTIONS,
         input=[{
             "role": "user",
-            "content": [{"type": "input_image", "image_url": f"data:image/jpeg;base64,{encoded}"}],
+            "content": [{"type": "input_image", "image_url": image_url}],
         }],
         text_format=Caption,
         reasoning={"effort": "none"},

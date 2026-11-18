@@ -74,3 +74,19 @@ def test_a_kept_video_is_copied_inside_r2_so_mirroring_sends_nothing(r2, tmp_pat
 
     assert sent == []
     assert r2.Object("moments/m1/video.mov").get()["Body"].read() == b"video"
+
+
+def test_a_frame_the_glasses_put_in_r2_takes_its_place_in_the_recording(r2, tmp_path, monkeypatch):
+    monkeypatch.setattr(glasses, "GLASSES_DIR", tmp_path / "glasses")
+    monkeypatch.setattr(glasses, "ARRIVED", {})
+    r2.put_object(Key="glasses/rec1/" + "a" * 32 + ".pending", Body=b"\xff\xd8 first")
+    r2.put_object(Key="glasses/rec1/" + "b" * 32 + ".pending", Body=b"\xff\xd8 second")
+
+    first = glasses.arrived("rec1", "a" * 32, now=100.0)
+    second = glasses.arrived("rec1", "b" * 32, now=102.5)
+
+    names = sorted(item.key for item in r2.objects.all())
+    assert (first.name, second.name) == ("000000000.jpg", "000002500.jpg")
+    assert names == ["glasses/rec1/000000000.jpg", "glasses/rec1/000002500.jpg", "glasses/rec1/started"]
+    assert glasses.arrived("rec1", "c" * 32) is None
+    assert glasses.recordings()["rec1"]["photos"] == 2

@@ -67,6 +67,12 @@ struct Settings {
     frames_per_minute: f64,
     recording: bool,
     look: Look,
+    upload: Option<Upload>,
+}
+
+struct Upload {
+    url: String,
+    name: String,
 }
 
 fn parse_settings(reply: &[u8]) -> Option<Settings> {
@@ -87,6 +93,10 @@ fn parse_settings(reply: &[u8]) -> Option<Settings> {
             mirror: flag("display_mirror", base.mirror),
             flip: flag("display_flip", base.flip),
             pattern: flag("display_pattern", base.pattern),
+        },
+        upload: match (json["upload_url"].as_str(), json["upload_name"].as_str()) {
+            (Some(url), Some(name)) => Some(Upload { url: url.to_string(), name: name.to_string() }),
+            _ => None,
         },
     })
 }
@@ -221,9 +231,9 @@ fn join_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> Result<(), EspError> 
     esp_idf_svc::sys::esp!(unsafe { esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE) })
 }
 
-fn request(open: &mut Option<EspHttpConnection>, method: Method, path: &str, headers: &[(&str, &str)], body: &[u8])
-           -> Result<(u16, Vec<u8>), EspError> {
-    let reply = exchange(open, method, path, headers, body);
+fn request(open: &mut Option<EspHttpConnection>, method: Method, url: &str, headers: &[(&str, &str)], body: &[u8],
+           authorized: bool) -> Result<(u16, Vec<u8>), EspError> {
+    let reply = exchange(open, method, url, headers, body, authorized);
 
     if reply.is_err() {
         *open = None;
@@ -232,8 +242,8 @@ fn request(open: &mut Option<EspHttpConnection>, method: Method, path: &str, hea
     reply
 }
 
-fn exchange(open: &mut Option<EspHttpConnection>, method: Method, path: &str, headers: &[(&str, &str)], body: &[u8])
-            -> Result<(u16, Vec<u8>), EspError> {
+fn exchange(open: &mut Option<EspHttpConnection>, method: Method, url: &str, headers: &[(&str, &str)], body: &[u8],
+            authorized: bool) -> Result<(u16, Vec<u8>), EspError> {
     if open.is_none() {
         *open = Some(EspHttpConnection::new(&HttpConfiguration {
             crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
@@ -245,13 +255,17 @@ fn exchange(open: &mut Option<EspHttpConnection>, method: Method, path: &str, he
 
     let connection = open.as_mut().unwrap();
 
-    let url = format!("{SERVER}{path}");
     let authorization = format!("Bearer {TOKEN}");
     let length = body.len().to_string();
-    let mut all_headers = vec![("Authorization", authorization.as_str()), ("Content-Length", length.as_str())];
+    let mut all_headers = vec![("Content-Length", length.as_str())];
+
+    if authorized {
+        all_headers.push(("Authorization", authorization.as_str()));
+    }
+
     all_headers.extend_from_slice(headers);
 
-    connection.initiate_request(method, &url, &all_headers)?;
+    connection.initiate_request(method, url, &all_headers)?;
 
     let mut written = 0;
     while written < body.len() {
@@ -274,8 +288,13 @@ fn exchange(open: &mut Option<EspHttpConnection>, method: Method, path: &str, he
     Ok((status, reply))
 }
 
-fn fetch_settings(open: &mut Option<EspHttpConnection>) -> Option<Settings> {
-    let (status, reply) = request(open, Method::Get, "/settings", &[], &[]).ok()?;
+fn ask_server(open: &mut Option<EspHttpConnection>, method: Method, path: &str, headers: &[(&str, &str)], body: &[u8])
+              -> Result<(u16, Vec<u8>), EspError> {
+    request(open, method, &format!("{SERVER}{path}"), headers, body, true)
+}
+
+fn fetch_settings(open: &mut Option<EspHttpConnection>, recording: &str) -> Option<Settings> {
+    let (status, reply) = ask_server(open, Method::Get, "/settings", &[("X-Recording", recording)], &[]).ok()?;
 
     if status != 200 {
         return None;
@@ -284,20 +303,35 @@ fn fetch_settings(open: &mut Option<EspHttpConnection>) -> Option<Settings> {
     parse_settings(&reply)
 }
 
-fn send_frame(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8])
-              -> Result<(u16, Option<Settings>), EspError> {
+fn send_frame(server: &mut Option<EspHttpConnection>, storage: &mut Option<EspHttpConnection>, recording: &str,
+              jpeg: &[u8], upload: Option<Upload>) -> Result<(u16, Option<Settings>), EspError> {
+    if let Some(upload) = upload {
+        match request(storage, Method::Put, &upload.url, &[], jpeg, false) {
+            Ok((200, _)) => {
+                let headers = [("X-Recording", recording), ("X-Uploaded", upload.name.as_str())];
+
+                return ask_server(server, Method::Post, "/glasses/frames", &headers, &[])
+                    .map(|(status, reply)| (status, parse_settings(&reply)));
+            }
+            Ok((status, _)) => println!("storage said {status}, sending to the server instead"),
+            Err(error) => println!("storage upload failed: {error}, sending to the server instead"),
+        }
+    }
+
     let headers = [("X-Recording", recording), ("Content-Type", "image/jpeg")];
 
-    request(open, Method::Post, "/glasses/frames", &headers, jpeg).map(|(status, reply)| (status, parse_settings(&reply)))
+    ask_server(server, Method::Post, "/glasses/frames", &headers, jpeg).map(|(status, reply)| (status, parse_settings(&reply)))
 }
 
-fn timed_send(open: &mut Option<EspHttpConnection>, recording: &str, jpeg: &[u8])
-              -> Result<(u16, Option<Settings>), EspError> {
+fn timed_send(server: &mut Option<EspHttpConnection>, storage: &mut Option<EspHttpConnection>, recording: &str,
+              jpeg: &[u8], upload: Option<Upload>) -> Result<(u16, Option<Settings>), EspError> {
     let started = Instant::now();
-    let fresh = open.is_none();
-    let result = send_frame(open, recording, jpeg);
+    let direct = upload.is_some();
+    let fresh = if direct { storage.is_none() } else { server.is_none() };
+    let result = send_frame(server, storage, recording, jpeg, upload);
 
-    println!("sent {} bytes in {} ms{}", jpeg.len(), started.elapsed().as_millis(), if fresh { " (new connection)" } else { "" });
+    println!("sent {} bytes {} in {} ms{}", jpeg.len(), if direct { "to storage" } else { "to the server" },
+             started.elapsed().as_millis(), if fresh { " (new connection)" } else { "" });
 
     result
 }
@@ -351,11 +385,13 @@ fn main() {
     }
 
     let mut server = None;
+    let mut storage = None;
     let mut recording_id = new_recording_id();
     let (mut rate, mut recording) = (DEFAULT_FRAMES_PER_MINUTE, true);
+    let mut upload = None;
 
-    if let Some(settings) = fetch_settings(&mut server) {
-        (rate, recording) = (settings.frames_per_minute, settings.recording);
+    if let Some(settings) = fetch_settings(&mut server, &recording_id) {
+        (rate, recording, upload) = (settings.frames_per_minute, settings.recording, settings.upload);
         display.set_look(settings.look);
         display.outline_until = None;
     }
@@ -370,13 +406,16 @@ fn main() {
             display.show(&[if recording { "No pics" } else { "Paused" }]);
             thread::sleep(PAUSED_CHECK);
 
-            if let Some(settings) = fetch_settings(&mut server) {
-                if !recording && settings.recording {
-                    recording_id = new_recording_id();
+            let resuming = !recording;
+            let next_id = if resuming { new_recording_id() } else { recording_id.clone() };
+
+            if let Some(settings) = fetch_settings(&mut server, &next_id) {
+                if resuming && settings.recording {
+                    recording_id = next_id;
                     sent = 0;
                 }
 
-                (rate, recording) = (settings.frames_per_minute, settings.recording);
+                (rate, recording, upload) = (settings.frames_per_minute, settings.recording, settings.upload);
                 display.set_look(settings.look);
             }
 
@@ -386,13 +425,13 @@ fn main() {
         let started = Instant::now();
 
         match take_photo() {
-            Some((jpeg, _, _)) => match timed_send(&mut server, &recording_id, &jpeg) {
+            Some((jpeg, _, _)) => match timed_send(&mut server, &mut storage, &recording_id, &jpeg, upload.take()) {
                 Ok((200, settings)) => {
                     sent += 1;
                     problem.clear();
 
                     if let Some(settings) = settings {
-                        (rate, recording) = (settings.frames_per_minute, settings.recording);
+                        (rate, recording, upload) = (settings.frames_per_minute, settings.recording, settings.upload);
                         display.set_look(settings.look);
                     }
                 }

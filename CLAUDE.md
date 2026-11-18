@@ -98,8 +98,9 @@ Everything else is your call.
   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET` set, files live in Cloudflare R2 and `data/`
   is a working copy that fills itself as files are needed (`memory.storage`). `memory.storage sync` uploads what's
   missing; `check` compares the two. Without them, everything stays local. With R2, file requests redirect to
-  short-lived R2 links and the app uploads recordings straight to R2 (`POST /uploads`), so files never pass through
-  the server.
+  short-lived R2 links, the app uploads recordings straight to R2 (`POST /uploads`), the glasses PUT each frame to an R2
+  link from the previous reply and then tell the server (`X-Uploaded`), and captions give OpenAI an R2 link, so few
+  bytes pass through the server.
 - Cloud Run (project `memory-glasses-2611`, `us-west1`), meant to cost $0: `server/deploy/secrets.sh` copies the
   secrets from `.env` into Secret Manager, then `R2_ACCOUNT_ID=… server/deploy/deploy.sh` builds the image here,
   deploys the `memory-server` service and the `memory-worker` job (slow work: `memory.worker <job id>`), and has Cloud

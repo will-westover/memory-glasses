@@ -453,20 +453,30 @@ def current_settings(conn: psycopg.Connection) -> Settings:
 
 
 @app.post("/glasses/frames")
-async def glasses_frame(request: Request, x_recording: str = Header(...),
+async def glasses_frame(request: Request, x_recording: str = Header(...), x_uploaded: str | None = Header(default=None),
                         conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Receive one JPEG frame from the glasses and reply with the current settings."""
+    """Take one frame from the glasses, sent here or put in R2 first, and reply with the settings and the next link."""
     if not RECORDING_ID.match(x_recording):
         raise HTTPException(422, "X-Recording must be letters, digits and dashes")
 
-    jpeg = await request.body()
+    if x_uploaded is not None:
+        if not storage.enabled() or not glasses.UPLOAD_NAME.match(x_uploaded):
+            raise HTTPException(422, "X-Uploaded must name an upload link this server gave out")
 
-    if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > MAX_FRAME_BYTES:
-        raise HTTPException(422, "the body must be one JPEG under 2 MB")
+        path = glasses.arrived(x_recording, x_uploaded)
 
-    path = glasses.save_frame(x_recording, jpeg)
+        if path is None:
+            raise HTTPException(404, "that frame isn't in storage, or is over 2 MB")
+    else:
+        jpeg = await request.body()
 
-    return {"recording": x_recording, "frame": path.name, **current_settings(conn).model_dump()}
+        if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > MAX_FRAME_BYTES:
+            raise HTTPException(422, "the body must be one JPEG under 2 MB")
+
+        path = glasses.save_frame(x_recording, jpeg)
+
+    return {"recording": x_recording, "frame": path.name, **current_settings(conn).model_dump(),
+            **glasses.upload_slot(x_recording)}
 
 
 @app.get("/glasses/status")
@@ -1045,9 +1055,11 @@ def stats(conn: psycopg.Connection = Depends(connection)) -> dict:
 
 
 @app.get("/settings")
-def get_settings(conn: psycopg.Connection = Depends(connection)) -> Settings:
-    """Return the glasses settings."""
-    return current_settings(conn)
+def get_settings(x_recording: str | None = Header(default=None), conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return the glasses settings, with a link for the first frame when the glasses say which recording is next."""
+    slot = glasses.upload_slot(x_recording) if x_recording and RECORDING_ID.match(x_recording) else {}
+
+    return {**current_settings(conn).model_dump(), **slot}
 
 
 @app.put("/settings")

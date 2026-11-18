@@ -1,7 +1,9 @@
 """Frames sent one at a time by the glasses, gathered into recordings and turned into videos when they stop."""
 
+import re
 import subprocess
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -11,12 +13,14 @@ from memory.config import DATA_DIR
 GLASSES_DIR = DATA_DIR / "glasses"
 IDLE_SECONDS = 60
 LIST_SECONDS = 30
+MAX_FRAME_BYTES = 2_000_000
+UPLOAD_NAME = re.compile(r"^[0-9a-f]{32}$")
 REMOTE = {"at": float("-inf"), "files": {}}
+ARRIVED = {}
 
 
-def save_frame(recording: str, jpeg: bytes, now: float | None = None) -> Path:
-    """Store one frame under its recording, named by milliseconds since the recording's first frame."""
-    now = time.time() if now is None else now
+def frame_path(recording: str, now: float) -> Path:
+    """Return where a frame arriving now belongs: named by milliseconds since the recording's first frame."""
     folder = GLASSES_DIR / recording
     started_file = folder / "started"
 
@@ -27,10 +31,47 @@ def save_frame(recording: str, jpeg: bytes, now: float | None = None) -> Path:
         storage.save(started_file)
 
     offset = round((now - float(started_file.read_text())) * 1000)
-    path = folder / f"{offset:09d}.jpg"
+
+    return folder / f"{offset:09d}.jpg"
+
+
+def save_frame(recording: str, jpeg: bytes, now: float | None = None) -> Path:
+    """Store one frame sent to the server under its recording."""
+    path = frame_path(recording, time.time() if now is None else now)
     path.write_bytes(jpeg)
 
     storage.save(path)
+
+    return path
+
+
+def upload_slot(recording: str) -> dict:
+    """Return a link the glasses can PUT their next frame to in R2, and its name, when R2 holds the files."""
+    if not storage.enabled():
+        return {}
+
+    name = uuid.uuid4().hex
+
+    return {"upload_url": storage.upload_url(GLASSES_DIR / recording / f"{name}.pending"), "upload_name": name}
+
+
+def arrived(recording: str, name: str, now: float | None = None) -> Path | None:
+    """Give a frame the glasses put in R2 its place in the recording, or None if it isn't there or is too big."""
+    pending = GLASSES_DIR / recording / f"{name}.pending"
+    size = storage.size(pending)
+
+    if size is None:
+        return None
+
+    if size > MAX_FRAME_BYTES:
+        storage.delete(pending)
+        return None
+
+    now = time.time() if now is None else now
+    path = frame_path(recording, now)
+    storage.copy(pending, path)
+    storage.delete(pending)
+    ARRIVED[f"{recording}/{path.name}"] = now
 
     return path
 
@@ -74,7 +115,7 @@ def recordings() -> dict[str, dict]:
         for path in GLASSES_DIR.glob("*/*"):
             files[f"{path.parent.name}/{path.name}"] = path.stat().st_mtime
 
-    for name, modified in remote_files().items():
+    for name, modified in (remote_files() | ARRIVED).items():
         files.setdefault(name, modified)
 
     return summarise(files)

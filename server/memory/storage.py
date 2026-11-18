@@ -164,6 +164,22 @@ def copy(source: Path, target: Path) -> None:
             raise
 
 
+def size(path: Path) -> int | None:
+    """Return a file's size in R2, or None if R2 doesn't hold it."""
+    try:
+        return bucket().Object(key(path)).content_length
+    except Exception as error:
+        if missing(error):
+            return None
+        raise
+
+
+def delete(path: Path) -> None:
+    """Delete one file from R2."""
+    if enabled():
+        bucket().Object(key(path)).delete()
+
+
 def download_url(path: Path, media_type: str | None = None, seconds: int = 900) -> str:
     """Return a short-lived link that reads a file straight from R2."""
     params = {"Bucket": bucket().name, "Key": key(path)}
