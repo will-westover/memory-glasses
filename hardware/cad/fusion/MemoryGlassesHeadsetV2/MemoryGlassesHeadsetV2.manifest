@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": {
+    "": "Builds headset concept v2: folded optics on a short boom, camera above the left eye."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

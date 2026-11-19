@@ -10,6 +10,7 @@ cad/
   fusion/MemoryGlasses/        Fusion script that builds the whole assembly; every size lives in P at the top
   fusion/MemoryGlassesV2/      v2 styling option: same parts and internals, flat brow, modules printed with the front
   fusion/MemoryGlassesHeadset/ Headset concept: soft strap, one rigid print, display boom 8 inches out (renders/headset-concept.jpg)
+  fusion/MemoryGlassesHeadsetV2/ Headset v2 concept: folded optics on a short boom, camera above the left eye, view cone check
   fusion/MemoryGlassesExport/  Exports v2's printed parts as raw STLs
   fusion/MemoryGlassesSteps/   Builds the "v2 - Assembly steps" file: 15 exploded steps with arrows and labels
   renders/assembly-steps/      A picture of each assembly step (step-01..15.png) plus overview.png
