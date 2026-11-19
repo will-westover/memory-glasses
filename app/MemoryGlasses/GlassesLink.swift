@@ -76,6 +76,8 @@ final class GlassesLink: NSObject {
     private var incoming: (length: Int, number: UInt32, recording: String, data: Data)?
     private var lastSettings: GlassesSettings?
     private let uploader = FrameUploader()
+    private var checking = false
+    private var failedVersion: String?
 
     override private init() {
         super.init()
@@ -86,6 +88,13 @@ final class GlassesLink: NSObject {
 
         central = CBCentralManager(delegate: self, queue: nil,
                                    options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreKey])
+
+        Task { @MainActor in
+            while true {
+                try? await Task.sleep(for: .seconds(600))
+                await self.checkForUpdate()
+            }
+        }
     }
 
     func push(_ settings: GlassesSettings) {
@@ -171,6 +180,7 @@ final class GlassesLink: NSObject {
             updateProgress = 1
             updateStage = "Restarting…"
         } else if text.hasPrefix("error") {
+            failedVersion = update?.version
             update = nil
             updateProgress = nil
             updateStage = "Update failed: \(text.dropFirst(5).trimmingCharacters(in: .whitespaces))"
@@ -182,13 +192,33 @@ final class GlassesLink: NSObject {
 
         if let expected = expectedVersion {
             updateStage = version == expected ? "Updated to \(version)" : "The glasses still run \(version)"
+            failedVersion = version == expected ? nil : expected
             updateProgress = nil
             expectedVersion = nil
         }
 
-        Task { @MainActor in
-            let latest: FirmwareInfo? = try? await API.current.get("/glasses/firmware")
-            self.availableUpdate = latest.flatMap { $0.version == version ? nil : $0 }
+        Task { @MainActor in await self.checkForUpdate() }
+    }
+
+    @MainActor
+    func checkForUpdate(install: Bool = true) async {
+        guard let version = glassesVersion, !checking, update == nil else { return }
+
+        checking = true
+        defer { checking = false }
+
+        let latest: FirmwareInfo? = try? await API.current.get("/glasses/firmware")
+        availableUpdate = latest.flatMap { $0.version == version ? nil : $0 }
+
+        guard let found = availableUpdate else {
+            if updateProgress == nil, expectedVersion == nil, !(updateStage ?? "").hasPrefix("Updated") {
+                updateStage = "Up to date"
+            }
+            return
+        }
+
+        if install, canUpdate, found.version != failedVersion {
+            await startUpdate()
         }
     }
 

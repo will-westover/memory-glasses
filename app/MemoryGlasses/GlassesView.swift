@@ -51,6 +51,8 @@ struct GlassesView: View {
                     if let update = link.availableUpdate, link.updateProgress == nil {
                         Button("Update glasses to \(update.version)") { Task { await link.startUpdate() } }
                             .disabled(!link.canUpdate)
+                    } else if link.glassesVersion != nil, link.updateProgress == nil {
+                        Button("Check for updates") { Task { await link.checkForUpdate() } }
                     }
 
                     if let progress = link.updateProgress, progress < 1 {
@@ -69,7 +71,7 @@ struct GlassesView: View {
                     Text("Bluetooth")
                 } footer: {
                     Text(link.availableUpdate.map { "Update available (\($0.version)). Keep the glasses close to the phone while it installs." }
-                         ?? "The glasses send each photo to this phone over Bluetooth, and the phone uploads it. No hotspot needed.")
+                         ?? "The glasses send each photo to this phone over Bluetooth, and the phone uploads it. No hotspot needed. New firmware installs by itself.")
                 }
 
                 Section {
@@ -137,6 +139,7 @@ struct GlassesView: View {
             .navigationTitle("Glasses")
             .task(id: address + token) { await load() }
             .task(id: address + token) { await watchGlasses() }
+            .task { await GlassesLink.shared.checkForUpdate() }
             .onChange(of: settings.recording) { Task { await save() } }
         }
     }
