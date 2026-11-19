@@ -35,14 +35,6 @@ pub struct Link {
     updating: Arc<AtomicBool>,
 }
 
-fn faster_link(handle: u16) {
-    unsafe {
-        esp_idf_svc::sys::ble_gap_set_prefered_le_phy(handle, 0x02, 0x02, 0);
-        esp_idf_svc::sys::ble_gap_set_data_len(handle, 251, 2120);
-    }
-}
-
-
 pub fn crc32(data: &[u8]) -> u32 {
     crc32_continue(0, data)
 }
@@ -88,7 +80,6 @@ impl Link {
             on_connect.0.store(true, Ordering::SeqCst);
             on_connect.1.store(desc.mtu(), Ordering::SeqCst);
             let _ = server.update_conn_params(desc.conn_handle(), 6, 12, 0, 400);
-            faster_link(desc.conn_handle());
             println!("phone connected, mtu {}", desc.mtu());
         });
 
@@ -192,10 +183,7 @@ impl Link {
             return false;
         }
 
-        let mtu = BLEDevice::take().get_server().connections().next().map(|desc| desc.mtu())
-            .unwrap_or_else(|| self.mtu.load(Ordering::SeqCst));
-        self.mtu.store(mtu, Ordering::SeqCst);
-        let chunk = (mtu as usize).saturating_sub(4).max(19);
+        let chunk = (self.mtu.load(Ordering::SeqCst) as usize).saturating_sub(4).max(19);
 
         for piece in jpeg.chunks(chunk) {
             let mut data = Vec::with_capacity(piece.len() + 1);
