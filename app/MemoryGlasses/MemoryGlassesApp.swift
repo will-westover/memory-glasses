@@ -2,6 +2,10 @@ import SwiftUI
 
 @main
 struct MemoryGlassesApp: App {
+    init() {
+        GlassesLink.shared.start()
+    }
+
     @State private var store = ConversationStore()
     @State private var router = Router()
     @State private var pairing: Pairing?

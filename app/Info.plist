@@ -22,6 +22,12 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Receives photos from your Memory Glasses and sends them to your server, and updates the glasses.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Records moments with the camera, like the glasses would.</string>
 	<key>NSLocalNetworkUsageDescription</key>

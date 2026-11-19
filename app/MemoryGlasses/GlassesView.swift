@@ -9,6 +9,8 @@ struct GlassesView: View {
     @State private var status = "Checking…"
     @State private var connected = false
 
+    private let link = GlassesLink.shared
+
     var body: some View {
         NavigationStack {
             Form {
@@ -24,6 +26,50 @@ struct GlassesView: View {
                     Text("Glasses")
                 } footer: {
                     Text("While this is off, the glasses take no pictures. Turning it back on starts a new moment.")
+                }
+
+                Section {
+                    Label(link.state.label, systemImage: link.state == .connected ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
+                        .foregroundStyle(link.state == .connected ? .green : .secondary)
+
+                    if link.state == .connected || link.photosSent > 0 {
+                        LabeledContent("Photos sent this recording", value: "\(link.photosSent)")
+
+                        if let last = link.lastUpload {
+                            LabeledContent("Last upload", value: last.formatted(date: .omitted, time: .standard))
+                        }
+
+                        if !link.status.isEmpty {
+                            LabeledContent("On the glasses", value: link.status)
+                        }
+                    }
+
+                    if let version = link.glassesVersion {
+                        LabeledContent("Firmware", value: version)
+                    }
+
+                    if let update = link.availableUpdate, link.updateProgress == nil {
+                        Button("Update glasses to \(update.version)") { Task { await link.startUpdate() } }
+                            .disabled(!link.canUpdate)
+                    }
+
+                    if let progress = link.updateProgress, progress < 1 {
+                        ProgressView(value: progress) {
+                            Text(link.updateStage ?? "Updating…")
+                        } currentValueLabel: {
+                            Text("\(Int(progress * 100))%")
+                        }
+
+                        Button("Cancel update", role: .destructive) { link.cancelUpdate() }
+                    } else if let stage = link.updateStage {
+                        Text(stage)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Bluetooth")
+                } footer: {
+                    Text(link.availableUpdate.map { "Update available (\($0.version)). Keep the glasses close to the phone while it installs." }
+                         ?? "The glasses send each photo to this phone over Bluetooth, and the phone uploads it. No hotspot needed.")
                 }
 
                 Section {
@@ -110,7 +156,7 @@ struct GlassesView: View {
             return glasses.processing == 1 ? "Processing a moment" : "Processing \(glasses.processing) moments"
         }
 
-        return settings.recording ? "Not sending. Plug them into the iPhone with the hotspot on." : "Paused"
+        return settings.recording ? "Not sending. Keep the glasses on and near this phone." : "Paused"
     }
 
     private func watchGlasses() async {
@@ -134,6 +180,7 @@ struct GlassesView: View {
     private func save() async {
         do {
             settings = try await API.current.send("/settings", method: "PUT", body: settings)
+            link.push(settings)
             status = "Saved"
         } catch {
             status = error.localizedDescription
