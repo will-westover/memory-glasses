@@ -38,7 +38,7 @@ pt, tbm, app = v1.pt, v1.tbm, v1.app
 B = {
     "band_z": (22.0, 48.0),
     "brim_z": (44.0, 48.0),
-    "brim_reach": (105.0, 195.0),
+    "brim_reach": (86.0, 195.0),
     "brim_back_y": -20.0,
     "oled_y": 40.0,
     "drop": 7.0,
