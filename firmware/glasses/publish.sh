@@ -8,7 +8,8 @@ OUT=$(mktemp -d)
 IMAGE="$OUT/glasses.bin"
 espflash save-image --chip esp32s3 --flash-size 8mb --partition-table partitions.csv target/xtensa-esp32s3-espidf/release/glasses "$IMAGE"
 
-VERSION=$(strings target/xtensa-esp32s3-espidf/release/glasses | grep -m1 -E '^[0-9]{8}-[0-9]{4}-[0-9a-f]+$' || date -u +%Y%m%d-%H%M)
+VERSION=$(strings target/xtensa-esp32s3-espidf/release/glasses | grep -E '^[0-9]{8}-[0-9]{4}-[0-9a-f]+$' | head -1 || true)
+VERSION=${VERSION:-$(date -u +%Y%m%d-%H%M)}
 SIZE=$(stat -f %z "$IMAGE")
 CRC=$(python3 -c "import sys, zlib; print(zlib.crc32(open(sys.argv[1], 'rb').read()))" "$IMAGE")
 KEY="firmware/glasses-$VERSION.bin"
