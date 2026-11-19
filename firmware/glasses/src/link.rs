@@ -183,7 +183,9 @@ impl Link {
             return false;
         }
 
-        let chunk = (self.mtu.load(Ordering::SeqCst) as usize).saturating_sub(4).max(19);
+        let mtu = BLEDevice::take().get_server().connections().next().map(|desc| desc.mtu())
+            .unwrap_or_else(|| self.mtu.load(Ordering::SeqCst));
+        let chunk = (mtu as usize).saturating_sub(4).max(19);
 
         for piece in jpeg.chunks(chunk) {
             let mut data = Vec::with_capacity(piece.len() + 1);
