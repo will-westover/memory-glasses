@@ -248,8 +248,10 @@ def check() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Copy the data folder to R2, or compare the two.")
-    parser.add_argument("command", choices=["sync", "check"])
+    parser = argparse.ArgumentParser(description="Copy the data folder to R2, compare the two, or put one file in R2.")
+    parser.add_argument("command", choices=["sync", "check", "put"])
+    parser.add_argument("local", nargs="?", help="put: the file to upload")
+    parser.add_argument("name", nargs="?", help="put: its key in the bucket, e.g. firmware/latest.json")
     args = parser.parse_args()
 
     if not enabled():
@@ -259,6 +261,14 @@ def main() -> int:
 
     if args.command == "sync":
         sync()
+        return 0
+
+    if args.command == "put":
+        if not args.local or not args.name:
+            parser.error("put needs a local file and a bucket key")
+
+        bucket().upload_file(args.local, args.name)
+        print(f"put {args.local} at {args.name}")
         return 0
 
     return check()

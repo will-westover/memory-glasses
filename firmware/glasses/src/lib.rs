@@ -1,3 +1,5 @@
+pub mod link;
+
 use esp_idf_svc::sys::camera;
 
 pub const WARM_UP_FRAMES: usize = 3;

@@ -1,6 +1,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
+use glasses::link::{keep_this_firmware, Link, Message};
 use glasses::{start_camera, take_photo};
 use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
 use embedded_graphics::mono_font::MonoTextStyle;
@@ -26,12 +27,16 @@ const WIFI_NAME: &str = env!("GLASSES_WIFI_NAME");
 const WIFI_PASSWORD: &str = env!("GLASSES_WIFI_PASSWORD");
 const SERVER: &str = env!("GLASSES_SERVER");
 const TOKEN: &str = env!("GLASSES_TOKEN");
+const VERSION: &str = env!("GLASSES_VERSION");
 
 const DISPLAY_ADDRESSES: [u8; 2] = [0x3C, 0x3D];
 const DEFAULT_FRAMES_PER_MINUTE: f64 = 30.0;
 const OUTLINE_FOR: Duration = Duration::from_secs(6);
 const UPLOAD_CHUNK: usize = 8192;
 const PAUSED_CHECK: Duration = Duration::from_secs(3);
+const ACK_WAIT: Duration = Duration::from_secs(10);
+const PHONE_GRACE: Duration = Duration::from_secs(30);
+const LISTEN: Duration = Duration::from_millis(200);
 
 type Screen = Ssd1306<I2CInterface<I2cDriver<'static>>, DisplaySize128x64, BufferedGraphicsMode<DisplaySize128x64>>;
 
@@ -63,42 +68,67 @@ impl Default for Look {
     }
 }
 
-struct Settings {
-    frames_per_minute: f64,
-    recording: bool,
-    look: Look,
-    upload: Option<Upload>,
-}
-
 struct Upload {
     url: String,
     name: String,
 }
 
-fn parse_settings(reply: &[u8]) -> Option<Settings> {
-    let json = serde_json::from_slice::<serde_json::Value>(reply).ok()?;
-    let base = Look::default();
-    let number = |name: &str, default: f64| json[name].as_f64().unwrap_or(default);
-    let flag = |name: &str, default: bool| json[name].as_bool().unwrap_or(default);
+struct State {
+    rate: f64,
+    recording: bool,
+    recording_id: String,
+    sent: u32,
+    status: Option<String>,
+}
 
-    Some(Settings {
-        frames_per_minute: json["frames_per_minute"].as_f64()?,
-        recording: flag("recording", true),
-        look: Look {
-            scale: number("display_scale", base.scale),
-            x: number("display_x", base.x),
-            y: number("display_y", base.y),
-            brightness: number("display_brightness", base.brightness),
-            large_text: flag("display_large_text", base.large_text),
-            mirror: flag("display_mirror", base.mirror),
-            flip: flag("display_flip", base.flip),
-            pattern: flag("display_pattern", base.pattern),
-        },
-        upload: match (json["upload_url"].as_str(), json["upload_name"].as_str()) {
+impl State {
+    fn new() -> Self {
+        State { rate: DEFAULT_FRAMES_PER_MINUTE, recording: true, recording_id: new_recording_id(), sent: 0, status: None }
+    }
+
+    fn apply(&mut self, reply: &[u8], display: &mut Display) -> Option<Option<Upload>> {
+        let json = serde_json::from_slice::<serde_json::Value>(reply).ok()?;
+        let now = display.look.clone();
+        let number = |name: &str, current: f64| json[name].as_f64().unwrap_or(current);
+        let flag = |name: &str, current: bool| json[name].as_bool().unwrap_or(current);
+
+        let recording = flag("recording", self.recording);
+        if recording && !self.recording {
+            self.recording_id = new_recording_id();
+            self.sent = 0;
+        }
+
+        self.rate = number("frames_per_minute", self.rate);
+        self.recording = recording;
+
+        if let Some(status) = json["status"].as_str() {
+            self.status = Some(status.to_string()).filter(|text| !text.is_empty());
+        }
+
+        display.set_look(Look {
+            scale: number("display_scale", now.scale),
+            x: number("display_x", now.x),
+            y: number("display_y", now.y),
+            brightness: number("display_brightness", now.brightness),
+            large_text: flag("display_large_text", now.large_text),
+            mirror: flag("display_mirror", now.mirror),
+            flip: flag("display_flip", now.flip),
+            pattern: flag("display_pattern", now.pattern),
+        });
+
+        Some(match (json["upload_url"].as_str(), json["upload_name"].as_str()) {
             (Some(url), Some(name)) => Some(Upload { url: url.to_string(), name: name.to_string() }),
             _ => None,
-        },
-    })
+        })
+    }
+
+    fn gap(&self) -> Duration {
+        Duration::from_secs_f64(60.0 / self.rate.max(0.01))
+    }
+
+    fn line(&self) -> String {
+        self.status.clone().unwrap_or_else(|| format!("Rec {}", self.sent))
+    }
 }
 
 struct Display {
@@ -293,25 +323,20 @@ fn ask_server(open: &mut Option<EspHttpConnection>, method: Method, path: &str, 
     request(open, method, &format!("{SERVER}{path}"), headers, body, true)
 }
 
-fn fetch_settings(open: &mut Option<EspHttpConnection>, recording: &str) -> Option<Settings> {
+fn fetch_settings(open: &mut Option<EspHttpConnection>, recording: &str) -> Option<Vec<u8>> {
     let (status, reply) = ask_server(open, Method::Get, "/settings", &[("X-Recording", recording)], &[]).ok()?;
 
-    if status != 200 {
-        return None;
-    }
-
-    parse_settings(&reply)
+    (status == 200).then_some(reply)
 }
 
 fn send_frame(server: &mut Option<EspHttpConnection>, storage: &mut Option<EspHttpConnection>, recording: &str,
-              jpeg: &[u8], upload: Option<Upload>) -> Result<(u16, Option<Settings>), EspError> {
+              jpeg: &[u8], upload: Option<Upload>) -> Result<(u16, Vec<u8>), EspError> {
     if let Some(upload) = upload {
         match request(storage, Method::Put, &upload.url, &[], jpeg, false) {
             Ok((200, _)) => {
                 let headers = [("X-Recording", recording), ("X-Uploaded", upload.name.as_str())];
 
-                return ask_server(server, Method::Post, "/glasses/frames", &headers, &[])
-                    .map(|(status, reply)| (status, parse_settings(&reply)));
+                return ask_server(server, Method::Post, "/glasses/frames", &headers, &[]);
             }
             Ok((status, _)) => println!("storage said {status}, sending to the server instead"),
             Err(error) => println!("storage upload failed: {error}, sending to the server instead"),
@@ -320,11 +345,11 @@ fn send_frame(server: &mut Option<EspHttpConnection>, storage: &mut Option<EspHt
 
     let headers = [("X-Recording", recording), ("Content-Type", "image/jpeg")];
 
-    ask_server(server, Method::Post, "/glasses/frames", &headers, jpeg).map(|(status, reply)| (status, parse_settings(&reply)))
+    ask_server(server, Method::Post, "/glasses/frames", &headers, jpeg)
 }
 
 fn timed_send(server: &mut Option<EspHttpConnection>, storage: &mut Option<EspHttpConnection>, recording: &str,
-              jpeg: &[u8], upload: Option<Upload>) -> Result<(u16, Option<Settings>), EspError> {
+              jpeg: &[u8], upload: Option<Upload>) -> Result<(u16, Vec<u8>), EspError> {
     let started = Instant::now();
     let direct = upload.is_some();
     let fresh = if direct { storage.is_none() } else { server.is_none() };
@@ -340,100 +365,75 @@ fn new_recording_id() -> String {
     unsafe { format!("{:08x}{:08x}", esp_idf_svc::sys::esp_random(), esp_idf_svc::sys::esp_random()) }
 }
 
-fn main() {
-    esp_idf_svc::sys::link_patches();
-    esp_idf_svc::log::EspLogger::initialize_default();
+struct Online {
+    wifi: BlockingWifi<EspWifi<'static>>,
+    joined: bool,
+    server: Option<EspHttpConnection>,
+    storage: Option<EspHttpConnection>,
+    upload: Option<Upload>,
+}
 
-    let peripherals = Peripherals::take().unwrap();
-    let config = I2cConfig::new().baudrate(400.kHz().into());
-    let i2c = I2cDriver::new(peripherals.i2c0, peripherals.pins.gpio5, peripherals.pins.gpio6, &config).unwrap();
-    let mut display = Display::new(start_screen(i2c));
-
-    display.show(&["Starting"]);
-    if let Err(error) = start_camera(glasses::STREAM) {
-        println!("camera failed to start: error {error}");
-        display.show(&["Cam err", &format!("{error}")]);
-        loop {
-            thread::sleep(Duration::from_secs(60));
-        }
-    }
-
-    if WIFI_NAME.is_empty() || SERVER.is_empty() {
-        println!("no Wi-Fi or server in glasses.toml");
-        display.show(&["No WiFi", "setup"]);
-        loop {
-            thread::sleep(Duration::from_secs(60));
-        }
-    }
-
-    let sysloop = EspSystemEventLoop::take().unwrap();
-    let nvs = EspDefaultNvsPartition::take().ok();
-    let mut wifi = BlockingWifi::wrap(EspWifi::new(peripherals.modem, sysloop.clone(), nvs).unwrap(), sysloop).unwrap();
-
-    display.show(&["WiFi..."]);
-    while let Err(error) = join_wifi(&mut wifi) {
-        let seen = wifi.scan().unwrap_or_default();
-        let found = seen.iter().find(|network| network.ssid.as_str() == WIFI_NAME);
-
-        for network in &seen {
-            println!("  sees \"{}\" signal {} channel {}", network.ssid, network.signal_strength, network.channel);
+impl Online {
+    fn stop(&mut self) {
+        if self.joined || self.wifi.is_started().unwrap_or(false) {
+            println!("stopping Wi-Fi for the phone");
+            let _ = self.wifi.stop();
         }
 
-        println!("joining {WIFI_NAME} failed: {error}");
-        display.show(&["WiFi...", if found.is_some() { "seen" } else { "no hotspot" }]);
-        thread::sleep(Duration::from_secs(3));
+        self.joined = false;
+        self.server = None;
+        self.storage = None;
+        self.upload = None;
     }
 
-    let mut server = None;
-    let mut storage = None;
-    let mut recording_id = new_recording_id();
-    let (mut rate, mut recording) = (DEFAULT_FRAMES_PER_MINUTE, true);
-    let mut upload = None;
+    fn join(&mut self, state: &mut State, display: &mut Display) -> bool {
+        if self.joined && self.wifi.is_connected().unwrap_or(false) {
+            return true;
+        }
 
-    if let Some(settings) = fetch_settings(&mut server, &recording_id) {
-        (rate, recording, upload) = (settings.frames_per_minute, settings.recording, settings.upload);
-        display.set_look(settings.look);
-        display.outline_until = None;
+        display.show(&["WiFi..."]);
+
+        if let Err(error) = join_wifi(&mut self.wifi) {
+            let seen = self.wifi.scan().unwrap_or_default();
+            let found = seen.iter().any(|network| network.ssid.as_str() == WIFI_NAME);
+
+            println!("joining {WIFI_NAME} failed: {error}");
+            display.show(&["WiFi...", if found { "seen" } else { "no hotspot" }]);
+
+            return false;
+        }
+
+        self.joined = true;
+
+        if let Some(reply) = fetch_settings(&mut self.server, &state.recording_id) {
+            self.upload = state.apply(&reply, display).flatten();
+        }
+
+        true
     }
 
-    let mut sent = 0u32;
-    let mut problem = String::new();
-
-    display.show(&["Ready"]);
-
-    loop {
-        if !recording || rate <= 0.0 {
-            display.show(&[if recording { "No pics" } else { "Paused" }]);
+    fn step(&mut self, state: &mut State, display: &mut Display) {
+        if !state.recording || state.rate <= 0.0 {
+            display.show(&[if state.recording { "No pics" } else { "Paused" }]);
             thread::sleep(PAUSED_CHECK);
 
-            let resuming = !recording;
-            let next_id = if resuming { new_recording_id() } else { recording_id.clone() };
-
-            if let Some(settings) = fetch_settings(&mut server, &next_id) {
-                if resuming && settings.recording {
-                    recording_id = next_id;
-                    sent = 0;
-                }
-
-                (rate, recording, upload) = (settings.frames_per_minute, settings.recording, settings.upload);
-                display.set_look(settings.look);
+            let probe = if state.recording { state.recording_id.clone() } else { new_recording_id() };
+            if let Some(reply) = fetch_settings(&mut self.server, &probe) {
+                self.upload = state.apply(&reply, display).flatten();
             }
 
-            continue;
+            return;
         }
 
         let started = Instant::now();
+        let mut problem = String::new();
 
         match take_photo() {
-            Some((jpeg, _, _)) => match timed_send(&mut server, &mut storage, &recording_id, &jpeg, upload.take()) {
-                Ok((200, settings)) => {
-                    sent += 1;
-                    problem.clear();
-
-                    if let Some(settings) = settings {
-                        (rate, recording, upload) = (settings.frames_per_minute, settings.recording, settings.upload);
-                        display.set_look(settings.look);
-                    }
+            Some((jpeg, _, _)) => match timed_send(&mut self.server, &mut self.storage, &state.recording_id, &jpeg,
+                                                   self.upload.take()) {
+                Ok((200, reply)) => {
+                    state.sent += 1;
+                    self.upload = state.apply(&reply, display).flatten();
                 }
                 Ok((status, _)) => {
                     println!("server said {status}");
@@ -443,21 +443,143 @@ fn main() {
                     println!("upload failed: {error}");
                     problem = "No net".to_string();
 
-                    if !wifi.is_connected().unwrap_or(false) {
-                        let _ = join_wifi(&mut wifi);
+                    if !self.wifi.is_connected().unwrap_or(false) {
+                        self.joined = false;
                     }
                 }
             },
             None => problem = "No pic".to_string(),
         }
 
-        display.show(&[&format!("Rec {sent}"), &problem]);
+        display.show(&[&format!("Rec {}", state.sent), &problem]);
 
-        if !recording || rate <= 0.0 {
+        if state.recording && state.rate > 0.0 {
+            thread::sleep(state.gap().saturating_sub(started.elapsed()));
+        }
+    }
+}
+
+fn listen(link: &Link, state: &mut State, display: &mut Display, wait: Duration) -> Option<u32> {
+    match link.next_message(wait)? {
+        Message::Settings(json) => {
+            state.apply(&json, display);
+            None
+        }
+        Message::Ack(number) => Some(number),
+    }
+}
+
+fn wait_for_ack(link: &Link, state: &mut State, display: &mut Display, number: u32) -> bool {
+    let deadline = Instant::now() + ACK_WAIT;
+
+    while Instant::now() < deadline && link.ready() {
+        if listen(link, state, display, LISTEN).is_some_and(|acked| acked >= number) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn by_phone(link: &Link, state: &mut State, display: &mut Display) {
+    if !state.recording || state.rate <= 0.0 {
+        display.show(&["BT", if state.recording { "No pics" } else { "Paused" }]);
+        listen(link, state, display, LISTEN);
+        return;
+    }
+
+    let started = Instant::now();
+
+    match take_photo() {
+        Some((jpeg, _, _)) => {
+            let number = state.sent + 1;
+            let sending = Instant::now();
+
+            if link.send_frame(&jpeg, number, &state.recording_id) && wait_for_ack(link, state, display, number) {
+                state.sent = number;
+                println!("sent frame {number}: {} bytes by Bluetooth in {} ms", jpeg.len(),
+                         sending.elapsed().as_millis());
+                display.show(&["BT", &state.line()]);
+            } else {
+                println!("frame {number} wasn't acknowledged");
+                display.show(&["BT", &state.line(), "No ack"]);
+            }
+        }
+        None => display.show(&["BT", &state.line(), "No pic"]),
+    }
+
+    while state.recording && state.rate > 0.0 && started.elapsed() < state.gap() && link.ready() {
+        listen(link, state, display, LISTEN.min(state.gap().saturating_sub(started.elapsed())));
+    }
+}
+
+fn main() {
+    esp_idf_svc::sys::link_patches();
+    esp_idf_svc::log::EspLogger::initialize_default();
+
+    let peripherals = Peripherals::take().unwrap();
+    let config = I2cConfig::new().baudrate(400.kHz().into());
+    let i2c = I2cDriver::new(peripherals.i2c0, peripherals.pins.gpio5, peripherals.pins.gpio6, &config).unwrap();
+    let mut display = Display::new(start_screen(i2c));
+
+    println!("firmware {VERSION}");
+    display.show(&["Starting"]);
+
+    if let Err(error) = start_camera(glasses::STREAM) {
+        println!("camera failed to start: error {error}");
+        display.show(&["Cam err", &format!("{error}")]);
+        loop {
+            thread::sleep(Duration::from_secs(60));
+        }
+    }
+
+    let sysloop = EspSystemEventLoop::take().unwrap();
+    let nvs = EspDefaultNvsPartition::take().ok();
+    let link = Link::start(VERSION);
+    let mut online = (!WIFI_NAME.is_empty() && !SERVER.is_empty()).then(|| Online {
+        wifi: BlockingWifi::wrap(EspWifi::new(peripherals.modem, sysloop.clone(), nvs).unwrap(), sysloop).unwrap(),
+        joined: false,
+        server: None,
+        storage: None,
+        upload: None,
+    });
+
+    keep_this_firmware();
+
+    let mut state = State::new();
+    let mut last_phone = Instant::now();
+
+    display.show(&["BT", "waiting"]);
+
+    loop {
+        if let Some(percent) = link.updating() {
+            display.show(&["Updating", &format!("{percent}%")]);
+            thread::sleep(Duration::from_millis(300));
             continue;
         }
 
-        let gap = Duration::from_secs_f64(60.0 / rate);
-        thread::sleep(gap.saturating_sub(started.elapsed()));
+        if link.ready() {
+            if let Some(online) = online.as_mut() {
+                online.stop();
+            }
+
+            last_phone = Instant::now();
+            by_phone(&link, &mut state, &mut display);
+            continue;
+        }
+
+        match online.as_mut() {
+            Some(online) if last_phone.elapsed() > PHONE_GRACE => {
+                if online.join(&mut state, &mut display) {
+                    online.step(&mut state, &mut display);
+                } else {
+                    thread::sleep(PAUSED_CHECK);
+                }
+            }
+            _ => {
+                display.show(&["BT", "waiting"]);
+                listen(&link, &mut state, &mut display, Duration::from_millis(500));
+            }
+        }
     }
 }
