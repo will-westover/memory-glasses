@@ -1,0 +1,10 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "author": "",
+  "description": {
+    "": "Builds the brim-hat concept: visor brim with the camera at its edge and folded optics underneath."
+  },
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}
