@@ -303,15 +303,17 @@ final class GlassesLink: NSObject {
         let received = ReceivedFrame(recording: frame.recording, number: frame.number, jpeg: frame.data)
 
         Task { @MainActor in
-            await self.deliver(received)
+            await self.uploader.enqueue(received)
+            self.acknowledge(received.number)
+            await self.deliver()
         }
     }
 
     @MainActor
-    private func deliver(_ frame: ReceivedFrame) async {
-        await uploader.enqueue(frame)
-
+    private func deliver() async {
         let result = await uploader.flush()
+
+        guard !result.busy else { return }
 
         if let settings = result.settings {
             lastSettings = settings
@@ -328,8 +330,6 @@ final class GlassesLink: NSObject {
         if let settings = lastSettings {
             write(settings, status: status)
         }
-
-        acknowledge(frame.number)
     }
 }
 
@@ -455,6 +455,7 @@ struct UploadResult {
     let sent: Int
     let waiting: Int
     let settings: GlassesSettings?
+    var busy = false
 }
 
 private struct FrameReply: Decodable {
@@ -468,6 +469,7 @@ actor FrameUploader {
     private let folder: URL
     private var slots: [String: (url: URL, name: String)] = [:]
     private var counter = 0
+    private var flushing = false
 
     init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -490,10 +492,15 @@ actor FrameUploader {
     }
 
     func flush() async -> UploadResult {
+        guard !flushing else { return UploadResult(sent: 0, waiting: queued().count, settings: nil, busy: true) }
+
+        flushing = true
+        defer { flushing = false }
+
         var sent = 0
         var settings: GlassesSettings?
 
-        for file in queued() {
+        while let file = queued().first {
             guard let recording = Self.recording(of: file), let jpeg = try? Data(contentsOf: file) else {
                 try? FileManager.default.removeItem(at: file)
                 continue
