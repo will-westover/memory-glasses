@@ -4,6 +4,7 @@ import io
 import json
 import math
 import os
+import pathlib
 import re
 import shutil
 import threading
@@ -507,6 +508,51 @@ async def glasses_frame(request: Request, x_recording: str = Header(...), x_uplo
 
     return {"recording": x_recording, "frame": path.name, **current_settings(conn).model_dump(),
             **glasses.upload_slot(x_recording)}
+
+
+FIRMWARE_DIR = DATA_DIR / "firmware"
+
+
+def latest_firmware() -> dict | None:
+    """Return the newest published glasses firmware's details, read fresh from R2 when it holds the files."""
+    latest = FIRMWARE_DIR / "latest.json"
+
+    if storage.enabled():
+        try:
+            return json.loads(storage.bucket().Object(storage.key(latest)).get()["Body"].read())
+        except Exception as error:
+            if storage.missing(error):
+                return None
+            raise
+
+    return json.loads(latest.read_text()) if latest.is_file() else None
+
+
+@app.get("/glasses/firmware")
+def glasses_firmware() -> dict:
+    """Say which glasses firmware is newest, with a short-lived link to download it."""
+    found = latest_firmware()
+
+    if found is None:
+        raise HTTPException(404, "no firmware published")
+
+    image = FIRMWARE_DIR / pathlib.PurePosixPath(found["key"]).name
+    url = storage.download_url(image, "application/octet-stream", seconds=3600) if storage.enabled() \
+        else "/glasses/firmware/image"
+
+    return {"version": found["version"], "size": found["size"], "crc32": found["crc32"], "url": url}
+
+
+@app.get("/glasses/firmware/image")
+def glasses_firmware_image() -> FileResponse:
+    """Send the newest firmware image from the local data folder, when R2 isn't used."""
+    found = latest_firmware()
+    image = FIRMWARE_DIR / pathlib.PurePosixPath(found["key"]).name if found else None
+
+    if image is None or not image.is_file():
+        raise HTTPException(404, "no firmware published")
+
+    return FileResponse(image, media_type="application/octet-stream")
 
 
 @app.get("/glasses/status")
