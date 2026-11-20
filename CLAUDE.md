@@ -90,6 +90,11 @@ Everything else is your call.
   firmware updates over BLE (service 6e1f0001-…); with no phone for 30 s it falls back to Wi-Fi. Phone and glasses prove to each other
   that they hold the server token before photos, settings or updates pass. `firmware/glasses/flash.sh`
   flashes over USB with the two-slot OTA partition table; `publish.sh` uploads the app image and `firmware/latest.json` to R2.
+- The Bluetooth protocol is defined once, in the Rust crate `firmware/protocol`. `firmware/protocol/check.sh` runs its
+  tests, regenerates `app/MemoryGlasses/GlassesProtocol.swift` and `vectors.json`, and checks the app's Swift packet
+  code against them. Change the protocol there, never in the generated file.
+- A glasses recording ends when the phone or glasses say so (`POST /glasses/recordings/{id}/end`), or after five
+  minutes without a photo. Its state is in the `recording` table; photos that arrive later start a new part.
 - Database: Neon (`memory-glasses` org), from `DATABASE_URL` in `server/.env`. `uv run python -m memory.db list`. New
   tables go in a new numbered file in `server/migrations/`.
 - Files live in Cloudflare R2 (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` in

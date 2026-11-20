@@ -1,5 +1,4 @@
 import CoreBluetooth
-import CryptoKit
 import Foundation
 import Observation
 
@@ -30,6 +29,10 @@ struct FirmwareInfo: Decodable {
     let url: String
 }
 
+private struct RecordingEnded: Decodable {
+    let ended: [String]
+}
+
 struct ReceivedFrame {
     let recording: String
     let number: UInt32
@@ -40,15 +43,15 @@ struct ReceivedFrame {
 final class GlassesLink: NSObject {
     static let shared = GlassesLink()
 
-    static let service = CBUUID(string: "6E1F0001-6D65-6D6F-7279-676C61737365")
-    static let frameCharacteristic = CBUUID(string: "6E1F0002-6D65-6D6F-7279-676C61737365")
-    static let settingsCharacteristic = CBUUID(string: "6E1F0003-6D65-6D6F-7279-676C61737365")
-    static let ackCharacteristic = CBUUID(string: "6E1F0004-6D65-6D6F-7279-676C61737365")
-    static let updateCharacteristic = CBUUID(string: "6E1F0005-6D65-6D6F-7279-676C61737365")
-    static let updateStatusCharacteristic = CBUUID(string: "6E1F0006-6D65-6D6F-7279-676C61737365")
-    static let versionCharacteristic = CBUUID(string: "6E1F0007-6D65-6D6F-7279-676C61737365")
-    static let authCharacteristic = CBUUID(string: "6E1F0008-6D65-6D6F-7279-676C61737365")
-    private static let confirmEvery = 32 * 1024
+    static let service = CBUUID(string: GlassesProtocol.serviceUUID)
+    static let frameCharacteristic = CBUUID(string: GlassesProtocol.frameUUID)
+    static let settingsCharacteristic = CBUUID(string: GlassesProtocol.settingsUUID)
+    static let ackCharacteristic = CBUUID(string: GlassesProtocol.ackUUID)
+    static let updateCharacteristic = CBUUID(string: GlassesProtocol.updateUUID)
+    static let updateStatusCharacteristic = CBUUID(string: GlassesProtocol.updateStatusUUID)
+    static let versionCharacteristic = CBUUID(string: GlassesProtocol.versionUUID)
+    static let authCharacteristic = CBUUID(string: GlassesProtocol.authUUID)
+    private static let confirmEvery = GlassesProtocol.updateStep
     private static let updateQuiet = 45.0
 
     private static let rememberedKey = "glassesPeripheral"
@@ -77,6 +80,7 @@ final class GlassesLink: NSObject {
     private var update: (image: Data, sent: Int, confirmed: Int, version: String, ended: Bool)?
     private var updateHeard = Date()
     private var trusted = false
+    private var ending: Set<String> = []
     private var challenge: Data?
     private var expectedVersion: String?
     private var incoming: (length: Int, number: UInt32, recording: String, data: Data)?
@@ -108,6 +112,8 @@ final class GlassesLink: NSObject {
                     await self.deliver()
                 }
 
+                await self.settleEndings()
+
                 try? await Task.sleep(for: .seconds(60))
             }
         }
@@ -116,6 +122,34 @@ final class GlassesLink: NSObject {
     func push(_ settings: GlassesSettings) {
         lastSettings = settings
         write(settings, status: status.isEmpty ? nil : status)
+
+        if !settings.recording {
+            finishRecording()
+        }
+    }
+
+    private func finishRecording() {
+        guard let id = recording else { return }
+
+        ending.insert(id)
+        recording = nil
+
+        Task { @MainActor in
+            await self.deliver()
+            await self.settleEndings()
+        }
+    }
+
+    @MainActor
+    private func settleEndings() async {
+        for id in ending where await uploader.waiting(for: id) == 0 {
+            let done: RecordingEnded? = try? await API.current.send("/glasses/recordings/\(id)/end", method: "POST",
+                                                                    body: [String: String]())
+
+            if done != nil {
+                ending.remove(id)
+            }
+        }
     }
 
     @MainActor
@@ -149,10 +183,7 @@ final class GlassesLink: NSObject {
 
         Task { @MainActor in await self.watchUpdate(info.version) }
 
-        var header = Data([1])
-        header.append(UInt32(image.count).littleBytes)
-        header.append(info.crc32.littleBytes)
-        sendUpdate(header)
+        sendUpdate(GlassesPackets.updateBegin(size: image.count, crc: info.crc32))
     }
 
     private static func download(_ link: String) async -> Data? {
@@ -168,7 +199,7 @@ final class GlassesLink: NSObject {
             try? await Task.sleep(for: .seconds(5))
 
             if update?.version == version, Date().timeIntervalSince(updateHeard) > Self.updateQuiet {
-                sendUpdate(Data([4]))
+                sendUpdate(GlassesPackets.updateCancel)
                 failedVersion = version
                 update = nil
                 updateProgress = nil
@@ -180,7 +211,7 @@ final class GlassesLink: NSObject {
     func cancelUpdate() {
         guard update != nil else { return }
 
-        sendUpdate(Data([4]))
+        sendUpdate(GlassesPackets.updateCancel)
         update = nil
         updateProgress = nil
         updateStage = "Update cancelled"
@@ -200,7 +231,7 @@ final class GlassesLink: NSObject {
 
         while sent < job.image.count, sent - job.confirmed < Self.confirmEvery, peripheral.canSendWriteWithoutResponse {
             let end = min(sent + chunk, job.image.count, job.confirmed + Self.confirmEvery)
-            sendUpdate(Data([2]) + job.image.subdata(in: sent..<end))
+            sendUpdate(GlassesPackets.updateData(job.image.subdata(in: sent..<end)))
             sent = end
         }
 
@@ -208,7 +239,7 @@ final class GlassesLink: NSObject {
         updateProgress = Double(job.confirmed) / Double(job.image.count)
 
         if sent == job.image.count, peripheral.canSendWriteWithoutResponse {
-            sendUpdate(Data([3]))
+            sendUpdate(GlassesPackets.updateEnd)
             update?.ended = true
         }
     }
@@ -218,21 +249,24 @@ final class GlassesLink: NSObject {
 
         updateHeard = Date()
 
-        if text == "ready" {
+        switch UpdateStatus(text) {
+        case .ready:
             pump()
-        } else if text.hasPrefix("got "), let bytes = Int(text.dropFirst(4)) {
+        case .got(let bytes):
             update?.confirmed = bytes
             pump()
-        } else if text == "done" {
+        case .done:
             expectedVersion = update?.version
             update = nil
             updateProgress = 1
             updateStage = "Restarting…"
-        } else if text.hasPrefix("error") {
+        case .error(let reason):
             failedVersion = update?.version
             update = nil
             updateProgress = nil
-            updateStage = "Update failed: \(text.dropFirst(5).trimmingCharacters(in: .whitespaces))"
+            updateStage = "Update failed: \(reason)"
+        case nil:
+            break
         }
     }
 
@@ -288,8 +322,7 @@ final class GlassesLink: NSObject {
     private func acknowledge(_ number: UInt32) {
         guard let peripheral, let ackOut, peripheral.state == .connected else { return }
 
-        var value = number.littleEndian
-        peripheral.writeValue(Data(bytes: &value, count: 4), for: ackOut, type: .withoutResponse)
+        peripheral.writeValue(GlassesPackets.ack(number), for: ackOut, type: .withoutResponse)
     }
 
     private func findGlasses() {
@@ -314,22 +347,16 @@ final class GlassesLink: NSObject {
     }
 
     private func received(_ value: Data) {
-        guard trusted, update == nil, let kind = value.first else { return }
+        guard trusted, update == nil else { return }
 
-        let payload = value.dropFirst()
-
-        switch kind {
-        case 1 where payload.count >= 24:
-            let length = Int(payload.uint32(at: 0))
-            let number = payload.uint32(at: 4)
-            let name = String(decoding: payload.dropFirst(8).prefix(16), as: UTF8.self)
-                .trimmingCharacters(in: .controlCharacters.union(.whitespaces))
+        switch FramePacket(value) {
+        case .start(let length, let number, let name):
             incoming = (length, number, name, Data(capacity: length))
-        case 2:
-            incoming?.data.append(contentsOf: payload)
-        case 3 where payload.count >= 4:
-            finish(expected: payload.uint32(at: 0))
-        default:
+        case .data(let piece):
+            incoming?.data.append(piece)
+        case .end(let crc):
+            finish(expected: crc)
+        case nil:
             break
         }
     }
@@ -348,6 +375,8 @@ final class GlassesLink: NSObject {
             recording = frame.recording
             photosSent = 0
         }
+
+        ending.remove(frame.recording)
 
         let received = ReceivedFrame(recording: frame.recording, number: frame.number, jpeg: frame.data)
 
@@ -441,6 +470,14 @@ extension GlassesLink: CBCentralManagerDelegate {
         }
         central.connect(gone)
         central.scanForPeripherals(withServices: [Self.service])
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(30))
+
+            if self.state != .connected {
+                self.finishRecording()
+            }
+        }
     }
 }
 
@@ -477,7 +514,7 @@ extension GlassesLink: CBPeripheralDelegate {
         let token = API.current.token
 
         if let auth = service.characteristics?.first(where: { $0.uuid == Self.authCharacteristic }), !token.isEmpty {
-            let asked = Data((0..<16).map { _ in UInt8.random(in: .min ... .max) })
+            let asked = Data((0..<GlassesProtocol.nonceBytes).map { _ in UInt8.random(in: .min ... .max) })
 
             challenge = asked
             peripheral.writeValue(asked, for: auth, type: .withResponse)
@@ -512,20 +549,15 @@ extension GlassesLink: CBPeripheralDelegate {
     }
 
     private func answer(_ value: Data, on peripheral: CBPeripheral, for auth: CBCharacteristic) {
-        guard let asked = challenge, value.count == 32 else { return }
-
-        let key = SymmetricKey(data: Data(API.current.token.utf8))
-        let theirs = Data(value.prefix(16))
-        let proof = Data(HMAC<SHA256>.authenticationCode(for: Data("g".utf8) + asked + theirs, using: key))
+        guard let asked = challenge else { return }
 
         challenge = nil
 
-        guard Data(value.suffix(16)) == proof.prefix(16) else {
+        guard let reply = GlassesPackets.reply(to: value, token: API.current.token, phone: asked) else {
             updateStage = "These glasses don't know this server's token"
             return
         }
 
-        let reply = Data(HMAC<SHA256>.authenticationCode(for: Data("p".utf8) + asked + theirs, using: key))
         peripheral.writeValue(reply, for: auth, type: .withResponse)
         trusted = true
 
@@ -581,6 +613,10 @@ actor FrameUploader {
 
     func waiting() -> Int {
         queued().count
+    }
+
+    func waiting(for recording: String) -> Int {
+        queued().filter { Self.recording(of: $0) == recording }.count
     }
 
     func flush() async -> UploadResult {
@@ -690,33 +726,5 @@ actor FrameUploader {
         remember(reply, for: recording)
 
         return try API.decoder.decode(GlassesSettings.self, from: reply)
-    }
-}
-
-enum CRC32 {
-    private static let table: [UInt32] = (0..<256).map { index in
-        (0..<8).reduce(UInt32(index)) { value, _ in value & 1 == 1 ? 0xEDB8_8320 ^ (value >> 1) : value >> 1 }
-    }
-
-    static func of(_ data: Data) -> UInt32 {
-        ~data.reduce(UInt32.max) { crc, byte in table[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8) }
-    }
-}
-
-private extension UInt32 {
-    var littleBytes: Data {
-        var value = littleEndian
-
-        return Data(bytes: &value, count: 4)
-    }
-}
-
-private extension Data {
-    func uint32(at offset: Int) -> UInt32 {
-        let start = index(startIndex, offsetBy: offset)
-
-        return self[start..<index(start, offsetBy: 4)].enumerated().reduce(UInt32(0)) { value, pair in
-            value | UInt32(pair.element) << (8 * UInt32(pair.offset))
-        }
     }
 }

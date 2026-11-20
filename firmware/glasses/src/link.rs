@@ -6,20 +6,14 @@ use std::time::{Duration, Instant};
 
 use esp32_nimble::utilities::mutex::Mutex;
 use esp32_nimble::utilities::BleUuid;
-use esp32_nimble::{uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties};
+use esp32_nimble::{BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties};
 use esp_idf_svc::sys;
+use protocol::{auth, frame, update, word};
 
-const SERVICE: BleUuid = uuid128!("6e1f0001-6d65-6d6f-7279-676c61737365");
-const FRAME: BleUuid = uuid128!("6e1f0002-6d65-6d6f-7279-676c61737365");
-const SETTINGS: BleUuid = uuid128!("6e1f0003-6d65-6d6f-7279-676c61737365");
-const ACK: BleUuid = uuid128!("6e1f0004-6d65-6d6f-7279-676c61737365");
-const UPDATE: BleUuid = uuid128!("6e1f0005-6d65-6d6f-7279-676c61737365");
-const UPDATE_STATUS: BleUuid = uuid128!("6e1f0006-6d65-6d6f-7279-676c61737365");
-const VERSION: BleUuid = uuid128!("6e1f0007-6d65-6d6f-7279-676c61737365");
-const AUTH: BleUuid = uuid128!("6e1f0008-6d65-6d6f-7279-676c61737365");
+fn uuid(text: &str) -> BleUuid {
+    BleUuid::from_uuid128_string(text).expect("a valid UUID")
+}
 
-const NAME: &str = "Memory Glasses";
-const UPDATE_STEP: usize = 32 * 1024;
 
 pub enum Message {
     Settings(Vec<u8>),
@@ -37,42 +31,8 @@ pub struct Link {
     updating: Arc<AtomicBool>,
 }
 
-pub fn crc32(data: &[u8]) -> u32 {
-    crc32_continue(0, data)
-}
-
-fn crc32_continue(crc: u32, data: &[u8]) -> u32 {
-    let mut crc = !crc;
-
-    for &byte in data {
-        crc ^= byte as u32;
-
-        for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
-        }
-    }
-
-    !crc
-}
-
-fn word(bytes: &[u8]) -> Option<u32> {
-    Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?))
-}
-
-fn sign(key: &[u8], label: u8, phone: &[u8], glasses: &[u8]) -> [u8; 32] {
-    let message = [&[label], phone, glasses].concat();
-    let mut out = [0u8; 32];
-
-    unsafe {
-        let kind = sys::mbedtls_md_info_from_type(sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256);
-        sys::mbedtls_md_hmac(kind, key.as_ptr(), key.len(), message.as_ptr(), message.len(), out.as_mut_ptr());
-    }
-
-    out
-}
-
-fn random_nonce() -> [u8; 16] {
-    let mut nonce = [0u8; 16];
+fn random_nonce() -> [u8; auth::NONCE_BYTES] {
+    let mut nonce = [0u8; auth::NONCE_BYTES];
 
     for part in nonce.chunks_mut(4) {
         part.copy_from_slice(&unsafe { sys::esp_random() }.to_le_bytes());
@@ -84,7 +44,7 @@ fn random_nonce() -> [u8; 16] {
 impl Link {
     pub fn start(version: &str, token: &'static str) -> Link {
         let device = BLEDevice::take();
-        let _ = BLEDevice::set_device_name(NAME);
+        let _ = BLEDevice::set_device_name(protocol::DEVICE_NAME);
         let _ = device.set_preferred_mtu(517);
 
         let server = device.get_server();
@@ -118,15 +78,15 @@ impl Link {
             on_disconnect.2.store(token.is_empty(), Ordering::SeqCst);
 
             if on_disconnect.3.load(Ordering::SeqCst) {
-                let _ = on_disconnect.4.send(vec![4]);
+                let _ = on_disconnect.4.send(vec![update::CANCEL]);
             }
 
             println!("phone disconnected: {reason:?}");
         });
 
-        let service = server.create_service(SERVICE);
+        let service = server.create_service(uuid(protocol::SERVICE));
 
-        let frame = service.lock().create_characteristic(FRAME, NimbleProperties::NOTIFY);
+        let frame = service.lock().create_characteristic(uuid(protocol::FRAME), NimbleProperties::NOTIFY);
         let on_subscribe = (subscribed.clone(), mtu.clone());
         frame.lock().on_subscribe(move |characteristic, desc, _| {
             on_subscribe.0.store(characteristic.subscribed_count() > 0, Ordering::SeqCst);
@@ -134,60 +94,57 @@ impl Link {
         });
 
         let settings = (send.clone(), trusted.clone());
-        service.lock().create_characteristic(SETTINGS, NimbleProperties::WRITE).lock().on_write(move |args| {
+        service.lock().create_characteristic(uuid(protocol::SETTINGS), NimbleProperties::WRITE).lock().on_write(move |args| {
             if settings.1.load(Ordering::SeqCst) {
                 let _ = settings.0.send(Message::Settings(args.recv_data().to_vec()));
             }
         });
 
         let ack_trusted = trusted.clone();
-        service.lock().create_characteristic(ACK, NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
+        service.lock().create_characteristic(uuid(protocol::ACK), NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
             if let Some(number) = word(args.recv_data()).filter(|_| ack_trusted.load(Ordering::SeqCst)) {
                 let _ = send.send(Message::Ack(number));
             }
         });
 
         let update_trusted = trusted.clone();
-        service.lock().create_characteristic(UPDATE, NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
+        service.lock().create_characteristic(uuid(protocol::UPDATE), NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
             if update_trusted.load(Ordering::SeqCst) {
                 let _ = update_send.send(args.recv_data().to_vec());
             }
         });
 
         if !token.is_empty() {
-            let auth = service.lock().create_characteristic(AUTH, NimbleProperties::READ | NimbleProperties::WRITE);
+            let auth = service.lock().create_characteristic(uuid(protocol::AUTH), NimbleProperties::READ | NimbleProperties::WRITE);
             let asked = nonces.clone();
             let answered = (nonces.clone(), trusted.clone());
 
             auth.lock().on_read(move |characteristic, _| {
                 let pair = asked.lock();
-                let proof = sign(token.as_bytes(), b'g', &pair.0, &pair.1);
-                characteristic.set_value(&[&pair.1[..], &proof[..16]].concat());
+                characteristic.set_value(&auth::glasses_answer(token, &pair.0, &pair.1));
             });
 
             auth.lock().on_write(move |args| {
                 let data = args.recv_data();
                 let mut pair = answered.0.lock();
 
-                if data.len() == 16 {
+                if data.len() == auth::NONCE_BYTES {
                     pair.0.copy_from_slice(data);
                     pair.1 = random_nonce();
                     answered.1.store(false, Ordering::SeqCst);
-                } else if data.len() == 32 {
-                    let expected = sign(token.as_bytes(), b'p', &pair.0, &pair.1);
-                    let differs = expected.iter().zip(data).fold(0u8, |sum, (ours, theirs)| sum | (ours ^ theirs));
-                    answered.1.store(differs == 0, Ordering::SeqCst);
+                } else if data.len() == auth::PROOF_BYTES {
+                    answered.1.store(auth::phone_is_right(token, &pair.0, &pair.1, data), Ordering::SeqCst);
                     pair.1 = random_nonce();
                 }
             });
         }
 
-        let update_status = service.lock().create_characteristic(UPDATE_STATUS, NimbleProperties::NOTIFY);
+        let update_status = service.lock().create_characteristic(uuid(protocol::UPDATE_STATUS), NimbleProperties::NOTIFY);
 
-        service.lock().create_characteristic(VERSION, NimbleProperties::READ).lock().set_value(version.as_bytes());
+        service.lock().create_characteristic(uuid(protocol::VERSION), NimbleProperties::READ).lock().set_value(version.as_bytes());
 
         let mut data = BLEAdvertisementData::new();
-        data.name(NAME).add_service_uuid(SERVICE);
+        data.name(protocol::DEVICE_NAME).add_service_uuid(uuid(protocol::SERVICE));
         let _ = advertising.lock().scan_response(true).set_data(&mut data);
         let _ = advertising.lock().start();
 
@@ -243,33 +200,20 @@ impl Link {
     }
 
     pub fn send_frame(&self, jpeg: &[u8], number: u32, recording: &str) -> bool {
-        let mut start = vec![1u8];
-        start.extend_from_slice(&(jpeg.len() as u32).to_le_bytes());
-        start.extend_from_slice(&number.to_le_bytes());
-        start.extend_from_slice(&recording.as_bytes()[..recording.len().min(16)]);
-
-        if !self.notify(&start) {
+        if !self.notify(&frame::start(jpeg.len() as u32, number, recording)) {
             return false;
         }
 
         let mtu = BLEDevice::take().get_server().connections().next().map(|desc| desc.mtu())
             .unwrap_or_else(|| self.mtu.load(Ordering::SeqCst));
-        let chunk = (mtu as usize).saturating_sub(4).max(19);
 
-        for piece in jpeg.chunks(chunk) {
-            let mut data = Vec::with_capacity(piece.len() + 1);
-            data.push(2u8);
-            data.extend_from_slice(piece);
-
-            if !self.notify(&data) {
+        for piece in jpeg.chunks(frame::piece_size(mtu)) {
+            if !self.notify(&frame::data(piece)) {
                 return false;
             }
         }
 
-        let mut end = vec![3u8];
-        end.extend_from_slice(&crc32(jpeg).to_le_bytes());
-
-        self.notify(&end)
+        self.notify(&frame::end(protocol::crc32(jpeg)))
     }
 }
 
@@ -285,9 +229,15 @@ struct Update {
 
 unsafe impl Send for Update {}
 
-fn say(status: &Arc<Mutex<BLECharacteristic>>, text: &str) {
+fn say(status: &Arc<Mutex<BLECharacteristic>>, message: update::Status) {
+    let text = message.text();
+
     println!("update: {text}");
     status.lock().set_value(text.as_bytes()).notify();
+}
+
+fn fail(status: &Arc<Mutex<BLECharacteristic>>, reason: impl Into<String>) {
+    say(status, update::Status::Error(reason.into()));
 }
 
 fn abandon(update: &mut Option<Update>) {
@@ -296,10 +246,7 @@ fn abandon(update: &mut Option<Update>) {
     }
 }
 
-fn begin(payload: &[u8]) -> Result<Update, String> {
-    let size = word(payload).ok_or("short begin")?;
-    let crc = word(payload.get(4..).unwrap_or_default()).ok_or("short begin")?;
-
+fn begin(size: u32, crc: u32) -> Result<Update, String> {
     let partition = unsafe { sys::esp_ota_get_next_update_partition(std::ptr::null()) };
     if partition.is_null() {
         return Err("no update slot".into());
@@ -347,32 +294,30 @@ fn run_updates(incoming: Receiver<Vec<u8>>, status: Arc<Mutex<BLECharacteristic>
     let mut update: Option<Update> = None;
 
     for message in incoming {
-        let Some((&kind, payload)) = message.split_first() else { continue };
-
-        match kind {
-            1 => {
+        match update::parse(&message) {
+            Some(update::Packet::Begin { size, crc }) => {
                 abandon(&mut update);
                 updating.store(true, Ordering::SeqCst);
                 progress.store(0, Ordering::SeqCst);
 
-                match begin(payload) {
+                match begin(size, crc) {
                     Ok(started) => {
                         update = Some(started);
-                        say(&status, "ready");
+                        say(&status, update::Status::Ready);
                     }
                     Err(reason) => {
                         updating.store(false, Ordering::SeqCst);
-                        say(&status, &format!("error {reason}"));
+                        fail(&status, reason);
                     }
                 }
             }
-            2 => {
+            Some(update::Packet::Data(payload)) => {
                 let Some(current) = update.as_mut() else { continue };
 
                 if current.received + payload.len() as u32 > current.size {
                     abandon(&mut update);
                     updating.store(false, Ordering::SeqCst);
-                    say(&status, "error too many bytes");
+                    fail(&status, "too many bytes");
                     continue;
                 }
 
@@ -380,41 +325,40 @@ fn run_updates(incoming: Receiver<Vec<u8>>, status: Arc<Mutex<BLECharacteristic>
                 if result != sys::ESP_OK {
                     abandon(&mut update);
                     updating.store(false, Ordering::SeqCst);
-                    say(&status, &format!("error write failed {result}"));
+                    fail(&status, format!("write failed {result}"));
                     continue;
                 }
 
                 current.received += payload.len() as u32;
-                current.running_crc = crc32_continue(current.running_crc, payload);
+                current.running_crc = protocol::crc32_continue(current.running_crc, payload);
                 progress.store((current.received as u64 * 100 / current.size.max(1) as u64) as u8, Ordering::SeqCst);
 
-                if current.received / UPDATE_STEP as u32 > current.reported {
-                    current.reported = current.received / UPDATE_STEP as u32;
-                    let text = format!("got {}", current.received);
-                    say(&status, &text);
+                if current.received / update::STEP as u32 > current.reported {
+                    current.reported = current.received / update::STEP as u32;
+                    say(&status, update::Status::Got(current.received));
                 }
             }
-            3 => {
+            Some(update::Packet::End) => {
                 let Some(current) = update.take() else { continue };
 
                 match finish(current) {
                     Ok(()) => {
-                        say(&status, "done");
+                        say(&status, update::Status::Done);
                         thread::sleep(Duration::from_millis(500));
                         unsafe { sys::esp_restart() };
                     }
                     Err(reason) => {
                         updating.store(false, Ordering::SeqCst);
-                        say(&status, &format!("error {reason}"));
+                        fail(&status, reason);
                     }
                 }
             }
-            4 => {
+            Some(update::Packet::Cancel) => {
                 abandon(&mut update);
                 updating.store(false, Ordering::SeqCst);
-                say(&status, "error cancelled");
+                fail(&status, "cancelled");
             }
-            _ => {}
+            None => {}
         }
     }
 }

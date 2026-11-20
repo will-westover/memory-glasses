@@ -79,11 +79,12 @@ struct State {
     recording_id: String,
     sent: u32,
     status: Option<String>,
+    stopped: Option<String>,
 }
 
 impl State {
     fn new() -> Self {
-        State { rate: DEFAULT_FRAMES_PER_MINUTE, recording: true, recording_id: new_recording_id(), sent: 0, status: None }
+        State { rate: DEFAULT_FRAMES_PER_MINUTE, recording: true, recording_id: new_recording_id(), sent: 0, status: None, stopped: None }
     }
 
     fn apply(&mut self, reply: &[u8], display: &mut Display) -> Option<Option<Upload>> {
@@ -96,6 +97,10 @@ impl State {
         if recording && !self.recording {
             self.recording_id = new_recording_id();
             self.sent = 0;
+        }
+
+        if !recording && self.recording && self.sent > 0 {
+            self.stopped = Some(self.recording_id.clone());
         }
 
         self.rate = number("frames_per_minute", self.rate);
@@ -415,6 +420,11 @@ impl Online {
     fn step(&mut self, state: &mut State, display: &mut Display) {
         if !state.recording || state.rate <= 0.0 {
             display.show(&[if state.recording { "No pics" } else { "Paused" }]);
+
+            if let Some(ended) = state.stopped.take() {
+                let _ = ask_server(&mut self.server, Method::Post, &format!("/glasses/recordings/{ended}/end"), &[], &[]);
+            }
+
             thread::sleep(PAUSED_CHECK);
 
             let probe = if state.recording { state.recording_id.clone() } else { new_recording_id() };
@@ -484,6 +494,7 @@ fn wait_for_ack(link: &Link, state: &mut State, display: &mut Display, number: u
 fn by_phone(link: &Link, state: &mut State, display: &mut Display) {
     if !state.recording || state.rate <= 0.0 {
         display.show(&["BT", if state.recording { "No pics" } else { "Paused" }]);
+        state.stopped = None;
         listen(link, state, display, LISTEN);
         return;
     }
