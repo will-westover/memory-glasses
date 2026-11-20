@@ -93,7 +93,8 @@ Everything else is your call.
   (see `glasses.example.toml`). The board needs its antenna attached and a 2.4 GHz network: turn on the hotspot's
   Maximize Compatibility.
 - Glasses over Bluetooth (in progress): the firmware advertises "Memory Glasses" and streams frames, takes settings and
-  firmware updates over BLE (service 6e1f0001-…); with no phone for 30 s it falls back to Wi-Fi. `firmware/glasses/flash.sh`
+  firmware updates over BLE (service 6e1f0001-…); with no phone for 30 s it falls back to Wi-Fi. Phone and glasses prove to each other
+  that they hold the server token before photos, settings or updates pass. `firmware/glasses/flash.sh`
   flashes over USB with the two-slot OTA partition table; `publish.sh` uploads the app image and `firmware/latest.json` to R2.
 - Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
   in a new numbered file in `server/migrations/`.

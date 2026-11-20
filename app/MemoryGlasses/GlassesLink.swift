@@ -1,4 +1,5 @@
 import CoreBluetooth
+import CryptoKit
 import Foundation
 import Observation
 
@@ -46,7 +47,9 @@ final class GlassesLink: NSObject {
     static let updateCharacteristic = CBUUID(string: "6E1F0005-6D65-6D6F-7279-676C61737365")
     static let updateStatusCharacteristic = CBUUID(string: "6E1F0006-6D65-6D6F-7279-676C61737365")
     static let versionCharacteristic = CBUUID(string: "6E1F0007-6D65-6D6F-7279-676C61737365")
+    static let authCharacteristic = CBUUID(string: "6E1F0008-6D65-6D6F-7279-676C61737365")
     private static let confirmEvery = 32 * 1024
+    private static let updateQuiet = 45.0
 
     private static let rememberedKey = "glassesPeripheral"
     private static let restoreKey = "memory-glasses-link"
@@ -62,7 +65,7 @@ final class GlassesLink: NSObject {
     var updateStage: String?
 
     var canUpdate: Bool {
-        state == .connected && availableUpdate != nil && update == nil
+        state == .connected && trusted && availableUpdate != nil && update == nil
     }
 
     private var central: CBCentralManager?
@@ -71,7 +74,10 @@ final class GlassesLink: NSObject {
     private var ackOut: CBCharacteristic?
     private var updateOut: CBCharacteristic?
     private var versionIn: CBCharacteristic?
-    private var update: (image: Data, sent: Int, confirmed: Int, version: String)?
+    private var update: (image: Data, sent: Int, confirmed: Int, version: String, ended: Bool)?
+    private var updateHeard = Date()
+    private var trusted = false
+    private var challenge: Data?
     private var expectedVersion: String?
     private var incoming: (length: Int, number: UInt32, recording: String, data: Data)?
     private var lastSettings: GlassesSettings?
@@ -95,6 +101,16 @@ final class GlassesLink: NSObject {
                 await self.checkForUpdate()
             }
         }
+
+        Task { @MainActor in
+            while true {
+                if await self.uploader.waiting() > 0 {
+                    await self.deliver()
+                }
+
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
     }
 
     func push(_ settings: GlassesSettings) {
@@ -104,13 +120,12 @@ final class GlassesLink: NSObject {
 
     @MainActor
     func startUpdate() async {
-        guard let info = availableUpdate, let url = URL(string: info.url), update == nil else { return }
+        guard let info = availableUpdate, update == nil else { return }
 
         updateStage = "Downloading the update…"
         updateProgress = 0
 
-        guard let (image, response) = try? await URLSession.shared.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200 else {
+        guard let image = await Self.download(info.url) else {
             updateStage = "Couldn't download the update"
             updateProgress = nil
             return
@@ -122,13 +137,48 @@ final class GlassesLink: NSObject {
             return
         }
 
-        update = (image, 0, 0, info.version)
+        guard state == .connected, updateOut != nil, update == nil else {
+            updateStage = "The glasses disconnected before the update was sent"
+            updateProgress = nil
+            return
+        }
+
+        update = (image, 0, 0, info.version, false)
+        updateHeard = Date()
         updateStage = "Sending the update…"
+
+        Task { @MainActor in await self.watchUpdate(info.version) }
 
         var header = Data([1])
         header.append(UInt32(image.count).littleBytes)
         header.append(info.crc32.littleBytes)
         sendUpdate(header)
+    }
+
+    private static func download(_ link: String) async -> Data? {
+        if link.hasPrefix("/") {
+            return try? await API.current.data(for: API.current.request(link))
+        }
+
+        guard let url = URL(string: link), let (image, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+
+        return image
+    }
+
+    @MainActor
+    private func watchUpdate(_ version: String) async {
+        while update?.version == version {
+            try? await Task.sleep(for: .seconds(5))
+
+            if update?.version == version, Date().timeIntervalSince(updateHeard) > Self.updateQuiet {
+                sendUpdate(Data([4]))
+                failedVersion = version
+                update = nil
+                updateProgress = nil
+                updateStage = "The update stalled; nothing was installed"
+            }
+        }
     }
 
     func cancelUpdate() {
@@ -147,7 +197,7 @@ final class GlassesLink: NSObject {
     }
 
     private func pump() {
-        guard let peripheral, let job = update, job.sent < job.image.count else { return }
+        guard let peripheral, let job = update, !job.ended else { return }
 
         let chunk = max(peripheral.maximumWriteValueLength(for: .withoutResponse) - 1, 20)
         var sent = job.sent
@@ -161,13 +211,16 @@ final class GlassesLink: NSObject {
         update?.sent = sent
         updateProgress = Double(job.confirmed) / Double(job.image.count)
 
-        if sent == job.image.count {
+        if sent == job.image.count, peripheral.canSendWriteWithoutResponse {
             sendUpdate(Data([3]))
+            update?.ended = true
         }
     }
 
     private func updateSaid(_ text: String) {
         guard update != nil else { return }
+
+        updateHeard = Date()
 
         if text == "ready" {
             pump()
@@ -208,7 +261,7 @@ final class GlassesLink: NSObject {
         defer { checking = false }
 
         let latest: FirmwareInfo? = try? await API.current.get("/glasses/firmware")
-        availableUpdate = latest.flatMap { $0.version == version ? nil : $0 }
+        availableUpdate = latest.flatMap { $0.version > version ? $0 : nil }
 
         guard let found = availableUpdate else {
             if updateProgress == nil, expectedVersion == nil, !(updateStage ?? "").hasPrefix("Updated") {
@@ -265,7 +318,7 @@ final class GlassesLink: NSObject {
     }
 
     private func received(_ value: Data) {
-        guard update == nil, let kind = value.first else { return }
+        guard trusted, update == nil, let kind = value.first else { return }
 
         let payload = value.dropFirst()
 
@@ -382,6 +435,8 @@ extension GlassesLink: CBCentralManagerDelegate {
         updateOut = nil
         versionIn = nil
         incoming = nil
+        trusted = false
+        challenge = nil
 
         if update != nil {
             update = nil
@@ -423,6 +478,18 @@ extension GlassesLink: CBPeripheralDelegate {
             }
         }
 
+        let token = API.current.token
+
+        if let auth = service.characteristics?.first(where: { $0.uuid == Self.authCharacteristic }), !token.isEmpty {
+            let asked = Data((0..<16).map { _ in UInt8.random(in: .min ... .max) })
+
+            challenge = asked
+            peripheral.writeValue(asked, for: auth, type: .withResponse)
+            peripheral.readValue(for: auth)
+        } else {
+            trusted = true
+        }
+
         Task { @MainActor in
             if let settings: GlassesSettings = try? await API.current.get("/settings") {
                 self.lastSettings = settings
@@ -441,8 +508,33 @@ extension GlassesLink: CBPeripheralDelegate {
             updateSaid(String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
         case Self.versionCharacteristic:
             versionArrived(String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        case Self.authCharacteristic:
+            answer(value, on: peripheral, for: characteristic)
         default:
             break
+        }
+    }
+
+    private func answer(_ value: Data, on peripheral: CBPeripheral, for auth: CBCharacteristic) {
+        guard let asked = challenge, value.count == 32 else { return }
+
+        let key = SymmetricKey(data: Data(API.current.token.utf8))
+        let theirs = Data(value.prefix(16))
+        let proof = Data(HMAC<SHA256>.authenticationCode(for: Data("g".utf8) + asked + theirs, using: key))
+
+        challenge = nil
+
+        guard Data(value.suffix(16)) == proof.prefix(16) else {
+            updateStage = "These glasses don't know this server's token"
+            return
+        }
+
+        let reply = Data(HMAC<SHA256>.authenticationCode(for: Data("p".utf8) + asked + theirs, using: key))
+        peripheral.writeValue(reply, for: auth, type: .withResponse)
+        trusted = true
+
+        if let settings = lastSettings {
+            write(settings, status: status.isEmpty ? nil : status)
         }
     }
 
@@ -491,6 +583,10 @@ actor FrameUploader {
         }
     }
 
+    func waiting() -> Int {
+        queued().count
+    }
+
     func flush() async -> UploadResult {
         guard !flushing else { return UploadResult(sent: 0, waiting: queued().count, settings: nil, busy: true) }
 
@@ -506,11 +602,17 @@ actor FrameUploader {
                 continue
             }
 
-            guard let reply = try? await upload(jpeg, recording: recording) else { break }
+            do {
+                settings = try await upload(jpeg, recording: recording, taken: Self.taken(of: file))
+                sent += 1
+            } catch APIError.status(let code) where code == 413 || code == 422 {
+                try? FileManager.default.removeItem(at: file)
+                continue
+            } catch {
+                break
+            }
 
             try? FileManager.default.removeItem(at: file)
-            settings = reply
-            sent += 1
         }
 
         return UploadResult(sent: sent, waiting: queued().count, settings: settings)
@@ -528,7 +630,11 @@ actor FrameUploader {
         return parts.count >= 4 ? parts[2..<(parts.count - 1)].joined(separator: "-") : nil
     }
 
-    private func upload(_ jpeg: Data, recording: String) async throws -> GlassesSettings {
+    private static func taken(of file: URL) -> Double? {
+        file.lastPathComponent.split(separator: "-").first.flatMap { Double($0) }
+    }
+
+    private func upload(_ jpeg: Data, recording: String, taken: Double?) async throws -> GlassesSettings {
         let api = API.current
 
         if slots[recording] == nil {
@@ -545,6 +651,7 @@ actor FrameUploader {
 
             var notify = framed(try api.request("/glasses/frames", method: "POST"), recording)
             notify.setValue(slots[recording]?.name, forHTTPHeaderField: "X-Uploaded")
+            notify.setValue(taken.map { String($0) }, forHTTPHeaderField: "X-Taken")
             slots[recording] = nil
 
             return try finished(await api.data(for: notify), for: recording)
@@ -553,6 +660,7 @@ actor FrameUploader {
         var direct = framed(try api.request("/glasses/frames", method: "POST"), recording)
         direct.httpBody = jpeg
         direct.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        direct.setValue(taken.map { String($0) }, forHTTPHeaderField: "X-Taken")
 
         return try finished(await api.data(for: direct), for: recording)
     }

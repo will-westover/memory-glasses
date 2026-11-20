@@ -535,7 +535,7 @@ fn main() {
 
     let sysloop = EspSystemEventLoop::take().unwrap();
     let nvs = EspDefaultNvsPartition::take().ok();
-    let link = Link::start(VERSION);
+    let link = Link::start(VERSION, TOKEN);
     let mut online = (!WIFI_NAME.is_empty() && !SERVER.is_empty()).then(|| Online {
         wifi: BlockingWifi::wrap(EspWifi::new(peripherals.modem, sysloop.clone(), nvs).unwrap(), sysloop).unwrap(),
         joined: false,
@@ -544,10 +544,9 @@ fn main() {
         upload: None,
     });
 
-    keep_this_firmware();
-
     let mut state = State::new();
     let mut last_phone = Instant::now();
+    let mut kept = false;
 
     display.show(&["BT", "waiting"]);
 
@@ -559,6 +558,11 @@ fn main() {
         }
 
         if link.ready() {
+            if !kept {
+                keep_this_firmware();
+                kept = true;
+            }
+
             if let Some(online) = online.as_mut() {
                 online.stop();
             }

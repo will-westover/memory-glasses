@@ -1,5 +1,6 @@
 """Frames sent one at a time by the glasses, gathered into recordings and turned into videos when they stop."""
 
+import itertools
 import re
 import subprocess
 import time
@@ -19,9 +20,18 @@ REMOTE = {"at": float("-inf"), "files": {}}
 ARRIVED = {}
 
 
+def open_folder(recording: str) -> Path:
+    """Return the recording's folder, or its next part once the earlier ones have become videos."""
+    for part in itertools.count(1):
+        folder = GLASSES_DIR / (recording if part == 1 else f"{recording}-part{part}")
+
+        if not storage.exists(folder / "video.mp4"):
+            return folder
+
+
 def frame_path(recording: str, now: float) -> Path:
-    """Return where a frame arriving now belongs: named by milliseconds since the recording's first frame."""
-    folder = GLASSES_DIR / recording
+    """Return where a frame taken now belongs: named by milliseconds since the recording's first frame."""
+    folder = open_folder(recording)
     started_file = folder / "started"
 
     folder.mkdir(parents=True, exist_ok=True)
@@ -30,14 +40,15 @@ def frame_path(recording: str, now: float) -> Path:
         started_file.write_text(repr(now))
         storage.save(started_file)
 
-    offset = round((now - float(started_file.read_text())) * 1000)
+    offset = max(0, round((now - float(started_file.read_text())) * 1000))
 
     return folder / f"{offset:09d}.jpg"
 
 
-def save_frame(recording: str, jpeg: bytes, now: float | None = None) -> Path:
-    """Store one frame sent to the server under its recording."""
-    path = frame_path(recording, time.time() if now is None else now)
+def save_frame(recording: str, jpeg: bytes, now: float | None = None, taken: float | None = None) -> Path:
+    """Store one frame sent to the server under its recording, at the time it was taken when that is known."""
+    now = time.time() if now is None else now
+    path = frame_path(recording, now if taken is None else min(taken, now))
     path.write_bytes(jpeg)
 
     storage.save(path)
@@ -55,7 +66,7 @@ def upload_slot(recording: str) -> dict:
     return {"upload_url": storage.upload_url(GLASSES_DIR / recording / f"{name}.pending"), "upload_name": name}
 
 
-def arrived(recording: str, name: str, now: float | None = None) -> Path | None:
+def arrived(recording: str, name: str, now: float | None = None, taken: float | None = None) -> Path | None:
     """Give a frame the glasses put in R2 its place in the recording, or None if it isn't there or is too big."""
     pending = GLASSES_DIR / recording / f"{name}.pending"
     size = storage.size(pending)
@@ -68,10 +79,10 @@ def arrived(recording: str, name: str, now: float | None = None) -> Path | None:
         return None
 
     now = time.time() if now is None else now
-    path = frame_path(recording, now)
+    path = frame_path(recording, now if taken is None else min(taken, now))
     storage.copy(pending, path)
     storage.delete(pending)
-    ARRIVED[f"{recording}/{path.name}"] = now
+    ARRIVED[f"{path.parent.name}/{path.name}"] = now
 
     return path
 

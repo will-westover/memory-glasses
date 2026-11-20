@@ -16,6 +16,7 @@ const ACK: BleUuid = uuid128!("6e1f0004-6d65-6d6f-7279-676c61737365");
 const UPDATE: BleUuid = uuid128!("6e1f0005-6d65-6d6f-7279-676c61737365");
 const UPDATE_STATUS: BleUuid = uuid128!("6e1f0006-6d65-6d6f-7279-676c61737365");
 const VERSION: BleUuid = uuid128!("6e1f0007-6d65-6d6f-7279-676c61737365");
+const AUTH: BleUuid = uuid128!("6e1f0008-6d65-6d6f-7279-676c61737365");
 
 const NAME: &str = "Memory Glasses";
 const UPDATE_STEP: usize = 32 * 1024;
@@ -30,6 +31,7 @@ pub struct Link {
     messages: Receiver<Message>,
     connected: Arc<AtomicBool>,
     subscribed: Arc<AtomicBool>,
+    trusted: Arc<AtomicBool>,
     mtu: Arc<AtomicU16>,
     progress: Arc<AtomicU8>,
     updating: Arc<AtomicBool>,
@@ -57,8 +59,30 @@ fn word(bytes: &[u8]) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?))
 }
 
+fn sign(key: &[u8], label: u8, phone: &[u8], glasses: &[u8]) -> [u8; 32] {
+    let message = [&[label], phone, glasses].concat();
+    let mut out = [0u8; 32];
+
+    unsafe {
+        let kind = sys::mbedtls_md_info_from_type(sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256);
+        sys::mbedtls_md_hmac(kind, key.as_ptr(), key.len(), message.as_ptr(), message.len(), out.as_mut_ptr());
+    }
+
+    out
+}
+
+fn random_nonce() -> [u8; 16] {
+    let mut nonce = [0u8; 16];
+
+    for part in nonce.chunks_mut(4) {
+        part.copy_from_slice(&unsafe { sys::esp_random() }.to_le_bytes());
+    }
+
+    nonce
+}
+
 impl Link {
-    pub fn start(version: &str) -> Link {
+    pub fn start(version: &str, token: &'static str) -> Link {
         let device = BLEDevice::take();
         let _ = BLEDevice::set_device_name(NAME);
         let _ = device.set_preferred_mtu(517);
@@ -67,6 +91,8 @@ impl Link {
         let advertising = device.get_advertising();
         let connected = Arc::new(AtomicBool::new(false));
         let subscribed = Arc::new(AtomicBool::new(false));
+        let trusted = Arc::new(AtomicBool::new(token.is_empty()));
+        let nonces = Arc::new(Mutex::new((random_nonce(), random_nonce())));
         let mtu = Arc::new(AtomicU16::new(23));
         let progress = Arc::new(AtomicU8::new(0));
         let updating = Arc::new(AtomicBool::new(false));
@@ -75,18 +101,26 @@ impl Link {
 
         server.advertise_on_disconnect(true);
 
-        let on_connect = (connected.clone(), mtu.clone());
+        let on_connect = (connected.clone(), mtu.clone(), trusted.clone(), nonces.clone());
         server.on_connect(move |server, desc| {
             on_connect.0.store(true, Ordering::SeqCst);
             on_connect.1.store(desc.mtu(), Ordering::SeqCst);
+            on_connect.2.store(token.is_empty(), Ordering::SeqCst);
+            *on_connect.3.lock() = (random_nonce(), random_nonce());
             let _ = server.update_conn_params(desc.conn_handle(), 6, 12, 0, 400);
             println!("phone connected, mtu {}", desc.mtu());
         });
 
-        let on_disconnect = (connected.clone(), subscribed.clone());
+        let on_disconnect = (connected.clone(), subscribed.clone(), trusted.clone(), updating.clone(), update_send.clone());
         server.on_disconnect(move |_, reason| {
             on_disconnect.0.store(false, Ordering::SeqCst);
             on_disconnect.1.store(false, Ordering::SeqCst);
+            on_disconnect.2.store(token.is_empty(), Ordering::SeqCst);
+
+            if on_disconnect.3.load(Ordering::SeqCst) {
+                let _ = on_disconnect.4.send(vec![4]);
+            }
+
             println!("phone disconnected: {reason:?}");
         });
 
@@ -99,20 +133,54 @@ impl Link {
             on_subscribe.1.store(desc.mtu(), Ordering::SeqCst);
         });
 
-        let settings_send = send.clone();
+        let settings = (send.clone(), trusted.clone());
         service.lock().create_characteristic(SETTINGS, NimbleProperties::WRITE).lock().on_write(move |args| {
-            let _ = settings_send.send(Message::Settings(args.recv_data().to_vec()));
+            if settings.1.load(Ordering::SeqCst) {
+                let _ = settings.0.send(Message::Settings(args.recv_data().to_vec()));
+            }
         });
 
+        let ack_trusted = trusted.clone();
         service.lock().create_characteristic(ACK, NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
-            if let Some(number) = word(args.recv_data()) {
+            if let Some(number) = word(args.recv_data()).filter(|_| ack_trusted.load(Ordering::SeqCst)) {
                 let _ = send.send(Message::Ack(number));
             }
         });
 
+        let update_trusted = trusted.clone();
         service.lock().create_characteristic(UPDATE, NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
-            let _ = update_send.send(args.recv_data().to_vec());
+            if update_trusted.load(Ordering::SeqCst) {
+                let _ = update_send.send(args.recv_data().to_vec());
+            }
         });
+
+        if !token.is_empty() {
+            let auth = service.lock().create_characteristic(AUTH, NimbleProperties::READ | NimbleProperties::WRITE);
+            let asked = nonces.clone();
+            let answered = (nonces.clone(), trusted.clone());
+
+            auth.lock().on_read(move |characteristic, _| {
+                let pair = asked.lock();
+                let proof = sign(token.as_bytes(), b'g', &pair.0, &pair.1);
+                characteristic.set_value(&[&pair.1[..], &proof[..16]].concat());
+            });
+
+            auth.lock().on_write(move |args| {
+                let data = args.recv_data();
+                let mut pair = answered.0.lock();
+
+                if data.len() == 16 {
+                    pair.0.copy_from_slice(data);
+                    pair.1 = random_nonce();
+                    answered.1.store(false, Ordering::SeqCst);
+                } else if data.len() == 32 {
+                    let expected = sign(token.as_bytes(), b'p', &pair.0, &pair.1);
+                    let differs = expected.iter().zip(data).fold(0u8, |sum, (ours, theirs)| sum | (ours ^ theirs));
+                    answered.1.store(differs == 0, Ordering::SeqCst);
+                    pair.1 = random_nonce();
+                }
+            });
+        }
 
         let update_status = service.lock().create_characteristic(UPDATE_STATUS, NimbleProperties::NOTIFY);
 
@@ -129,11 +197,12 @@ impl Link {
             .spawn(move || run_updates(update_receive, update_status, worker.0, worker.1))
             .expect("update thread");
 
-        Link { frame, messages, connected, subscribed, mtu, progress, updating }
+        Link { frame, messages, connected, subscribed, trusted, mtu, progress, updating }
     }
 
     pub fn ready(&self) -> bool {
         self.connected.load(Ordering::SeqCst) && self.subscribed.load(Ordering::SeqCst)
+            && self.trusted.load(Ordering::SeqCst)
     }
 
     pub fn updating(&self) -> Option<u8> {

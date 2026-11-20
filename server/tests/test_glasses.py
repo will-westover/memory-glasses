@@ -41,3 +41,14 @@ def test_latest_reports_the_newest_unfinished_recording(tmp_path, monkeypatch):
     os.utime(tmp_path / "live" / "000001000.jpg", (95, 95))
 
     assert glasses.latest(now=100.0) == {"photos": 2, "seconds_since_last": 5.0}
+
+
+def test_frames_after_the_video_was_built_start_the_next_part(tmp_path, monkeypatch):
+    monkeypatch.setattr(glasses, "GLASSES_DIR", tmp_path)
+    glasses.save_frame("abc", b"\xff\xd8", now=100.0)
+    (tmp_path / "abc" / "video.mp4").touch()
+
+    late = glasses.save_frame("abc", b"\xff\xd8", now=500.0, taken=160.0)
+    later = glasses.save_frame("abc", b"\xff\xd8", now=501.0, taken=162.0)
+
+    assert (late.parent.name, late.name, later.name) == ("abc-part2", "000000000.jpg", "000002000.jpg")

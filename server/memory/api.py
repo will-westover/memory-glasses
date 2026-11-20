@@ -485,6 +485,7 @@ def current_settings(conn: psycopg.Connection) -> Settings:
 
 @app.post("/glasses/frames")
 async def glasses_frame(request: Request, x_recording: str = Header(...), x_uploaded: str | None = Header(default=None),
+                        x_taken: float | None = Header(default=None),
                         conn: psycopg.Connection = Depends(connection)) -> dict:
     """Take one frame from the glasses, sent here or put in R2 first, and reply with the settings and the next link."""
     if not RECORDING_ID.match(x_recording):
@@ -494,7 +495,7 @@ async def glasses_frame(request: Request, x_recording: str = Header(...), x_uplo
         if not storage.enabled() or not glasses.UPLOAD_NAME.match(x_uploaded):
             raise HTTPException(422, "X-Uploaded must name an upload link this server gave out")
 
-        path = glasses.arrived(x_recording, x_uploaded)
+        path = glasses.arrived(x_recording, x_uploaded, taken=x_taken)
 
         if path is None:
             raise HTTPException(404, "that frame isn't in storage, or is over 2 MB")
@@ -504,7 +505,7 @@ async def glasses_frame(request: Request, x_recording: str = Header(...), x_uplo
         if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > MAX_FRAME_BYTES:
             raise HTTPException(422, "the body must be one JPEG under 2 MB")
 
-        path = glasses.save_frame(x_recording, jpeg)
+        path = glasses.save_frame(x_recording, jpeg, taken=x_taken)
 
     return {"recording": x_recording, "frame": path.name, **current_settings(conn).model_dump(),
             **glasses.upload_slot(x_recording)}
