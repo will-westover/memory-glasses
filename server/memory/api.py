@@ -6,7 +6,6 @@ import math
 import os
 import pathlib
 import re
-import shutil
 import wave
 from datetime import datetime
 from uuid import UUID
@@ -19,20 +18,19 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from memory import chat, db, glasses, pipeline, rooms, storage
+from memory import chat, db, glasses, jobs, rooms, storage
 from memory.agent import answer_events, ask_agent, fact_record
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE, STRETCH_SECONDS
 from memory.evals import RUNS_DIR
-from memory.ingest.facts import build_facts, first_sentence
+from memory.ingest.facts import first_sentence
 from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
 from memory.search import search
-from memory.tasks import start as start_job
+from memory.jobs import UPLOADS_DIR, start_rebuild, upload_task
+from memory.moment_files import MOMENTS_DIR, has_video, manifest_of, video_path
 
-MOMENTS_DIR = (DATA_DIR / "moments").resolve()
 MAX_CLIP_SECONDS = 120
-UPLOADS_DIR = DATA_DIR / "uploads"
 EXTRA_FILES = {"poses": "poses.json", "mesh": "mesh.obj", "world_map": "world.map"}
 RECORDING_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 MAX_FRAME_BYTES = 2_000_000
@@ -99,40 +97,6 @@ def connection() -> Iterator[psycopg.Connection]:
     """Lend one request a connection from the shared pool."""
     with db.pool().connection() as conn:
         yield conn
-
-
-def check_glasses() -> list[str]:
-    """Start processing every glasses recording that has stopped and has no job yet, and return their names."""
-    started = []
-
-    for folder in glasses.finished():
-        with db.connect() as conn:
-            rate = float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE))
-            job_id = db.new_job(conn, rate, {"kind": "glasses", "recording": folder.name, "frames_per_minute": rate})
-            conn.commit()
-
-        if job_id is not None:
-            start_job(job_id)
-            started.append(folder.name)
-
-    return started
-
-
-def process_glasses(job_id, task: dict) -> None:
-    """Turn a stopped glasses recording into a video and process it like any upload."""
-    folder = glasses.GLASSES_DIR / task["recording"]
-
-    try:
-        video = glasses.build_video(folder)
-    except Exception as error:
-        with db.connect() as conn:
-            db.update_job(conn, job_id, status="failed", error=str(error))
-
-        (folder / "video.mp4").touch()
-        storage.save(folder / "video.mp4")
-        return
-
-    run_upload(job_id, video, {}, task["frames_per_minute"], None, "glasses")
 
 
 app = FastAPI(title="Memory Glasses", dependencies=[Depends(check_token)])
@@ -321,41 +285,6 @@ def stored_file(file, media_type: str | None) -> Response:
     return RedirectResponse(storage.download_url(file, media_type), status_code=307)
 
 
-def run_upload(job_id, video, extras: dict, frames_per_minute: float, place_id: int | None, source: str) -> None:
-    """Process an uploaded recording, keeping its job's status up to date."""
-    with db.connect() as conn:
-        def step(name: str) -> None:
-            db.update_job(conn, job_id, step=name)
-            conn.commit()
-
-        try:
-            storage.fetch_folder(video.parent, videos=True)
-            moment_id = pipeline.process(video, frames_per_minute, extras, place_id=place_id, source=source,
-                                         on_step=step)
-            db.update_job(conn, job_id, status="ready", step=None, moment_id=moment_id)
-
-            if video.parent.parent == UPLOADS_DIR:
-                shutil.rmtree(video.parent, ignore_errors=True)
-                storage.remove(video.parent)
-        except Exception as error:
-            conn.rollback()
-            db.update_job(conn, job_id, status="failed", error=str(error))
-
-
-def upload_task(names: dict, frames_per_minute: float, place_id: int | None, source: str) -> dict:
-    """Describe the work for an uploaded recording: its files and how to process it."""
-    return {"kind": "upload", "video": names["video"], "extras": [name for field, name in names.items() if field != "video"],
-            "frames_per_minute": frames_per_minute, "place_id": place_id, "source": source}
-
-
-def process_upload(job_id, task: dict) -> None:
-    """Process the recording an upload job describes."""
-    folder = UPLOADS_DIR / str(job_id)
-    extras = {name: folder / name for name in task["extras"]}
-
-    run_upload(job_id, folder / task["video"], extras, task["frames_per_minute"], task["place_id"], task["source"])
-
-
 class DirectUpload(BaseModel):
     frames_per_minute: float = Field(FRAMES_PER_MINUTE, ge=0, le=MAX_FRAMES_PER_MINUTE)
     place_id: int | None = None
@@ -391,8 +320,7 @@ def finish_upload(job_id: UUID, conn: psycopg.Connection = Depends(connection)) 
         raise HTTPException(409, "the video hasn't arrived yet")
 
     db.update_job(conn, job_id, status="processing", step=None)
-    conn.commit()
-    start_job(job_id)
+    jobs.start(conn, job_id)
 
     return {"id": job_id, "status": "processing"}
 
@@ -400,7 +328,7 @@ def finish_upload(job_id: UUID, conn: psycopg.Connection = Depends(connection)) 
 @app.post("/glasses/check")
 def glasses_check() -> dict:
     """Start processing glasses recordings that have stopped; Cloud Scheduler calls this every minute."""
-    return {"started": check_glasses()}
+    return {"started": jobs.check_glasses()}
 
 
 def current_settings(conn: psycopg.Connection) -> Settings:
@@ -491,65 +419,11 @@ def uploads(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     return db.jobs(conn)
 
 
-def video_path(moment_id: str, download: bool = True):
-    """Return the path of a moment's original video, or None if it wasn't kept."""
-    folder = (MOMENTS_DIR / moment_id).resolve()
-    video_file = manifest_of(moment_id).get("video_file")
-
-    if not folder.is_relative_to(MOMENTS_DIR) or not video_file:
-        return None
-
-    path = folder / video_file
-
-    if not download:
-        return path if storage.exists(path) else None
-
-    return storage.local(path)
-
-
-def has_video(moment_id: str) -> bool:
-    return video_path(moment_id, download=False) is not None
-
-
-def manifest_of(moment_id: str) -> dict:
-    """Return a moment's manifest, or an empty one if it can't be read."""
-    path = (MOMENTS_DIR / moment_id / "manifest.json").resolve()
-
-    if not path.is_relative_to(MOMENTS_DIR) or storage.local(path) is None:
-        return {}
-
-    return json.loads(path.read_text())
-
-
-def current_extras(moment_id: str) -> dict:
-    """Return the extra files kept with a moment, by name."""
-    folder = MOMENTS_DIR / moment_id
-
-    return {name: folder / name for name in manifest_of(moment_id).get("extras", [])
-            if storage.local(folder / name) is not None}
-
-
 def caption_cost(conn: psycopg.Connection) -> float:
     """Return the average cost of describing one frame so far."""
     (average,) = conn.execute("select coalesce(avg(usd), 0.006) from model_call where step = 'caption'").fetchone()
 
     return float(average)
-
-
-def run_reprocess(job_id, moment_id: str, frames_per_minute: float) -> None:
-    """Rebuild a moment's frames at a new rate from its kept video, then caption only what's new."""
-    with db.connect() as conn:
-        def step(name: str) -> None:
-            db.update_job(conn, job_id, step=name)
-            conn.commit()
-
-        try:
-            pipeline.process(video_path(moment_id), frames_per_minute, current_extras(moment_id), replace=True,
-                             reuse_frames=True, on_step=step)
-            db.update_job(conn, job_id, status="ready", step=None)
-        except Exception as error:
-            conn.rollback()
-            db.update_job(conn, job_id, status="failed", error=str(error))
 
 
 @app.get("/places")
@@ -709,9 +583,7 @@ def reprocess(moment_id: str, body: Rate, conn: psycopg.Connection = Depends(con
     task = {"kind": "reprocess", "moment_id": moment_id, "frames_per_minute": body.frames_per_minute}
     job_id = db.new_job(conn, body.frames_per_minute, task)
     db.update_job(conn, job_id, moment_id=moment_id, step="Waiting")
-    conn.commit()
-
-    start_job(job_id)
+    jobs.start(conn, job_id)
 
     return {"id": job_id, "status": "processing"}
 
@@ -934,29 +806,6 @@ def delete_conversation(conversation_id: UUID, conn: psycopg.Connection = Depend
 
 
 FACE_MARGIN = 0.35
-
-
-def start_rebuild(conn: psycopg.Connection, moment_ids: list[str]) -> None:
-    """Rebuild, in the background, the facts of moments whose people or rooms changed."""
-    if not moment_ids:
-        return
-
-    job_id = db.new_job(conn, 0, {"kind": "facts", "moment_ids": list(moment_ids)})
-    conn.commit()
-    start_job(job_id)
-
-
-def rebuild_facts(job_id, moment_ids: list[str]) -> None:
-    """Rebuild the facts of moments after a person's or room's name changed."""
-    with db.connect() as conn:
-        try:
-            for moment_id in moment_ids:
-                build_facts(conn, moment_id)
-
-            db.update_job(conn, job_id, status="ready")
-        except Exception as error:
-            conn.rollback()
-            db.update_job(conn, job_id, status="failed", error=str(error))
 
 
 def person_json(person: dict) -> dict:
