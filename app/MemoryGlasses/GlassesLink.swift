@@ -454,7 +454,7 @@ extension GlassesLink: CBPeripheralDelegate {
 
         peripheral.discoverCharacteristics([Self.frameCharacteristic, Self.settingsCharacteristic, Self.ackCharacteristic,
                                             Self.updateCharacteristic, Self.updateStatusCharacteristic,
-                                            Self.versionCharacteristic], for: service)
+                                            Self.versionCharacteristic, Self.authCharacteristic], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
