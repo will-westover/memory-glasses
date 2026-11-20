@@ -351,7 +351,7 @@ async def glasses_frame(request: Request, x_recording: str = Header(...), x_uplo
         if not glasses.UPLOAD_NAME.match(x_uploaded):
             raise HTTPException(422, "X-Uploaded must name an upload link this server gave out")
 
-        path = glasses.arrived(x_recording, x_uploaded, taken=x_taken)
+        path = glasses.arrived(conn, x_recording, x_uploaded, taken=x_taken)
 
         if path is None:
             raise HTTPException(404, "that frame isn't in storage, or is over 2 MB")
@@ -361,7 +361,7 @@ async def glasses_frame(request: Request, x_recording: str = Header(...), x_uplo
         if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > MAX_FRAME_BYTES:
             raise HTTPException(422, "the body must be one JPEG under 2 MB")
 
-        path = glasses.save_frame(x_recording, jpeg, taken=x_taken)
+        path = glasses.save_frame(conn, x_recording, jpeg, taken=x_taken)
 
     return {"recording": x_recording, "frame": path.name, **current_settings(conn).model_dump(),
             **glasses.upload_slot(x_recording)}
@@ -378,6 +378,18 @@ def latest_firmware() -> dict | None:
         if storage.missing(error):
             return None
         raise
+
+
+@app.post("/glasses/recordings/{recording}/end")
+def end_recording(recording: str, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Say a glasses recording is over, so it is processed now instead of after it has gone quiet."""
+    if not RECORDING_ID.match(recording):
+        raise HTTPException(422, "the recording id must be letters, digits and dashes")
+
+    ended = db.end_recording(conn, recording)
+    conn.commit()
+
+    return {"ended": ended, "started": jobs.check_glasses() if ended else []}
 
 
 @app.get("/glasses/firmware")
@@ -397,7 +409,7 @@ def glasses_firmware() -> dict:
 @app.get("/glasses/status")
 def glasses_status(conn: psycopg.Connection = Depends(connection)) -> dict:
     """Say whether the glasses are sending, how many photos the current recording has, and what is processing."""
-    latest = glasses.latest()
+    latest = db.latest_recording(conn)
 
     return {
         "sending": latest is not None and latest["seconds_since_last"] < SENDING_SECONDS,

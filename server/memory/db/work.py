@@ -1,5 +1,7 @@
 """Jobs and the user's settings."""
 
+from datetime import datetime
+
 import psycopg
 from psycopg.types.json import Jsonb
 
@@ -63,3 +65,72 @@ def jobs(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
 def jobs_processing(conn: psycopg.Connection) -> int:
     """Return how many jobs are being worked on."""
     return conn.execute("select count(*) from job where status = 'processing'").fetchone()[0]
+
+
+def note_frame(conn: psycopg.Connection, base: str, taken: datetime, arrived: datetime) -> tuple[str, datetime]:
+    """Count a frame in the open part of a glasses recording, opening a new part if needed; return (name, start)."""
+    row = conn.execute(
+        "update recording set last_frame_at = %s, photos = photos + 1 where base = %s and job_id is null"
+        " returning name, started_at",
+        (arrived, base),
+    ).fetchone()
+
+    if row is not None:
+        return row
+
+    (parts,) = conn.execute("select count(*) from recording where base = %s", (base,)).fetchone()
+    name = base if parts == 0 else f"{base}-part{parts + 1}"
+
+    return conn.execute(
+        "insert into recording (name, base, part, started_at, last_frame_at, photos) values (%s, %s, %s, %s, %s, 1)"
+        " on conflict (name) do update set last_frame_at = excluded.last_frame_at, photos = recording.photos + 1"
+        " returning name, started_at",
+        (name, base, parts + 1, taken, arrived),
+    ).fetchone()
+
+
+def end_recording(conn: psycopg.Connection, base: str) -> list[str]:
+    """Mark a glasses recording's open part as over, and return its name if there was one."""
+    rows = conn.execute(
+        "update recording set ended_at = now() where base = %s and job_id is null and ended_at is null returning name",
+        (base,),
+    )
+
+    return [name for (name,) in rows]
+
+
+def recordings_to_close(conn: psycopg.Connection, idle_seconds: float) -> list[str]:
+    """Return the open glasses recordings that were ended, or have had no frame for idle_seconds."""
+    rows = conn.execute(
+        "select name from recording where job_id is null and photos > 0"
+        " and (ended_at is not null or last_frame_at < now() - make_interval(secs => %s)) order by started_at",
+        (idle_seconds,),
+    )
+
+    return [name for (name,) in rows]
+
+
+def close_recording(conn: psycopg.Connection, name: str, job_id) -> None:
+    """Tie a glasses recording to the job that processes it, so later frames start a new part."""
+    conn.execute(
+        "update recording set ended_at = coalesce(ended_at, now()),"
+        " job_id = coalesce(%s, (select id from job where task ->> 'recording' = %s)) where name = %s",
+        (job_id, name, name),
+    )
+
+
+def recording_start(conn: psycopg.Connection, name: str) -> datetime | None:
+    """Return when a glasses recording's first frame was taken."""
+    row = conn.execute("select started_at from recording where name = %s", (name,)).fetchone()
+
+    return row[0] if row else None
+
+
+def latest_recording(conn: psycopg.Connection) -> dict | None:
+    """Return how many photos the newest open glasses recording has and how long ago the last one arrived."""
+    row = conn.execute(
+        "select photos, extract(epoch from now() - last_frame_at) from recording"
+        " where job_id is null and ended_at is null order by last_frame_at desc limit 1"
+    ).fetchone()
+
+    return {"photos": row[0], "seconds_since_last": round(float(row[1]), 1)} if row else None

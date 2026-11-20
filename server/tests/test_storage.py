@@ -32,17 +32,6 @@ def test_mirroring_drops_files_the_folder_no_longer_has(r2, tmp_path):
     assert sorted(storage.listing("moments/")) == ["moments/m1/a.jpg"]
 
 
-def test_recordings_are_grouped_and_a_video_marks_one_done():
-    found = glasses.summarise({
-        "live/000000000.jpg": 10.0, "live/000002000.jpg": 12.0, "live/started": 10.0,
-        "done/000000000.jpg": 5.0, "done/video.mp4": 70.0,
-        "empty/started": 1.0,
-    })
-
-    assert found == {"live": {"photos": 2, "last": 12.0, "done": False},
-                     "done": {"photos": 1, "last": 5.0, "done": True}}
-
-
 def test_a_kept_video_is_copied_inside_r2_so_mirroring_sends_nothing(r2, tmp_path):
     upload = tmp_path / "uploads" / "job" / "video.mov"
     upload.parent.mkdir(parents=True)
@@ -65,15 +54,11 @@ def test_a_kept_video_is_copied_inside_r2_so_mirroring_sends_nothing(r2, tmp_pat
 
 def test_a_frame_the_glasses_put_in_r2_takes_its_place_in_the_recording(r2, tmp_path, monkeypatch):
     monkeypatch.setattr(glasses, "GLASSES_DIR", tmp_path / "glasses")
-    monkeypatch.setattr(glasses, "ARRIVED", {})
+    monkeypatch.setattr(glasses, "place", lambda conn, recording, taken: tmp_path / "glasses" / recording / "000002500.jpg")
     r2.put_object(Key="glasses/rec1/" + "a" * 32 + ".pending", Body=b"\xff\xd8 first")
-    r2.put_object(Key="glasses/rec1/" + "b" * 32 + ".pending", Body=b"\xff\xd8 second")
 
-    first = glasses.arrived("rec1", "a" * 32, now=100.0)
-    second = glasses.arrived("rec1", "b" * 32, now=102.5)
+    path = glasses.arrived(None, "rec1", "a" * 32)
 
-    names = sorted(item.key for item in r2.objects.all())
-    assert (first.name, second.name) == ("000000000.jpg", "000002500.jpg")
-    assert names == ["glasses/rec1/000000000.jpg", "glasses/rec1/000002500.jpg", "glasses/rec1/started"]
-    assert glasses.arrived("rec1", "c" * 32) is None
-    assert glasses.recordings()["rec1"]["photos"] == 2
+    assert path.name == "000002500.jpg"
+    assert sorted(item.key for item in r2.objects.all()) == ["glasses/rec1/000002500.jpg"]
+    assert glasses.arrived(None, "rec1", "c" * 32) is None
