@@ -156,10 +156,6 @@ final class GlassesLink: NSObject {
     }
 
     private static func download(_ link: String) async -> Data? {
-        if link.hasPrefix("/") {
-            return try? await API.current.data(for: API.current.request(link))
-        }
-
         guard let url = URL(string: link), let (image, response) = try? await URLSession.shared.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
 

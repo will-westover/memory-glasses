@@ -22,8 +22,6 @@ load_env_file(SERVER_DIR / ".env")
 
 DATA_DIR = Path(os.environ.get("MEMORY_DATA_DIR", PROJECT_ROOT / "data"))
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://memory:memory@localhost:5433/memory")
-
 FRAMES_PER_MINUTE = float(os.environ.get("FRAMES_PER_MINUTE", 30))
 
 CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gpt-6-sol")

@@ -133,7 +133,7 @@ struct GlassesView: View {
                 } header: {
                     Text("Server")
                 } footer: {
-                    Text("To connect quickly, run memory.pair on the Mac and scan its QR code with the iPhone camera.")
+                    Text("The address and token of your Memory Glasses server.")
                 }
             }
             .navigationTitle("Glasses")

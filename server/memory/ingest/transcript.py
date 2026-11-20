@@ -79,7 +79,7 @@ def main() -> int:
 
     moment_dir = DATA_DIR / "moments" / args.moment_id
 
-    if not (moment_dir / "audio.wav").exists():
+    if storage.local(moment_dir / "audio.wav") is None:
         print(f"error: no audio at {moment_dir / 'audio.wav'}", file=sys.stderr)
         return 1
 

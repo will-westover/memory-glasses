@@ -36,10 +36,10 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
    model; `/suggestions` writes questions from the newest records.
 9. **iPhone app** (done): SwiftUI in `app/`, with Ask (chats saved on the server, with follow-ups), Timeline,
    Stats and Glasses screens. Tapping a source opens its frame: the photo, nearby frames, what was said, audio. Build and run
-   it in the iOS Simulator with the server running on port 8000.
+   it in the iOS Simulator; the server's address is built in (`app/Config.xcconfig`).
 10. **Glasses firmware** (photos work, audio next): `firmware/glasses` builds `camera_test`, `display_test` and
-    `glasses`. The glasses join the iPhone's hotspot and send a photo at the frames-per-minute setting to
-    `POST /glasses/frames`; frames that stop for a minute become a moment. They run on the iPhone's USB-C power; the
+    `glasses`. The glasses send a photo at the frames-per-minute setting to the phone over Bluetooth, which
+    uploads it (`POST /glasses/frames`); a recording that stops becomes a moment. They run on the iPhone's USB-C power; the
     battery isn't working yet.
 
 ## Constraints
@@ -86,29 +86,23 @@ Everything else is your call.
   The user has written consent from the people recorded.
 - Named GPS places: `memory.places add "Home" <lat> <lon> --radius 75`, `memory.places list`.
 - Model prices are in `server/prices.json`. A model with no price there is refused before any call.
-- Phone connection: the server runs with `API_TOKEN` and `--host 0.0.0.0`; Mac and phone both join Tailscale (campus
-  Wi-Fi blocks devices reaching each other). `memory.pair` shows a QR code; the iPhone camera opens it in the app.
-- Glasses connection: Tailscale Funnel (`tailscale funnel --bg 8000`) gives the server a public HTTPS address, since the
-  board can't run Tailscale. Wi-Fi name, password, server and token go in the ignored `firmware/glasses/glasses.toml`
-  (see `glasses.example.toml`). The board needs its antenna attached and a 2.4 GHz network: turn on the hotspot's
-  Maximize Compatibility.
 - Glasses over Bluetooth (in progress): the firmware advertises "Memory Glasses" and streams frames, takes settings and
   firmware updates over BLE (service 6e1f0001-…); with no phone for 30 s it falls back to Wi-Fi. Phone and glasses prove to each other
   that they hold the server token before photos, settings or updates pass. `firmware/glasses/flash.sh`
   flashes over USB with the two-slot OTA partition table; `publish.sh` uploads the app image and `firmware/latest.json` to R2.
-- Database: `docker compose up -d --wait` in `server/`, then `uv run python -m memory.db list`. New tables go
-  in a new numbered file in `server/migrations/`.
-- Hosting: with `DATABASE_URL` set in `server/.env`, the database is Neon (`memory-glasses` org). With
-  `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET` set, files live in Cloudflare R2 and `data/`
-  is a working copy that fills itself as files are needed (`memory.storage`). `memory.storage sync` uploads what's
-  missing; `check` compares the two. Without them, everything stays local. With R2, file requests redirect to
-  short-lived R2 links, the app uploads recordings straight to R2 (`POST /uploads`), the glasses PUT each frame to an R2
-  link from the previous reply and then tell the server (`X-Uploaded`), and captions give OpenAI an R2 link, so few
-  bytes pass through the server.
+- Database: Neon (`memory-glasses` org), from `DATABASE_URL` in `server/.env`. `uv run python -m memory.db list`. New
+  tables go in a new numbered file in `server/migrations/`.
+- Files live in Cloudflare R2 (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` in
+  `server/.env`); `data/` is a working copy that fills itself as files are needed (`memory.storage`).
+  `memory.storage sync` uploads what's missing; `check` compares the two. File requests redirect to short-lived R2
+  links, the app uploads recordings straight to R2 (`POST /uploads`), photos from the glasses are PUT to an R2 link
+  from the previous reply and then announced to the server (`X-Uploaded`), and captions give OpenAI an R2 link, so
+  few bytes pass through the server.
 - Cloud Run (project `memory-glasses-2611`, `us-west1`), meant to cost $0: `server/deploy/secrets.sh` copies the
   secrets from `.env` into Secret Manager, then `R2_ACCOUNT_ID=… server/deploy/deploy.sh` builds the image here,
   deploys the `memory-server` service and the `memory-worker` job (slow work: `memory.worker <job id>`), and has Cloud
-  Scheduler call `POST /glasses/check` every minute. Locally, the same work runs in threads.
+  Scheduler call `POST /glasses/check` every minute. There is no local server mode: the Mac runs the command-line
+  steps against the same database and bucket.
 - Test clips, both in the ignored `data/samples/`: `nasa/crew-quarters-tour.webm` (public-domain NASA tour,
   2 minutes, with speech) and `home/IMG_0161.MOV` (the user's own 12-second walk through their home, with
   location). The user's recordings are real data on their own account; don't add test users or fake data.

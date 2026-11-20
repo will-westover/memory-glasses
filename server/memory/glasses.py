@@ -57,10 +57,7 @@ def save_frame(recording: str, jpeg: bytes, now: float | None = None, taken: flo
 
 
 def upload_slot(recording: str) -> dict:
-    """Return a link the glasses can PUT their next frame to in R2, and its name, when R2 holds the files."""
-    if not storage.enabled():
-        return {}
-
+    """Return a link the glasses can PUT their next frame to in R2, and its name."""
     name = uuid.uuid4().hex
 
     return {"upload_url": storage.upload_url(GLASSES_DIR / recording / f"{name}.pending"), "upload_name": name}
@@ -134,9 +131,6 @@ def recordings() -> dict[str, dict]:
 
 def remote_files() -> dict[str, float]:
     """Return the glasses files in R2 by recording/file, listing the bucket at most every LIST_SECONDS."""
-    if not storage.enabled():
-        return {}
-
     if time.monotonic() - REMOTE["at"] > LIST_SECONDS:
         listed = storage.listing(storage.key(GLASSES_DIR) + "/")
         REMOTE.update(at=time.monotonic(), files={name.split("/", 1)[1]: item["modified"]

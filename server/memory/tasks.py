@@ -1,27 +1,15 @@
-"""Start slow work away from the request: in a thread on this machine, or as a Cloud Run job when deployed."""
+"""Start slow work away from the request, as a Cloud Run job."""
 
 import json
 import os
-import threading
 import urllib.request
 
 METADATA = "http://metadata.google.internal/computeMetadata/v1/"
 
 
-def on_cloud_run() -> bool:
-    """Return whether slow work should run as a Cloud Run job."""
-    return bool(os.environ.get("WORKER_JOB"))
-
-
 def start(job_id) -> None:
-    """Run a job's work: as a Cloud Run job when deployed, else in a background thread."""
-    if on_cloud_run():
-        run_cloud_job(str(job_id))
-        return
-
-    from memory import worker
-
-    threading.Thread(target=worker.run, args=(str(job_id),), daemon=True).start()
+    """Run a job's work as a Cloud Run job."""
+    run_cloud_job(str(job_id))
 
 
 def metadata(path: str) -> str:

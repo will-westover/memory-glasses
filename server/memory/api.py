@@ -7,10 +7,7 @@ import os
 import pathlib
 import re
 import shutil
-import threading
-import time
 import wave
-from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import UUID
 from collections.abc import Iterator
@@ -18,8 +15,8 @@ from collections.abc import Iterator
 import psycopg
 import cv2
 from fastapi.encoders import jsonable_encoder
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from memory import chat, db, glasses, pipeline, rooms, storage
@@ -31,7 +28,7 @@ from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.places import place_for
 from memory.search import search
-from memory.tasks import on_cloud_run, start as start_job
+from memory.tasks import start as start_job
 
 MOMENTS_DIR = (DATA_DIR / "moments").resolve()
 MAX_CLIP_SECONDS = 120
@@ -39,7 +36,6 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 EXTRA_FILES = {"poses": "poses.json", "mesh": "mesh.obj", "world_map": "world.map"}
 RECORDING_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 MAX_FRAME_BYTES = 2_000_000
-CHECK_SECONDS = 15
 MIN_DISPLAY_SCALE = 0.3
 SENDING_SECONDS = 20
 
@@ -92,10 +88,10 @@ class SettingsChange(BaseModel):
 
 
 def check_token(authorization: str | None = Header(default=None)) -> None:
-    """Refuse the request unless it carries the token set in API_TOKEN, when one is set."""
+    """Refuse the request unless it carries the token set in API_TOKEN."""
     token = os.environ.get("API_TOKEN")
 
-    if token and authorization != f"Bearer {token}":
+    if not token or authorization != f"Bearer {token}":
         raise HTTPException(401, "missing or wrong token")
 
 
@@ -122,13 +118,6 @@ def check_glasses() -> list[str]:
     return started
 
 
-def watch_glasses() -> None:
-    """Every few seconds, start processing glasses recordings that have stopped."""
-    while True:
-        check_glasses()
-        time.sleep(CHECK_SECONDS)
-
-
 def process_glasses(job_id, task: dict) -> None:
     """Turn a stopped glasses recording into a video and process it like any upload."""
     folder = glasses.GLASSES_DIR / task["recording"]
@@ -146,15 +135,7 @@ def process_glasses(job_id, task: dict) -> None:
     run_upload(job_id, video, {}, task["frames_per_minute"], None, "glasses")
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    if not on_cloud_run():
-        threading.Thread(target=watch_glasses, daemon=True).start()
-
-    yield
-
-
-app = FastAPI(title="Memory Glasses", dependencies=[Depends(check_token)], lifespan=lifespan)
+app = FastAPI(title="Memory Glasses", dependencies=[Depends(check_token)])
 
 
 def image_url(image_path: str | None) -> str | None:
@@ -335,21 +316,9 @@ def audio(moment_id: str, start: float, end: float) -> Response:
     return Response(audio_clip(file, start, end), media_type="audio/wav")
 
 
-def stored_file(file, media_type: str | None, missing: str) -> Response:
-    """Send a kept file: a redirect to a short-lived R2 link when R2 holds the files, else the file itself."""
-    if storage.enabled():
-        return RedirectResponse(storage.download_url(file, media_type), status_code=307)
-
-    if not file.is_file():
-        raise HTTPException(404, missing)
-
-    return FileResponse(file, media_type=media_type)
-
-
-def save_upload(upload: UploadFile, target) -> None:
-    """Write an uploaded file to disk without holding it all in memory."""
-    with open(target, "wb") as out:
-        shutil.copyfileobj(upload.file, out, length=1024 * 1024)
+def stored_file(file, media_type: str | None) -> Response:
+    """Send a kept file as a redirect to a short-lived R2 link."""
+    return RedirectResponse(storage.download_url(file, media_type), status_code=307)
 
 
 def run_upload(job_id, video, extras: dict, frames_per_minute: float, place_id: int | None, source: str) -> None:
@@ -371,39 +340,6 @@ def run_upload(job_id, video, extras: dict, frames_per_minute: float, place_id: 
         except Exception as error:
             conn.rollback()
             db.update_job(conn, job_id, status="failed", error=str(error))
-
-
-@app.post("/moments")
-def upload_moment(
-    video: UploadFile = File(...),
-    frames_per_minute: float = Form(FRAMES_PER_MINUTE, ge=0, le=MAX_FRAMES_PER_MINUTE),
-    poses: UploadFile | None = File(None),
-    mesh: UploadFile | None = File(None),
-    world_map: UploadFile | None = File(None),
-    place_id: int | None = Form(None),
-    source: str = Form("iphone", pattern="^(iphone|glasses|video)$"),
-    conn: psycopg.Connection = Depends(connection),
-) -> dict:
-    """Receive a recording and its extra files, and process it in the background."""
-    suffix = os.path.splitext(video.filename or "")[1].lower() or ".mov"
-    names = {"video": f"video{suffix}"} | {field: EXTRA_FILES[field] for field, upload in
-                                           (("poses", poses), ("mesh", mesh), ("world_map", world_map)) if upload}
-    job_id = db.new_job(conn, frames_per_minute, upload_task(names, frames_per_minute, place_id, source))
-    conn.commit()
-
-    folder = UPLOADS_DIR / str(job_id)
-    folder.mkdir(parents=True)
-
-    save_upload(video, folder / names["video"])
-
-    for field, upload in (("poses", poses), ("mesh", mesh), ("world_map", world_map)):
-        if upload is not None:
-            save_upload(upload, folder / EXTRA_FILES[field])
-
-    storage.mirror(folder)
-    start_job(job_id)
-
-    return {"id": job_id, "status": "processing"}
 
 
 def upload_task(names: dict, frames_per_minute: float, place_id: int | None, source: str) -> dict:
@@ -431,9 +367,6 @@ class DirectUpload(BaseModel):
 @app.post("/uploads")
 def start_upload(body: DirectUpload, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Start an upload straight to storage: return a link to PUT each file to, valid for an hour."""
-    if not storage.enabled():
-        raise HTTPException(409, "direct uploads need R2; send the files to POST /moments instead")
-
     names = {"video": f"video{body.video_suffix}"} | {field: EXTRA_FILES[field] for field in body.extras
                                                       if field in EXTRA_FILES}
     task = upload_task(names, body.frames_per_minute, body.place_id, body.source)
@@ -492,7 +425,7 @@ async def glasses_frame(request: Request, x_recording: str = Header(...), x_uplo
         raise HTTPException(422, "X-Recording must be letters, digits and dashes")
 
     if x_uploaded is not None:
-        if not storage.enabled() or not glasses.UPLOAD_NAME.match(x_uploaded):
+        if not glasses.UPLOAD_NAME.match(x_uploaded):
             raise HTTPException(422, "X-Uploaded must name an upload link this server gave out")
 
         path = glasses.arrived(x_recording, x_uploaded, taken=x_taken)
@@ -515,18 +448,13 @@ FIRMWARE_DIR = DATA_DIR / "firmware"
 
 
 def latest_firmware() -> dict | None:
-    """Return the newest published glasses firmware's details, read fresh from R2 when it holds the files."""
-    latest = FIRMWARE_DIR / "latest.json"
-
-    if storage.enabled():
-        try:
-            return json.loads(storage.bucket().Object(storage.key(latest)).get()["Body"].read())
-        except Exception as error:
-            if storage.missing(error):
-                return None
-            raise
-
-    return json.loads(latest.read_text()) if latest.is_file() else None
+    """Return the newest published glasses firmware's details, read fresh from R2."""
+    try:
+        return json.loads(storage.bucket().Object(storage.key(FIRMWARE_DIR / "latest.json")).get()["Body"].read())
+    except Exception as error:
+        if storage.missing(error):
+            return None
+        raise
 
 
 @app.get("/glasses/firmware")
@@ -538,22 +466,9 @@ def glasses_firmware() -> dict:
         raise HTTPException(404, "no firmware published")
 
     image = FIRMWARE_DIR / pathlib.PurePosixPath(found["key"]).name
-    url = storage.download_url(image, "application/octet-stream", seconds=3600) if storage.enabled() \
-        else "/glasses/firmware/image"
+    url = storage.download_url(image, "application/octet-stream", seconds=3600)
 
     return {"version": found["version"], "size": found["size"], "crc32": found["crc32"], "url": url}
-
-
-@app.get("/glasses/firmware/image")
-def glasses_firmware_image() -> FileResponse:
-    """Send the newest firmware image from the local data folder, when R2 isn't used."""
-    found = latest_firmware()
-    image = FIRMWARE_DIR / pathlib.PurePosixPath(found["key"]).name if found else None
-
-    if image is None or not image.is_file():
-        raise HTTPException(404, "no firmware published")
-
-    return FileResponse(image, media_type="application/octet-stream")
 
 
 @app.get("/glasses/status")
@@ -701,7 +616,7 @@ def place_map_file(place_id: int, conn: psycopg.Connection = Depends(connection)
     if file is None:
         raise HTTPException(404, "no map for this place")
 
-    return stored_file(file, "application/octet-stream", "no map for this place")
+    return stored_file(file, "application/octet-stream")
 
 
 @app.put("/places/{place_id}")
@@ -754,7 +669,7 @@ def moment_mesh(moment_id: str) -> Response:
     if not mesh.is_relative_to(MOMENTS_DIR):
         raise HTTPException(404, "no mesh for this moment")
 
-    return stored_file(mesh, "model/obj", "no mesh for this moment")
+    return stored_file(mesh, "model/obj")
 
 
 def check_higher(moment_id: str, frames_per_minute: float) -> None:
@@ -809,7 +724,7 @@ def moment_video(moment_id: str) -> Response:
     if path is None:
         raise HTTPException(404, "no video for this moment")
 
-    return stored_file(path, video_type(path), "no video for this moment")
+    return stored_file(path, video_type(path))
 
 
 def video_type(path) -> str:
@@ -818,13 +733,13 @@ def video_type(path) -> str:
 
 @app.get("/moments/{moment_id}/video/link")
 def moment_video_link(moment_id: str) -> dict:
-    """Return a short-lived link that plays a moment's video straight from R2, or None when files are kept here."""
+    """Return a short-lived link that plays a moment's video straight from R2."""
     path = video_path(moment_id, download=False)
 
     if path is None:
         raise HTTPException(404, "no video for this moment")
 
-    return {"url": storage.download_url(path, video_type(path), seconds=3600) if storage.enabled() else None}
+    return {"url": storage.download_url(path, video_type(path), seconds=3600)}
 
 
 @app.get("/images/{path:path}")
@@ -835,7 +750,7 @@ def image(path: str) -> Response:
     if not file.is_relative_to(MOMENTS_DIR) or file.suffix != ".jpg":
         raise HTTPException(404, "no such image")
 
-    return stored_file(file, "image/jpeg", "no such image")
+    return stored_file(file, "image/jpeg")
 
 
 HISTORY_TURNS = 6

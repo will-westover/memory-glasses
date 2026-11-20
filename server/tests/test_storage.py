@@ -1,18 +1,5 @@
-import boto3
-import pytest
-from moto import mock_aws
 
 from memory import glasses, storage
-
-
-@pytest.fixture
-def r2(tmp_path, monkeypatch):
-    with mock_aws():
-        bucket = boto3.resource("s3", region_name="us-east-1").create_bucket(Bucket="memory")
-        monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
-        monkeypatch.setattr(storage, "enabled", lambda: True)
-        monkeypatch.setattr(storage, "bucket", lambda: bucket)
-        yield bucket
 
 
 def test_a_mirrored_folder_comes_back_into_an_empty_data_folder(r2, tmp_path):

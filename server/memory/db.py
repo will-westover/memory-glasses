@@ -11,7 +11,7 @@ from psycopg_pool import ConnectionPool
 from psycopg.types.json import Jsonb
 
 from memory.citations import renumber
-from memory.config import DATABASE_URL, SERVER_DIR, STRETCH_SECONDS, clock
+from memory.config import SERVER_DIR, STRETCH_SECONDS, clock, require
 
 MIGRATIONS_DIR = SERVER_DIR / "migrations"
 USAGE = "usage: python -m memory.db list | save <moment folder>"
@@ -19,7 +19,7 @@ USAGE = "usage: python -m memory.db list | save <moment folder>"
 
 def connect() -> psycopg.Connection:
     """Open a connection and make sure the tables are up to date."""
-    conn = psycopg.connect(DATABASE_URL, connect_timeout=10)
+    conn = psycopg.connect(require("DATABASE_URL"), connect_timeout=10)
     migrate(conn)
 
     return conn
@@ -38,7 +38,7 @@ def pool() -> ConnectionPool:
             with connect():
                 pass
 
-            POOL["pool"] = ConnectionPool(DATABASE_URL, min_size=0, max_size=POOL_SIZE, max_idle=IDLE_SECONDS,
+            POOL["pool"] = ConnectionPool(require("DATABASE_URL"), min_size=0, max_size=POOL_SIZE, max_idle=IDLE_SECONDS,
                                           kwargs={"connect_timeout": 10}, check=ConnectionPool.check_connection)
 
     return POOL["pool"]
@@ -979,8 +979,7 @@ def main() -> int:
     try:
         conn = connect()
     except psycopg.OperationalError:
-        print("error: can't reach the database. Start it from server/ with: docker compose up -d --wait",
-              file=sys.stderr)
+        print("error: can't reach the database. Check DATABASE_URL in server/.env.", file=sys.stderr)
         return 1
 
     with conn:

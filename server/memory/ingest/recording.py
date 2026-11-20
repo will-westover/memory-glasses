@@ -410,7 +410,7 @@ def save_to_database(moment_dir: Path) -> None:
         if saved["changed"]:
             print("The frames changed, so run the captions and facts steps again.")
     except psycopg.OperationalError:
-        print("Not saved: the database isn't running. Start it with: docker compose up -d --wait")
+        print("Not saved: the database can't be reached. Check DATABASE_URL in server/.env.")
 
 
 def saved_rate() -> float:

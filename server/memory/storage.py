@@ -1,4 +1,4 @@
-"""Keep the data folder in a Cloudflare R2 bucket when one is configured, with the local folder as a working copy.
+"""Keep the data folder in a Cloudflare R2 bucket, with the local folder as a working copy.
 
     uv run python -m memory.storage sync
     uv run python -m memory.storage check
@@ -10,15 +10,9 @@ import sys
 from functools import cache
 from pathlib import Path
 
-from memory.config import DATA_DIR
+from memory.config import DATA_DIR, require
 
 SYNCED = ("moments", "places", "glasses", "uploads")
-
-
-def enabled() -> bool:
-    """Say whether an R2 bucket is configured."""
-    return all(os.environ.get(name) for name in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
-                                                  "R2_BUCKET"))
 
 
 @cache
@@ -28,13 +22,13 @@ def bucket():
 
     s3 = boto3.resource(
         "s3",
-        endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
-        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+        endpoint_url=f"https://{require('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
+        aws_access_key_id=require("R2_ACCESS_KEY_ID"),
+        aws_secret_access_key=require("R2_SECRET_ACCESS_KEY"),
         region_name="auto",
     )
 
-    return s3.Bucket(os.environ["R2_BUCKET"])
+    return s3.Bucket(require("R2_BUCKET"))
 
 
 def key(path: Path) -> str:
@@ -49,9 +43,6 @@ def path_of(name: str) -> Path:
 
 def listing(prefix: str) -> dict[str, dict]:
     """Return every key under a prefix with its size and when it was last written (seconds since 1970)."""
-    if not enabled():
-        return {}
-
     return {item.key: {"size": item.size, "modified": item.last_modified.timestamp()}
             for item in bucket().objects.filter(Prefix=prefix)}
 
@@ -67,9 +58,6 @@ def local(path: Path) -> Path | None:
     """Return the path once the file is present locally, downloading it from R2 if needed, or None if it isn't kept."""
     if path.is_file():
         return path
-
-    if not enabled():
-        return None
 
     try:
         download(key(path), path)
@@ -90,9 +78,6 @@ def exists(path: Path) -> bool:
     if path.is_file():
         return True
 
-    if not enabled():
-        return False
-
     try:
         bucket().Object(key(path)).load()
     except Exception as error:
@@ -105,9 +90,6 @@ def exists(path: Path) -> bool:
 
 def fetch_folder(folder: Path, videos: bool = False) -> None:
     """Download every file of a folder that isn't present locally, leaving out its video unless asked."""
-    if not enabled():
-        return
-
     prefix = key(folder) + "/"
 
     for name in listing(prefix):
@@ -121,15 +103,12 @@ def fetch_folder(folder: Path, videos: bool = False) -> None:
 
 def save(path: Path) -> None:
     """Upload a file to R2."""
-    if enabled() and path.is_file():
+    if path.is_file():
         bucket().upload_file(str(path), key(path))
 
 
 def mirror(folder: Path) -> None:
     """Make R2 hold exactly the folder's files: upload new or changed ones and delete ones no longer there."""
-    if not enabled():
-        return
-
     prefix = key(folder) + "/"
     remote = listing(prefix)
     files = {key(path): path for path in folder.rglob("*") if path.is_file()}
@@ -146,9 +125,6 @@ def mirror(folder: Path) -> None:
 
 def copy(source: Path, target: Path) -> None:
     """Copy a file R2 already holds to another key inside R2, so it needn't be sent again."""
-    if not enabled():
-        return
-
     try:
         source_key, target_key = key(source), key(target)
     except ValueError:
@@ -176,8 +152,7 @@ def size(path: Path) -> int | None:
 
 def delete(path: Path) -> None:
     """Delete one file from R2."""
-    if enabled():
-        bucket().Object(key(path)).delete()
+    bucket().Object(key(path)).delete()
 
 
 def download_url(path: Path, media_type: str | None = None, seconds: int = 900) -> str:
@@ -198,8 +173,7 @@ def upload_url(path: Path, seconds: int = 3600) -> str:
 
 def remove(folder: Path) -> None:
     """Delete a folder's files from R2."""
-    if enabled():
-        bucket().objects.filter(Prefix=key(folder) + "/").delete()
+    bucket().objects.filter(Prefix=key(folder) + "/").delete()
 
 
 def local_files() -> dict[str, int]:
@@ -253,11 +227,6 @@ def main() -> int:
     parser.add_argument("local", nargs="?", help="put: the file to upload")
     parser.add_argument("name", nargs="?", help="put: its key in the bucket, e.g. firmware/latest.json")
     args = parser.parse_args()
-
-    if not enabled():
-        print("R2 isn't configured: set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET in .env.",
-              file=sys.stderr)
-        return 1
 
     if args.command == "sync":
         sync()
