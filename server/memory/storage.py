@@ -12,7 +12,7 @@ from pathlib import Path
 
 from memory.config import DATA_DIR, require
 
-SYNCED = ("moments", "places", "glasses", "uploads")
+SYNCED = ("moments", "places", "glasses", "uploads", "evals")
 
 
 @cache

@@ -8,8 +8,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from memory import db, llm
 from functools import partial
+
+from memory import db, llm, storage
 
 from memory.agent import ask_agent, ask_plain
 from memory.config import AGENT_MODEL, DATA_DIR, JUDGE_MODEL, SERVER_DIR
@@ -45,8 +46,20 @@ class Grade(BaseModel):
 
 
 def load_questions() -> list[dict]:
-    """Return the test questions from every question file that exists."""
-    return [question for path in QUESTION_FILES if path.exists() for question in json.loads(path.read_text())]
+    """Return the test questions from every question file that exists, each with the moments its file is about."""
+    questions = []
+
+    for path in QUESTION_FILES:
+        if storage.local(path) is None:
+            continue
+
+        loaded = json.loads(path.read_text())
+        listed = loaded if isinstance(loaded, list) else loaded["questions"]
+        moments = None if isinstance(loaded, list) else loaded.get("moments")
+
+        questions += [{"kind": "other", "moments": moments, **question} for question in listed]
+
+    return questions
 
 
 def retrieved(evidence: list[str], shown: list[dict]) -> bool:
@@ -76,12 +89,13 @@ def grade(conn, question: dict, result: dict) -> Grade:
 
 def run_question(conn, question: dict, mode: str, model: str) -> dict:
     """Answer one question in one mode and return the graded result."""
-    result = MODES[mode](conn, question["question"], model)
+    result = MODES[mode](conn, question["question"], model, moments=question["moments"])
     graded = grade(conn, question, result)
     evidence = question.get("evidence")
 
     return {
         "question": question["question"],
+        "kind": question["kind"],
         "expected": question["expected"],
         "mode": mode,
         "answer": result["answer"],
@@ -90,6 +104,8 @@ def run_question(conn, question: dict, mode: str, model: str) -> dict:
         "supported": graded.supported,
         "reason": graded.reason,
         "retrieved": retrieved(evidence, result["shown"]) if evidence else None,
+        "cited": retrieved(evidence, result["sources"]) if evidence else None,
+        "found_right": result["found"] == bool(question["expected"]),
         "model_calls": result["model_calls"],
         "seconds": result["seconds"],
         "usd": result["usd"],
@@ -113,10 +129,28 @@ def summarise(rows: list[dict]) -> dict:
         "unanswerable": average([POINTS[row["verdict"]] for row in unanswerable]),
         "supported": average([row["supported"] for row in rows]),
         "retrieved": average([row["retrieved"] for row in rows if row["retrieved"] is not None]),
+        "cited": average([row["cited"] for row in rows if row["cited"] is not None]),
+        "found_right": average([row["found_right"] for row in rows]),
         "model_calls": average([row["model_calls"] for row in rows]),
         "seconds": average([row["seconds"] for row in rows]),
         "usd": average([row["usd"] for row in rows]),
     }
+
+
+def by_kind(rows: list[dict]) -> dict:
+    """Return each kind of question's count and score."""
+    kinds = dict.fromkeys(row["kind"] for row in rows)
+
+    return {kind: {"questions": len(of_kind), "score": average([POINTS[row["verdict"]] for row in of_kind])}
+            for kind in kinds for of_kind in [[row for row in rows if row["kind"] == kind]]}
+
+
+def spread(rows: list[dict]) -> tuple[float, float]:
+    """Return the lowest and highest score among the repeats of a run."""
+    scores = [average([POINTS[row["verdict"]] for row in rows if row["run"] == run])
+              for run in dict.fromkeys(row["run"] for row in rows)]
+
+    return min(scores), max(scores)
 
 
 def print_report(rows: list[dict], judge_usd: float) -> None:
@@ -125,29 +159,44 @@ def print_report(rows: list[dict], judge_usd: float) -> None:
             flag = row["verdict"] + ("" if row["supported"] else ", unsupported")
             print(f"  [{row['mode']}] {flag}: {row['question']}\n      {row['answer']}\n      judge: {row['reason']}")
 
-    print(f"\n{'mode':<6} {'score':>6} {'answerable':>11} {'no answer':>10} {'supported':>10} {'retrieved':>10}"
-          f" {'calls':>6} {'seconds':>8} {'$ each':>9}")
+    print(f"\n{'mode':<10} {'score':>6} {'answerable':>11} {'no answer':>10} {'supported':>10} {'retrieved':>10}"
+          f" {'cited':>6} {'found ok':>9} {'calls':>6} {'seconds':>8} {'$ each':>9}")
 
     for mode in MODES:
-        totals = summarise([row for row in rows if row["mode"] == mode])
+        of_mode = [row for row in rows if row["mode"] == mode]
+        totals = summarise(of_mode)
 
-        if totals["questions"]:
-            print(f"{mode:<6} {totals['score']:>6.0%} {totals['answerable']:>11.0%} {totals['unanswerable']:>10.0%}"
-                  f" {totals['supported']:>10.0%} {totals['retrieved']:>10.0%} {totals['model_calls']:>6.1f}"
-                  f" {totals['seconds']:>8.1f} {totals['usd']:>9.5f}")
+        if not of_mode:
+            continue
+
+        print(f"{mode:<10} {totals['score']:>6.0%} {totals['answerable']:>11.0%} {totals['unanswerable']:>10.0%}"
+              f" {totals['supported']:>10.0%} {totals['retrieved']:>10.0%} {totals['cited']:>6.0%}"
+              f" {totals['found_right']:>9.0%} {totals['model_calls']:>6.1f} {totals['seconds']:>8.1f}"
+              f" {totals['usd']:>9.5f}")
+
+        low, high = spread(of_mode)
+
+        if low != high:
+            print(f"{'':<10} score ranged from {low:.0%} to {high:.0%} across repeats")
+
+        for kind, entry in by_kind(of_mode).items():
+            print(f"{'':<10} {kind:<16} {entry['score']:>5.0%}  ({entry['questions']})")
 
     answers_usd = sum(row["usd"] for row in rows)
     print(f"\nThis run cost ${answers_usd + judge_usd:.4f}: ${answers_usd:.4f} for answers, ${judge_usd:.4f} for the judge.")
 
 
-def save_run(rows: list[dict], model: str) -> None:
-    """Write the run's rows and scores to a dated file in data/evals/runs."""
+def save_run(rows: list[dict], model: str, judge_usd: float) -> None:
+    """Write the run's rows and scores to a dated file in data/evals/runs, and keep a copy in storage."""
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     path = RUNS_DIR / f"{datetime.now():%Y-%m-%dT%H-%M-%S}.json"
 
     ran = dict.fromkeys(row["mode"] for row in rows)
     scores = {mode: summarise([row for row in rows if row["mode"] == mode]) for mode in ran}
-    path.write_text(json.dumps({"model": model, "judge": JUDGE_MODEL, "scores": scores, "rows": rows}, indent=2))
+    kinds = {mode: by_kind([row for row in rows if row["mode"] == mode]) for mode in ran}
+    path.write_text(json.dumps({"model": model, "judge": JUDGE_MODEL, "judge_usd": judge_usd, "scores": scores,
+                                "kinds": kinds, "rows": rows}, indent=2))
+    storage.save(path)
 
     print(f"Saved to {path}")
 
@@ -158,6 +207,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=list(MODES), action="append",
                         help="modes to run (default: agent and plain); no-nearby is the agent without the nearby tool")
     parser.add_argument("--model", default=AGENT_MODEL, help="the model that answers")
+    parser.add_argument("--repeat", type=int, default=1, help="ask every question this many times, to see the spread")
     args = parser.parse_args()
 
     llm.require_price(JUDGE_MODEL)
@@ -168,17 +218,18 @@ def main() -> int:
     with db.connect() as conn:
         judge_before = db.step_cost(conn, "judge")
 
-        for number, question in enumerate(questions, start=1):
-            for mode in modes:
-                rows.append(run_question(conn, question, mode, args.model))
-                conn.commit()
+        for run in range(args.repeat):
+            for number, question in enumerate(questions, start=1):
+                for mode in modes:
+                    rows.append({**run_question(conn, question, mode, args.model), "run": run})
+                    conn.commit()
 
-            print(f"  {number}/{len(questions)} {question['question']}", file=sys.stderr)
+                print(f"  {number}/{len(questions)} {question['question']}", file=sys.stderr)
 
         judge_usd = db.step_cost(conn, "judge") - judge_before
 
     print_report(rows, judge_usd)
-    save_run(rows, args.model)
+    save_run(rows, args.model, judge_usd)
 
     return 0
 

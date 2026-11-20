@@ -74,14 +74,16 @@ def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
     return fact_rows(conn.execute(f"{FACT_COLUMNS} where fact.id = any(%s)", (fact_ids,)))
 
 
-def timeline(conn: psycopg.Connection, start, end) -> list[dict]:
-    """Return the frames, speech and summaries between two times, in order."""
+def timeline(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:
+    """Return the frames, speech and summaries between two times, in order, from only the given moments if named."""
     return fact_rows(conn.execute(
-        f"{FACT_COLUMNS} where fact.at <= %(end)s and ("
+        f"{FACT_COLUMNS} where fact.at <= %(end)s"
+        " and (%(moments)s::text[] is null or fact.moment_id = any(%(moments)s::text[])) and ("
         "    (fact.kind in ('frame', 'speech') and fact.at >= %(start)s)"
         " or (fact.kind = 'summary' and fact.at > %(summary_start)s))"
         " order by fact.at, fact.id",
-        {"start": start, "end": end, "summary_start": start - timedelta(seconds=STRETCH_SECONDS)},
+        {"start": start, "end": end, "summary_start": start - timedelta(seconds=STRETCH_SECONDS),
+         "moments": moments},
     ))
 
 

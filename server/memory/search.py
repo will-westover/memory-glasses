@@ -14,6 +14,7 @@ FUSION_K = 60
 IN_RANGE = """
     (%(start)s::timestamptz is null or at >= %(start)s::timestamptz)
     and (%(end)s::timestamptz is null or at <= %(end)s::timestamptz)
+    and (%(moments)s::text[] is null or moment_id = any(%(moments)s::text[]))
 """
 
 BY_MEANING = f"""
@@ -49,12 +50,14 @@ def search(
     limit: int = 5,
     start: datetime | None = None,
     end: datetime | None = None,
+    moments: list[str] | None = None,
 ) -> list[dict]:
-    """Return the facts that best match a question, best first."""
+    """Return the facts that best match a question, best first, from only the given moments when some are named."""
     vector = llm.embed(conn, [question], "embed-question")[0]
-    values = {"vector": vector, "text": question, "limit": CANDIDATES, "start": start, "end": end}
+    values = {"vector": vector, "text": question, "limit": CANDIDATES, "start": start, "end": end,
+              "moments": moments}
 
-    if start or end:
+    if start or end or moments:
         conn.execute("set local hnsw.iterative_scan = relaxed_order")
 
     by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING, values)]

@@ -144,12 +144,13 @@ NO_ANSWER = Answer(answer="The model gave no answer.", found=False, sources=[], 
                    layout="text", follow_ups=[], next_steps=[])
 
 
-def instructions(conn, notes: str) -> str:
+def instructions(conn, notes: str, moments: list[str] | None = None) -> str:
     """Return the instructions with the current time and the newest recordings filled in."""
     places = db.gps_places(conn)
+    listed = [row for row in db.list_moments(conn) if moments is None or row[0] in moments]
     lines = []
 
-    for _, _, started_at, duration, _, _, lat, lon, _ in db.list_moments(conn)[:RECENT_MOMENTS]:
+    for _, _, started_at, duration, _, _, lat, lon, _ in listed[:RECENT_MOMENTS]:
         place = place_for(lat, lon, places)
 
         start = started_at.astimezone()
@@ -203,27 +204,29 @@ def fact_lines(facts: list[dict]) -> str:
     return "\n".join(fact_line(fact) for fact in facts)
 
 
-def find_facts(conn, name: str, arguments: dict) -> list[dict]:
-    """Return the facts one tool call asks for."""
+def find_facts(conn, name: str, arguments: dict, moments: list[str] | None = None) -> list[dict]:
+    """Return the facts one tool call asks for, from only the given moments when some are named."""
     if name == "nearby":
-        return db.nearby_facts(conn, arguments["fact_id"], arguments.get("metres") or NEARBY_METRES)
+        near = db.nearby_facts(conn, arguments["fact_id"], arguments.get("metres") or NEARBY_METRES)
+
+        return [fact for fact in near if moments is None or fact["moment_id"] in moments]
 
     start = parse_time(arguments.get("start"))
     end = parse_time(arguments.get("end"))
 
     if name == "search":
-        return search(conn, arguments["query"], SEARCH_RESULTS, start, end)
+        return search(conn, arguments["query"], SEARCH_RESULTS, start, end, moments)
 
     if not start or not end:
         raise ValueError("timeline needs a start and an end")
 
-    return fit(db.timeline(conn, start, end))
+    return fit(db.timeline(conn, start, end, moments))
 
 
-def run_tool(conn, name: str, arguments: dict, seen: dict) -> tuple[str, list[dict]]:
+def run_tool(conn, name: str, arguments: dict, seen: dict, moments: list[str] | None = None) -> tuple[str, list[dict]]:
     """Run one tool call, remember the facts it returned, and return them as text and as found."""
     try:
-        facts = find_facts(conn, name, arguments)
+        facts = find_facts(conn, name, arguments, moments)
     except ValueError:
         return f"error: start and end must be {ISO_TIME}", []
 
@@ -289,11 +292,11 @@ def step(kind: str, text: str, facts: list[dict] = ()) -> tuple[str, dict]:
 
 
 def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = (),
-                  use_nearby: bool = True, frame: dict | None = None):
+                  use_nearby: bool = True, frame: dict | None = None, moments: list[str] | None = None):
     """Answer a question by letting the model call the tools, yielding each step and piece of the answer as it comes."""
     llm.require_price(model)
     started = time.monotonic()
-    prompt = instructions(conn, AGENT_NOTES)
+    prompt = instructions(conn, AGENT_NOTES, moments)
 
     seen: dict = {frame["id"]: frame} if frame else {}
     calls = []
@@ -350,7 +353,7 @@ def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[t
             yield step(call.name, step_text(call.name, arguments))
 
             with llm.collect() as call_ids:
-                output, facts = run_tool(conn, call.name, arguments, seen)
+                output, facts = run_tool(conn, call.name, arguments, seen, moments)
 
             yield step(call.name, step_text(call.name, arguments), facts)
 
@@ -366,22 +369,22 @@ def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[t
 
 
 def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = (),
-              use_nearby: bool = True, frame: dict | None = None) -> dict:
+              use_nearby: bool = True, frame: dict | None = None, moments: list[str] | None = None) -> dict:
     """Answer a question by letting the model call the tools."""
-    for kind, payload in answer_events(conn, question, model, history, use_nearby, frame):
+    for kind, payload in answer_events(conn, question, model, history, use_nearby, frame, moments):
         if kind == "result":
             return payload
 
 
-def ask_plain(conn, question: str, model: str = AGENT_MODEL) -> dict:
+def ask_plain(conn, question: str, model: str = AGENT_MODEL, moments: list[str] | None = None) -> dict:
     """Answer a question from one search and one model call."""
     llm.require_price(model)
     started = time.monotonic()
 
-    facts = search(conn, question, PLAIN_RESULTS)
+    facts = search(conn, question, PLAIN_RESULTS, moments=moments)
     seen = {fact["id"]: fact for fact in facts}
 
-    request = {"model": model, "instructions": instructions(conn, PLAIN_NOTES),
+    request = {"model": model, "instructions": instructions(conn, PLAIN_NOTES, moments),
                "input": f"Question: {question}\n\nFacts:\n{fact_lines(facts)}"}
     response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})
     usd = llm.log_cost(conn, "rag", model, response.usage, request=request, response=response.model_dump(mode="json"))

@@ -171,15 +171,16 @@ def frame_json(frame: dict) -> dict:
 
 
 def latest_eval() -> dict | None:
-    """Return the scores of the newest eval run, if there is one."""
-    runs = sorted(RUNS_DIR.glob("*.json"))
+    """Return the scores of the newest eval run kept in storage, if there is one."""
+    runs = sorted(storage.listing(storage.key(RUNS_DIR) + "/"))
 
     if not runs:
         return None
 
-    run = json.loads(runs[-1].read_text())
+    newest = storage.local(storage.path_of(runs[-1]))
+    run = json.loads(newest.read_text())
 
-    return {"run": runs[-1].stem, "model": run["model"], "judge": run["judge"], "scores": run["scores"]}
+    return {"run": newest.stem, "model": run["model"], "judge": run["judge"], "scores": run["scores"]}
 
 
 @app.get("/search")

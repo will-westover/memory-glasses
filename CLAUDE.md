@@ -29,7 +29,9 @@ Each part runs by itself and ends with something to look at. Parts 1 to 8 work f
 6. **Agent** (done): ask a question, get an answer with its sources. The agent has two tools, search and
    timeline; `--plain` is one search and one call, the baseline the evals compare it with.
 7. **Evals** (done): `memory.evals` asks every test question in both modes; a judge model grades each
-   answer, and the run reports scores, whether the right fact was retrieved, and cost.
+   answer, and the run reports scores, whether the right fact was retrieved, and cost. Each question has a `kind` and its
+   file names the moments it is about, so scores are reported per kind and stay stable as recordings are added;
+   `--repeat N` shows the spread.
 8. **API** (done): `memory/api.py` (FastAPI) serves moments, a moment's timeline, frame images, ask,
    stats and settings. `POST /conversations/{id}/ask/stream` sends each step, the answer as it is written (with
    [1] markers for its sources) and then the stored turn, as server-sent events. Chats get a title from a cheap
