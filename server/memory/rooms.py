@@ -276,13 +276,10 @@ def label_rooms(conn, moment_id: str) -> dict[str, int]:
 
 def rebuild(conn) -> None:
     """Put every moment at a place again, oldest first, as if each had just been recorded, and relabel its rooms."""
-    conn.execute("delete from segment")
-    conn.execute("update frame set room_id = null")
-    conn.execute("delete from room where not named")
-    conn.execute("delete from place where not named")
+    db.forget_unnamed_places(conn)
     conn.commit()
 
-    for moment_id in reversed([row[0] for row in conn.execute("select id from moment order by started_at desc")]):
+    for moment_id in db.moment_ids_oldest_first(conn):
         place_id = file_moment(conn, moment_id, MOMENTS_DIR / moment_id, None)
         counts = label_rooms(conn, moment_id)
         build_facts(conn, moment_id)

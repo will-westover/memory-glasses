@@ -150,11 +150,6 @@ def position_json(pose) -> dict | None:
     return dict(zip(("x", "y", "z", "yaw"), pose)) if pose else None
 
 
-def db_duration(conn: psycopg.Connection, moment_id: str) -> float:
-    """Return how long a moment lasts, in seconds."""
-    return float(conn.execute("select duration_seconds from moment where id = %s", (moment_id,)).fetchone()[0])
-
-
 def frame_json(frame: dict) -> dict:
     """Return a captioned frame in the shape the app reads."""
     return {
@@ -228,7 +223,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
     title, overview = db.moment_overview(conn, moment_id)
     summaries = db.summaries(conn, moment_id)
     titles = db.chapter_titles(conn, moment_id)
-    ends = [fact["offset_seconds"] for fact in summaries[1:]] + [db_duration(conn, moment_id)]
+    ends = [fact["offset_seconds"] for fact in summaries[1:]] + [db.moment_duration(conn, moment_id)]
 
     return {
         "id": moment_id,
@@ -403,13 +398,12 @@ def glasses_firmware() -> dict:
 def glasses_status(conn: psycopg.Connection = Depends(connection)) -> dict:
     """Say whether the glasses are sending, how many photos the current recording has, and what is processing."""
     latest = glasses.latest()
-    (processing,) = conn.execute("select count(*) from job where status = 'processing'").fetchone()
 
     return {
         "sending": latest is not None and latest["seconds_since_last"] < SENDING_SECONDS,
         "photos": latest["photos"] if latest else 0,
         "seconds_since_last": latest["seconds_since_last"] if latest else None,
-        "processing": processing,
+        "processing": db.jobs_processing(conn),
     }
 
 
@@ -417,13 +411,6 @@ def glasses_status(conn: psycopg.Connection = Depends(connection)) -> dict:
 def uploads(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List recent processing jobs and how far along each is."""
     return db.jobs(conn)
-
-
-def caption_cost(conn: psycopg.Connection) -> float:
-    """Return the average cost of describing one frame so far."""
-    (average,) = conn.execute("select coalesce(avg(usd), 0.006) from model_call where step = 'caption'").fetchone()
-
-    return float(average)
 
 
 @app.get("/places")
@@ -570,7 +557,7 @@ def reprocess_estimate(moment_id: str, frames_per_minute: float,
     kept = min(len(manifest.get("frames", [])), slots)
 
     return {"frames": slots, "new_frames": slots - kept, "kept_captions": kept,
-            "usd": round((slots - kept) * caption_cost(conn), 4)}
+            "usd": round((slots - kept) * db.caption_cost(conn), 4)}
 
 
 @app.post("/moments/{moment_id}/reprocess")
