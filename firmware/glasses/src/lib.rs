@@ -1,4 +1,7 @@
+pub mod display;
 pub mod link;
+pub mod online;
+pub mod state;
 
 use esp_idf_svc::sys::camera;
 
