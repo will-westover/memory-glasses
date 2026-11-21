@@ -1,6 +1,6 @@
 import wave
 
-from memory.api import audio_clip
+from memory.api.moments import audio_clip
 
 
 def make_wav(path, seconds, rate=1000):
