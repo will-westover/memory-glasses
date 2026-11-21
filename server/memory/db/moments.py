@@ -6,7 +6,6 @@ from pathlib import Path
 import psycopg
 
 
-
 def position(frame: dict) -> tuple:
     """Return a manifest frame's (x, y, z, yaw), or Nones if the recording had no positions."""
     pose = frame.get("position")

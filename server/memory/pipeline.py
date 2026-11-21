@@ -10,7 +10,7 @@ from pathlib import Path
 
 from memory import db
 from memory.config import FRAMES_PER_MINUTE
-from memory import rooms
+from memory import places
 from memory.ingest import captions, faces, facts, recording, transcript
 
 STEPS = ("Picking frames", "Describing frames", "Transcribing", "Finding faces", "Finding rooms", "Building facts")
@@ -42,9 +42,9 @@ def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: d
 
         on_step(STEPS[4])
         if not reuse_frames or db.moment_place(conn, moment_id) is None:
-            rooms.file_moment(conn, moment_id, moment_dir, place_id)
+            places.file_moment(conn, moment_id, moment_dir, place_id)
 
-        rooms.label_rooms(conn, moment_id)
+        places.label_rooms(conn, moment_id)
         conn.commit()
 
         on_step(STEPS[5])

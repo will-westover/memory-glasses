@@ -57,7 +57,7 @@ def located_moments(conn: psycopg.Connection) -> list[dict]:
     ]
 
 
-def places(conn: psycopg.Connection) -> list[dict]:
+def list_places(conn: psycopg.Connection) -> list[dict]:
     """Return every place, most recently updated first, with its rooms and how many moments were there."""
     rows = conn.execute(
         "select p.id, p.name, p.lat, p.lon, p.updated_at, p.map_path is not null,"

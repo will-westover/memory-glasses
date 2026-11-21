@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from memory import db, llm
 from memory.config import STRETCH_SECONDS, SUMMARY_MODEL
 from memory.overview import write_overview
-from memory.places import place_for
+from memory.gps import place_for
 
 PASSAGE_WORDS = 60
 PASSAGE_GAP_SECONDS = 8.0

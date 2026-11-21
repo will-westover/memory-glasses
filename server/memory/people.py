@@ -38,7 +38,7 @@ def main() -> int:
         elif args.command == "forget":
             db.forget_person(conn, args.person_id)
 
-        for person in db.people(conn):
+        for person in db.list_people(conn):
             print(f"{person['id']:>4}  {person['name'] or '(unnamed)':<20} {person['faces']:>4} faces"
                   f"  last seen {person['last_seen'].astimezone():%a %d %b %H:%M}")
 

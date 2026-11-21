@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from memory import db, llm
 from memory.citations import partial_string, renumber, shown_so_far
 from memory.config import AGENT_MODEL, clock
-from memory.places import place_for
+from memory.gps import place_for
 from memory.search import search
 
 MAX_ROUNDS = 5

@@ -1,4 +1,4 @@
-"""Conversations, their messages, and what model calls cost."""
+"""Conversations and their messages."""
 
 from datetime import datetime
 
@@ -6,26 +6,6 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from memory.citations import renumber
-
-
-def step_cost(conn: psycopg.Connection, step: str) -> float:
-    """Return the total dollars logged for one pipeline step."""
-    (usd,) = conn.execute("select coalesce(sum(usd), 0) from model_call where step = %s", (step,)).fetchone()
-
-    return float(usd)
-
-
-def costs(conn: psycopg.Connection) -> list[dict]:
-    """Return the calls, tokens and dollars logged for each pipeline step."""
-    rows = conn.execute(
-        "select step, count(*), sum(input_tokens), sum(output_tokens), sum(usd) from model_call"
-        " group by step order by sum(usd) desc"
-    )
-
-    return [
-        {"step": step, "calls": calls, "input_tokens": tokens_in, "output_tokens": tokens_out, "usd": float(usd)}
-        for step, calls, tokens_in, tokens_out, usd in rows
-    ]
 
 
 def conversations(conn: psycopg.Connection, query: str | None = None) -> list[dict]:
@@ -165,10 +145,3 @@ def save_messages(conn: psycopg.Connection, conversation_id, messages: list[dict
 def delete_conversation(conn: psycopg.Connection, conversation_id) -> bool:
     """Delete a conversation and everything in it. Return whether it existed."""
     return conn.execute("delete from conversation where id = %s", (conversation_id,)).rowcount > 0
-
-
-def caption_cost(conn: psycopg.Connection) -> float:
-    """Return the average cost of describing one frame so far."""
-    (average,) = conn.execute("select coalesce(avg(usd), 0.006) from model_call where step = 'caption'").fetchone()
-
-    return float(average)

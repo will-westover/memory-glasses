@@ -1,15 +1,42 @@
 """Slow work done away from requests: processing uploads and glasses recordings, reprocessing, rebuilding facts."""
 
+import json
+import os
 import shutil
+import urllib.request
 
 import psycopg
 
-from memory import db, glasses, pipeline, storage, tasks
+from memory import db, glasses, pipeline, storage
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.ingest.facts import build_facts
 from memory.moment_files import current_extras, video_path
 
 UPLOADS_DIR = DATA_DIR / "uploads"
+METADATA = "http://metadata.google.internal/computeMetadata/v1/"
+
+
+def metadata(path: str) -> str:
+    """Read one value from the Cloud Run metadata server."""
+    request = urllib.request.Request(METADATA + path, headers={"Metadata-Flavor": "Google"})
+
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return response.read().decode()
+
+
+def run_cloud_job(job_id: str) -> None:
+    """Start one execution of the worker job for this job id, using the service's own Google identity."""
+    token = json.loads(metadata("instance/service-accounts/default/token"))["access_token"]
+    project = metadata("project/project-id")
+    region = os.environ["WORKER_REGION"]
+    url = f"https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{os.environ['WORKER_JOB']}:run"
+    body = json.dumps({"overrides": {"containerOverrides": [{"args": [job_id]}]}}).encode()
+
+    request = urllib.request.Request(url, data=body, method="POST",
+                                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+
+    with urllib.request.urlopen(request, timeout=20) as response:
+        response.read()
 
 
 def start(conn: psycopg.Connection, job_id) -> None:
@@ -17,7 +44,7 @@ def start(conn: psycopg.Connection, job_id) -> None:
     conn.commit()
 
     try:
-        tasks.start(job_id)
+        run_cloud_job(str(job_id))
     except Exception as error:
         db.update_job(conn, job_id, status="failed", error=f"couldn't start: {error}")
         conn.commit()

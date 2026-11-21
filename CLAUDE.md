@@ -78,7 +78,7 @@ Everything else is your call.
   moment is filed at the place the phone's map recognised, else the place whose frames look most alike (average
   embedding at least 0.75); for now each moment is one segment. GPS points are kept over time in `location`. Each
   frame gets a **room** from one model call per moment that sees every frame, its position, the speech and the scan,
-  then a vote of frames within 1.5 m. `memory.rooms list`, `label <moment id>`, `rebuild`. Maps are in `data/places/`.
+  then a vote of frames within 1.5 m. `memory.places list`, `label <moment id>`, `rebuild`. Maps are in `data/places/`.
 - A moment can be reprocessed at another frames per minute from its kept video; frames are named by their time,
   so ones that already exist keep their captions.
 - The agent has three tools: search, timeline and nearby (what was seen near a frame, in the same mapped place).
@@ -86,7 +86,7 @@ Everything else is your call.
 - People: `memory.people list`, `name <id> "Sam"`, `merge <id> <into id>`, `forget <id>`, or the People screen in
   the app. Faces use OpenCV's YuNet and SFace models in the ignored `server/models/` (from github.com/opencv/opencv_zoo).
   The user has written consent from the people recorded.
-- Named GPS places: `memory.places add "Home" <lat> <lon> --radius 75`, `memory.places list`.
+- Named GPS spots: `memory.gps add "Home" <lat> <lon> --radius 75`, `memory.gps list`.
 - Model prices are in `server/prices.json`. A model with no price there is refused before any call.
 - Glasses over Bluetooth (in progress): the firmware advertises "Memory Glasses" and streams frames, takes settings and
   firmware updates over BLE (service 6e1f0001-…); with no phone for 30 s it falls back to Wi-Fi. Phone and glasses prove to each other

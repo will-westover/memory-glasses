@@ -15,7 +15,7 @@ from memory import db, storage
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
 from memory.ingest.poses import load_poses, nearest_pose
-from memory.places import parse_location
+from memory.gps import parse_location
 from memory.ingest.fingerprint import (
     DEFAULT_MAX_DISTANCE,
     THUMB_BYTES,

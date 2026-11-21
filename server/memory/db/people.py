@@ -3,7 +3,6 @@
 import psycopg
 
 
-
 def frame_images(conn: psycopg.Connection, moment_id: str) -> list[tuple]:
     """Return (frame id, image path) for every frame of a moment, oldest first."""
     return conn.execute(
@@ -45,7 +44,7 @@ def remove_faceless_people(conn: psycopg.Connection) -> None:
     conn.execute("delete from person p where name is null and not exists (select 1 from face where person_id = p.id)")
 
 
-def people(conn: psycopg.Connection) -> list[dict]:
+def list_people(conn: psycopg.Connection) -> list[dict]:
     """Return every person with a face count, when they were seen, and their clearest face."""
     rows = conn.execute(
         "select p.id, p.name, count(f.id), min(fr.captured_at), max(fr.captured_at),"

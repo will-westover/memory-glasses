@@ -1,28 +1,41 @@
-import pytest
-
-from memory.places import distance_m, parse_location, place_for
-
-HOME = ("Home", 40.2518, -111.6493, 75)
-LIBRARY = ("Library", 40.2488, -111.6494, 120)
+from memory.places import smooth, travelled
 
 
-def test_parses_the_tag_phones_write_into_videos():
-    assert parse_location("+40.2518-111.6493+1387.000/") == (40.2518, -111.6493)
-    assert parse_location("-33.8688+151.2093/") == (-33.8688, 151.2093)
+def test_a_lone_label_among_neighbours_takes_theirs():
+    own = [(1, 0.0, 0.0, "kitchen"), (2, 0.5, 0.0, "entry"), (3, 1.0, 0.0, "kitchen")]
+
+    assert smooth(own, [])[2] == "kitchen"
 
 
-def test_distance_matches_a_known_value():
-    assert distance_m(40.0, -111.0, 41.0, -111.0) == pytest.approx(111_195, rel=0.001)
+def test_frames_far_apart_keep_their_own_rooms():
+    own = [(1, 0.0, 0.0, "kitchen"), (2, 5.0, 0.0, "bedroom")]
+
+    assert smooth(own, []) == {1: "kitchen", 2: "bedroom"}
 
 
-def test_only_a_point_inside_a_radius_gets_that_place():
-    assert place_for(40.25185, -111.64935, [HOME, LIBRARY]) == "Home"
-    assert place_for(40.30, -111.70, [HOME, LIBRARY]) is None
-    assert place_for(None, None, [HOME]) is None
+def test_a_tie_keeps_the_frames_own_room():
+    own = [(1, 0.0, 0.0, "kitchen"), (2, 0.5, 0.0, "entry")]
+
+    assert smooth(own, []) == {1: "kitchen", 2: "entry"}
 
 
-def test_overlapping_places_pick_the_nearest():
-    near_library = (40.2489, -111.6494)
-    big_campus = ("Campus", 40.2500, -111.6490, 1000)
+def test_other_moments_in_the_same_map_vote_too():
+    own = [(1, 0.0, 0.0, "hallway")]
+    others = [(0.3, 0.0, "living room"), (0.0, 0.4, "living room")]
 
-    assert place_for(*near_library, [big_campus, LIBRARY]) == "Library"
+    assert smooth(own, others) == {1: "living room"}
+
+
+def test_frames_without_a_position_are_left_alone():
+    own = [(1, None, None, "closet"), (2, 0.0, 0.0, "bedroom")]
+
+    assert smooth(own, [])[1] == "closet"
+
+
+def test_travelled_only_past_a_buildings_size():
+    still = [[0, 0.0, 0.0, 0.0, 0.0], [10, 4.0, 0.0, 3.0, 0.0]]
+    moving = [[0, 0.0, 0.0, 0.0, 0.0], [10, 40.0, 0.0, 5.0, 0.0]]
+
+    assert not travelled(still)
+    assert travelled(moving)
+    assert not travelled([])

@@ -18,14 +18,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from memory import chat, db, glasses, jobs, rooms, storage
+from memory import chat, db, glasses, jobs, places, storage
 from memory.agent import answer_events, ask_agent, fact_record
 from memory.config import DATA_DIR, FRAMES_PER_MINUTE, STRETCH_SECONDS
 from memory.evals import RUNS_DIR
 from memory.ingest.facts import first_sentence
 from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
-from memory.places import place_for
+from memory.gps import place_for
 from memory.search import search
 from memory.jobs import UPLOADS_DIR, start_rebuild, upload_task
 from memory.moment_files import MOMENTS_DIR, has_video, manifest_of, video_path
@@ -423,14 +423,14 @@ def glasses_status(conn: psycopg.Connection = Depends(connection)) -> dict:
 @app.get("/uploads")
 def uploads(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List recent processing jobs and how far along each is."""
-    return db.jobs(conn)
+    return db.recent_jobs(conn)
 
 
 @app.get("/places")
 def list_places(lat: float | None = None, lon: float | None = None,
                 conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List places near a location (or all of them), most recently updated first."""
-    return rooms.nearby(conn, lat, lon)
+    return places.nearby(conn, lat, lon)
 
 
 @app.get("/world")
@@ -439,7 +439,7 @@ def world(conn: psycopg.Connection = Depends(connection)) -> dict:
     covers = db.covers(conn)
 
     return {
-        "places": [place for place in db.places(conn) if place["lat"] is not None],
+        "places": [place for place in db.list_places(conn) if place["lat"] is not None],
         "moments": [{**moment, "cover": image_url(covers.get(moment["id"]))} for moment in db.located_moments(conn)],
     }
 
@@ -447,7 +447,7 @@ def world(conn: psycopg.Connection = Depends(connection)) -> dict:
 @app.get("/places/{place_id}")
 def place_detail(place_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Return a place's rooms and the moments recorded there."""
-    found = next((place for place in db.places(conn) if place["id"] == place_id), None)
+    found = next((place for place in db.list_places(conn) if place["id"] == place_id), None)
 
     if found is None:
         raise HTTPException(404, "no such place")
@@ -816,7 +816,7 @@ def person_json(person: dict) -> dict:
 @app.get("/people")
 def people(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List everyone whose face was found, most seen first."""
-    return [person_json(person) for person in db.people(conn)]
+    return [person_json(person) for person in db.list_people(conn)]
 
 
 @app.put("/people/{person_id}")
