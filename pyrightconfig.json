@@ -1,0 +1,6 @@
+{
+  "venvPath": "server",
+  "venv": ".venv",
+  "executionEnvironments": [{ "root": "server" }],
+  "exclude": ["**/.venv", "**/node_modules", "app", "firmware", "hardware", "data"]
+}

@@ -1,6 +1,6 @@
 """Restart the board, read the photo it prints over USB and save it as a JPEG.
 
-    uv run --with pyserial python read_photo.py /dev/cu.usbmodem101 photo.jpg
+    uv run --with pyserial python tools/read_photo.py /dev/cu.usbmodem101 photo.jpg
 """
 
 import base64

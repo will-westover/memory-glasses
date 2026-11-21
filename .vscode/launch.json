@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API (uvicorn)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["memory.api:app", "--port", "8000"],
+      "cwd": "${workspaceFolder}/server",
+      "python": "${workspaceFolder}/server/.venv/bin/python",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Debug tests",
+      "type": "debugpy",
+      "request": "launch",
+      "purpose": ["debug-test"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}
