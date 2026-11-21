@@ -82,7 +82,7 @@ fn vectors() -> String {
 
 fn main() {
     let here = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let app = here.join("../../app/MemoryGlasses/GlassesProtocol.swift");
+    let app = here.join("../../app/MemoryGlasses/Glasses/GlassesProtocol.swift");
 
     fs::write(&app, swift()).expect("write the Swift constants");
     fs::write(here.join("vectors.json"), vectors()).expect("write the test cases");

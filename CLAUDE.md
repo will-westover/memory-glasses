@@ -93,7 +93,7 @@ Everything else is your call.
   that they hold the server token before photos, settings or updates pass. `firmware/glasses/flash.sh`
   flashes over USB with the two-slot OTA partition table; `publish.sh` uploads the app image and `firmware/latest.json` to R2.
 - The Bluetooth protocol is defined once, in the Rust crate `firmware/protocol`. `firmware/protocol/check.sh` runs its
-  tests, regenerates `app/MemoryGlasses/GlassesProtocol.swift` and `vectors.json`, and checks the app's Swift packet
+  tests, regenerates `app/MemoryGlasses/Glasses/GlassesProtocol.swift` and `vectors.json`, and checks the app's Swift packet
   code against them. Change the protocol there, never in the generated file.
 - A glasses recording ends when the phone or glasses say so (`POST /glasses/recordings/{id}/end`), or after five
   minutes without a photo. Its state is in the `recording` table; photos that arrive later start a new part.
