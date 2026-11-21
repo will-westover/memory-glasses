@@ -50,12 +50,17 @@ def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: i
 
     usd = cost_usd(model, input_tokens, cached_tokens, output_tokens)
 
-    (call_id,) = conn.execute(
+    saved = conn.execute(
         "insert into model_call (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd, request,"
         " response) values (%s, %s, %s, %s, %s, %s, %s, %s, %s) returning id",
         (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd,
          Jsonb(request) if request is not None else None, Jsonb(response) if response is not None else None),
     ).fetchone()
+
+    if saved is None:
+        raise RuntimeError("the model call wasn't saved")
+
+    call_id = saved[0]
 
     if (collected := COLLECTED.get()) is not None:
         collected.append(call_id)
