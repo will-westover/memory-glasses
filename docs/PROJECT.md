@@ -17,7 +17,7 @@ honest "I don't know".
 
 The graded part is the LLM software: embeddings, structured output, tool calling and a judge model. An iPhone
 app records and asks questions today. The glasses (an ESP32-S3 with a camera and a small display) send photos
-over the phone's hotspot. Audio from the glasses comes next.
+to the phone over Bluetooth. Audio from the glasses comes next.
 
 ## System design
 
@@ -104,5 +104,7 @@ iPhone app. The glasses already send photos. What's left:
 
 - `server/`: Python with `uv`: pipeline, agent, evals and API.
 - `app/`: the SwiftUI iPhone app.
-- `firmware/`: Rust for the XIAO ESP32-S3 Sense.
+- `firmware/glasses/`: Rust for the XIAO ESP32-S3 Sense.
+- `firmware/protocol/`: the Bluetooth protocol, defined once in Rust.
 - `hardware/`: CAD, print files, parts and wiring.
+- `docs/`: this overview and the work log. The [README](../README.md) maps the code.
