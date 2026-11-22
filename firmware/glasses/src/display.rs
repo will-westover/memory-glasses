@@ -31,18 +31,18 @@ pub fn start_screen(mut i2c: I2cDriver<'static>) -> Option<Screen> {
 #[derive(Clone, PartialEq)]
 pub struct Look {
     pub scale: f64,
-    pub x: f64,
-    pub y: f64,
+    pub offset_x: f64,
+    pub offset_y: f64,
     pub brightness: f64,
     pub large_text: bool,
     pub mirror: bool,
     pub flip: bool,
-    pub pattern: bool,
+    pub focus_pattern: bool,
 }
 
 impl Default for Look {
     fn default() -> Self {
-        Look { scale: 1.0, x: 0.0, y: 0.0, brightness: 1.0, large_text: false, mirror: false, flip: false, pattern: false }
+        Look { scale: 1.0, offset_x: 0.0, offset_y: 0.0, brightness: 1.0, large_text: false, mirror: false, flip: false, focus_pattern: false }
     }
 }
 
@@ -77,14 +77,14 @@ impl Display {
         }
 
         let old = std::mem::replace(&mut self.look, look);
-        let now = &self.look;
+        let new = &self.look;
 
-        if (old.mirror, old.flip, old.brightness) != (now.mirror, now.flip, now.brightness) {
+        if (old.mirror, old.flip, old.brightness) != (new.mirror, new.flip, new.brightness) {
             self.apply_to_screen();
         }
 
-        let now = &self.look;
-        if (old.scale, old.x, old.y, old.large_text) != (now.scale, now.x, now.y, now.large_text) {
+        let new = &self.look;
+        if (old.scale, old.offset_x, old.offset_y, old.large_text) != (new.scale, new.offset_x, new.offset_y, new.large_text) {
             self.outline_until = Some(Instant::now() + OUTLINE_FOR);
         }
 
@@ -97,26 +97,26 @@ impl Display {
         self.draw();
     }
 
-    pub fn area(&self) -> (Point, i32, i32) {
+    pub fn text_area(&self) -> (Point, i32, i32) {
         let (width, height) = ((128.0 * self.look.scale).round() as i32, (64.0 * self.look.scale).round() as i32);
-        let x = (128 - width) / 2 + ((128 - width) as f64 / 2.0 * self.look.x).round() as i32;
-        let y = (64 - height) / 2 + ((64 - height) as f64 / 2.0 * self.look.y).round() as i32;
+        let x = (128 - width) / 2 + ((128 - width) as f64 / 2.0 * self.look.offset_x).round() as i32;
+        let y = (64 - height) / 2 + ((64 - height) as f64 / 2.0 * self.look.offset_y).round() as i32;
 
         (Point::new(x, y), width, height)
     }
 
     pub fn draw(&mut self) {
-        let (corner, width, height) = self.area();
-        let outlined = self.look.pattern || self.outline_until.is_some_and(|until| Instant::now() < until);
+        let (corner, width, height) = self.text_area();
+        let outlined = self.look.focus_pattern || self.outline_until.is_some_and(|until| Instant::now() < until);
         let (font, line_height, char_width) = if self.look.large_text { (&FONT_10X20, 20, 10) } else { (&FONT_6X10, 11, 6) };
         let style = MonoTextStyle::new(font, BinaryColor::On);
         let stroke = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
 
-        let mut shown: Vec<String> = self.lines.iter().filter(|line| !line.is_empty()).cloned().collect();
-        if self.look.pattern {
-            shown = vec!["Aa 0123".to_string()];
+        let mut visible_lines: Vec<String> = self.lines.iter().filter(|line| !line.is_empty()).cloned().collect();
+        if self.look.focus_pattern {
+            visible_lines = vec!["Aa 0123".to_string()];
         } else if outlined {
-            shown.insert(0, format!("{:.0}%", self.look.scale * 100.0));
+            visible_lines.insert(0, format!("{:.0}%", self.look.scale * 100.0));
         }
 
         let Some(screen) = self.screen.as_mut() else { return };
@@ -126,18 +126,18 @@ impl Display {
             let _ = Rectangle::new(corner, Size::new(width as u32, height as u32)).into_styled(stroke).draw(screen);
         }
 
-        if self.look.pattern {
+        if self.look.focus_pattern {
             let middle = corner + Point::new(width / 2, height / 2);
             let _ = Line::new(Point::new(corner.x, middle.y), Point::new(corner.x + width - 1, middle.y)).into_styled(stroke).draw(screen);
             let _ = Line::new(Point::new(middle.x, corner.y), Point::new(middle.x, corner.y + height - 1)).into_styled(stroke).draw(screen);
 
-            for step in (2..width / 2 - 2).step_by(2) {
-                let x = corner.x + step;
+            for offset in (2..width / 2 - 2).step_by(2) {
+                let x = corner.x + offset;
                 let _ = Line::new(Point::new(x, corner.y + 2), Point::new(x, middle.y - 2)).into_styled(stroke).draw(screen);
             }
 
-            for step in (2..height / 2 - 2).step_by(2) {
-                let y = middle.y + step;
+            for offset in (2..height / 2 - 2).step_by(2) {
+                let y = middle.y + offset;
                 let _ = Line::new(Point::new(middle.x + 2, y), Point::new(corner.x + width - 3, y)).into_styled(stroke).draw(screen);
             }
         }
@@ -145,10 +145,10 @@ impl Display {
         let inset = if outlined { 2 } else { 0 };
         let rows = ((height - 2 * inset) / line_height).max(1) as usize;
         let columns = ((width - 2 * inset) / char_width).max(1) as usize;
-        let text_corner = if self.look.pattern { corner + Point::new(width / 2 + 2, 2) } else { corner + Point::new(inset, inset) };
-        let columns = if self.look.pattern { columns / 2 } else { columns };
+        let text_corner = if self.look.focus_pattern { corner + Point::new(width / 2 + 2, 2) } else { corner + Point::new(inset, inset) };
+        let columns = if self.look.focus_pattern { columns / 2 } else { columns };
 
-        for (row, line) in shown.iter().take(rows).enumerate() {
+        for (row, line) in visible_lines.iter().take(rows).enumerate() {
             let text: String = line.chars().take(columns).collect();
             let at = text_corner + Point::new(0, line_height * row as i32);
             let _ = Text::with_baseline(&text, at, style, Baseline::Top).draw(screen);

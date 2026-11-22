@@ -1,4 +1,4 @@
-const SETTINGS: [&str; 4] = ["wifi_name", "wifi_password", "server", "token"];
+const CONFIG_KEYS: [&str; 4] = ["wifi_name", "wifi_password", "server", "token"];
 
 fn main() {
     embuild::espidf::sysenv::output();
@@ -8,7 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     let text = std::fs::read_to_string("glasses.toml").unwrap_or_default();
 
-    for key in SETTINGS {
+    for key in CONFIG_KEYS {
         let value = text
             .lines()
             .filter_map(|line| line.split_once('='))

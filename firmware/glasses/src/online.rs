@@ -8,15 +8,15 @@ use esp_idf_svc::sys::EspError;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 
 use crate::display::Display;
-use crate::state::{new_recording_id, State, Upload};
+use crate::state::{new_recording_id, State, StorageUpload};
 use crate::take_photo;
 
 pub const WIFI_NAME: &str = env!("GLASSES_WIFI_NAME");
 pub const WIFI_PASSWORD: &str = env!("GLASSES_WIFI_PASSWORD");
 pub const SERVER: &str = env!("GLASSES_SERVER");
 pub const TOKEN: &str = env!("GLASSES_TOKEN");
-pub const UPLOAD_CHUNK: usize = 8192;
-pub const PAUSED_CHECK: Duration = Duration::from_secs(3);
+pub const HTTP_BUFFER_BYTES: usize = 8192;
+pub const PAUSED_POLL: Duration = Duration::from_secs(3);
 
 pub fn join_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> Result<(), EspError> {
     wifi.set_configuration(&Configuration::Client(ClientConfiguration {
@@ -36,29 +36,29 @@ pub fn join_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> Result<(), EspErr
     esp_idf_svc::sys::esp!(unsafe { esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE) })
 }
 
-pub fn request(open: &mut Option<EspHttpConnection>, method: Method, url: &str, headers: &[(&str, &str)], body: &[u8],
+pub fn send_request(connection: &mut Option<EspHttpConnection>, method: Method, url: &str, headers: &[(&str, &str)], body: &[u8],
            authorized: bool) -> Result<(u16, Vec<u8>), EspError> {
-    let reply = exchange(open, method, url, headers, body, authorized);
+    let reply = send_request_once(connection, method, url, headers, body, authorized);
 
     if reply.is_err() {
-        *open = None;
+        *connection = None;
     }
 
     reply
 }
 
-pub fn exchange(open: &mut Option<EspHttpConnection>, method: Method, url: &str, headers: &[(&str, &str)], body: &[u8],
+pub fn send_request_once(connection: &mut Option<EspHttpConnection>, method: Method, url: &str, headers: &[(&str, &str)], body: &[u8],
             authorized: bool) -> Result<(u16, Vec<u8>), EspError> {
-    if open.is_none() {
-        *open = Some(EspHttpConnection::new(&HttpConfiguration {
+    if connection.is_none() {
+        *connection = Some(EspHttpConnection::new(&HttpConfiguration {
             crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
             timeout: Some(Duration::from_secs(20)),
-            buffer_size_tx: Some(UPLOAD_CHUNK),
+            buffer_size_tx: Some(HTTP_BUFFER_BYTES),
             ..Default::default()
         })?);
     }
 
-    let connection = open.as_mut().unwrap();
+    let active = connection.as_mut().unwrap();
 
     let authorization = format!("Bearer {TOKEN}");
     let length = body.len().to_string();
@@ -70,20 +70,20 @@ pub fn exchange(open: &mut Option<EspHttpConnection>, method: Method, url: &str,
 
     all_headers.extend_from_slice(headers);
 
-    connection.initiate_request(method, url, &all_headers)?;
+    active.initiate_request(method, url, &all_headers)?;
 
     let mut written = 0;
     while written < body.len() {
-        written += connection.write(&body[written..])?;
+        written += active.write(&body[written..])?;
     }
 
-    connection.initiate_response()?;
-    let status = connection.status();
+    active.initiate_response()?;
+    let status = active.status();
 
     let mut reply = Vec::new();
     let mut buffer = [0u8; 512];
     loop {
-        let read = connection.read(&mut buffer)?;
+        let read = active.read(&mut buffer)?;
         if read == 0 {
             break;
         }
@@ -93,72 +93,74 @@ pub fn exchange(open: &mut Option<EspHttpConnection>, method: Method, url: &str,
     Ok((status, reply))
 }
 
-pub fn ask_server(open: &mut Option<EspHttpConnection>, method: Method, path: &str, headers: &[(&str, &str)], body: &[u8])
+pub fn server_request(connection: &mut Option<EspHttpConnection>, method: Method, path: &str, headers: &[(&str, &str)], body: &[u8])
               -> Result<(u16, Vec<u8>), EspError> {
-    request(open, method, &format!("{SERVER}{path}"), headers, body, true)
+    send_request(connection, method, &format!("{SERVER}{path}"), headers, body, true)
 }
 
-pub fn fetch_settings(open: &mut Option<EspHttpConnection>, recording: &str) -> Option<Vec<u8>> {
-    let (status, reply) = ask_server(open, Method::Get, "/settings", &[("X-Recording", recording)], &[]).ok()?;
+pub fn fetch_settings(connection: &mut Option<EspHttpConnection>, recording_id: &str) -> Option<Vec<u8>> {
+    let (status, reply) = server_request(connection, Method::Get, "/settings", &[("X-Recording", recording_id)], &[]).ok()?;
 
     (status == 200).then_some(reply)
 }
 
-pub fn send_frame(server: &mut Option<EspHttpConnection>, storage: &mut Option<EspHttpConnection>, recording: &str,
-              jpeg: &[u8], upload: Option<Upload>) -> Result<(u16, Vec<u8>), EspError> {
+pub fn upload_frame(server_connection: &mut Option<EspHttpConnection>,
+                    storage_connection: &mut Option<EspHttpConnection>, recording_id: &str,
+              jpeg: &[u8], upload: Option<StorageUpload>) -> Result<(u16, Vec<u8>), EspError> {
     if let Some(upload) = upload {
-        match request(storage, Method::Put, &upload.url, &[], jpeg, false) {
+        match send_request(storage_connection, Method::Put, &upload.url, &[], jpeg, false) {
             Ok((200, _)) => {
-                let headers = [("X-Recording", recording), ("X-Uploaded", upload.name.as_str())];
+                let headers = [("X-Recording", recording_id), ("X-Uploaded", upload.object_name.as_str())];
 
-                return ask_server(server, Method::Post, "/glasses/frames", &headers, &[]);
+                return server_request(server_connection, Method::Post, "/glasses/frames", &headers, &[]);
             }
             Ok((status, _)) => println!("storage said {status}, sending to the server instead"),
             Err(error) => println!("storage upload failed: {error}, sending to the server instead"),
         }
     }
 
-    let headers = [("X-Recording", recording), ("Content-Type", "image/jpeg")];
+    let headers = [("X-Recording", recording_id), ("Content-Type", "image/jpeg")];
 
-    ask_server(server, Method::Post, "/glasses/frames", &headers, jpeg)
+    server_request(server_connection, Method::Post, "/glasses/frames", &headers, jpeg)
 }
 
-pub fn timed_send(server: &mut Option<EspHttpConnection>, storage: &mut Option<EspHttpConnection>, recording: &str,
-              jpeg: &[u8], upload: Option<Upload>) -> Result<(u16, Vec<u8>), EspError> {
+pub fn upload_frame_logged(server_connection: &mut Option<EspHttpConnection>,
+                    storage_connection: &mut Option<EspHttpConnection>, recording_id: &str,
+              jpeg: &[u8], upload: Option<StorageUpload>) -> Result<(u16, Vec<u8>), EspError> {
     let started = Instant::now();
-    let direct = upload.is_some();
-    let fresh = if direct { storage.is_none() } else { server.is_none() };
-    let result = send_frame(server, storage, recording, jpeg, upload);
+    let to_storage = upload.is_some();
+    let new_connection = if to_storage { storage_connection.is_none() } else { server_connection.is_none() };
+    let result = upload_frame(server_connection, storage_connection, recording_id, jpeg, upload);
 
-    println!("sent {} bytes {} in {} ms{}", jpeg.len(), if direct { "to storage" } else { "to the server" },
-             started.elapsed().as_millis(), if fresh { " (new connection)" } else { "" });
+    println!("sent {} bytes {} in {} ms{}", jpeg.len(), if to_storage { "to storage" } else { "to the server" },
+             started.elapsed().as_millis(), if new_connection { " (new connection)" } else { "" });
 
     result
 }
 
 pub struct Online {
     pub wifi: BlockingWifi<EspWifi<'static>>,
-    pub joined: bool,
-    pub server: Option<EspHttpConnection>,
-    pub storage: Option<EspHttpConnection>,
-    pub upload: Option<Upload>,
+    pub wifi_joined: bool,
+    pub server_connection: Option<EspHttpConnection>,
+    pub storage_connection: Option<EspHttpConnection>,
+    pub upload: Option<StorageUpload>,
 }
 
 impl Online {
     pub fn stop(&mut self) {
-        if self.joined || self.wifi.is_started().unwrap_or(false) {
+        if self.wifi_joined || self.wifi.is_started().unwrap_or(false) {
             println!("stopping Wi-Fi for the phone");
             let _ = self.wifi.stop();
         }
 
-        self.joined = false;
-        self.server = None;
-        self.storage = None;
+        self.wifi_joined = false;
+        self.server_connection = None;
+        self.storage_connection = None;
         self.upload = None;
     }
 
-    pub fn join(&mut self, state: &mut State, display: &mut Display) -> bool {
-        if self.joined && self.wifi.is_connected().unwrap_or(false) {
+    pub fn ensure_online(&mut self, state: &mut State, display: &mut Display) -> bool {
+        if self.wifi_joined && self.wifi.is_connected().unwrap_or(false) {
             return true;
         }
 
@@ -174,28 +176,28 @@ impl Online {
             return false;
         }
 
-        self.joined = true;
+        self.wifi_joined = true;
 
-        if let Some(reply) = fetch_settings(&mut self.server, &state.recording_id) {
-            self.upload = state.apply(&reply, display).flatten();
+        if let Some(reply) = fetch_settings(&mut self.server_connection, &state.recording_id) {
+            self.upload = state.apply_settings(&reply, display).flatten();
         }
 
         true
     }
 
-    pub fn step(&mut self, state: &mut State, display: &mut Display) {
-        if !state.recording || state.rate <= 0.0 {
+    pub fn record_one_by_wifi(&mut self, state: &mut State, display: &mut Display) {
+        if !state.recording || state.frames_per_minute <= 0.0 {
             display.show(&[if state.recording { "No pics" } else { "Paused" }]);
 
-            if let Some(ended) = state.stopped.take() {
-                let _ = ask_server(&mut self.server, Method::Post, &format!("/glasses/recordings/{ended}/end"), &[], &[]);
+            if let Some(ended) = state.recording_to_end.take() {
+                let _ = server_request(&mut self.server_connection, Method::Post, &format!("/glasses/recordings/{ended}/end"), &[], &[]);
             }
 
-            thread::sleep(PAUSED_CHECK);
+            thread::sleep(PAUSED_POLL);
 
-            let probe = if state.recording { state.recording_id.clone() } else { new_recording_id() };
-            if let Some(reply) = fetch_settings(&mut self.server, &probe) {
-                self.upload = state.apply(&reply, display).flatten();
+            let settings_recording_id = if state.recording { state.recording_id.clone() } else { new_recording_id() };
+            if let Some(reply) = fetch_settings(&mut self.server_connection, &settings_recording_id) {
+                self.upload = state.apply_settings(&reply, display).flatten();
             }
 
             return;
@@ -205,11 +207,11 @@ impl Online {
         let mut problem = String::new();
 
         match take_photo() {
-            Some((jpeg, _, _)) => match timed_send(&mut self.server, &mut self.storage, &state.recording_id, &jpeg,
+            Some((jpeg, _, _)) => match upload_frame_logged(&mut self.server_connection, &mut self.storage_connection, &state.recording_id, &jpeg,
                                                    self.upload.take()) {
                 Ok((200, reply)) => {
-                    state.sent += 1;
-                    self.upload = state.apply(&reply, display).flatten();
+                    state.frames_sent += 1;
+                    self.upload = state.apply_settings(&reply, display).flatten();
                 }
                 Ok((status, _)) => {
                     println!("server said {status}");
@@ -220,17 +222,17 @@ impl Online {
                     problem = "No net".to_string();
 
                     if !self.wifi.is_connected().unwrap_or(false) {
-                        self.joined = false;
+                        self.wifi_joined = false;
                     }
                 }
             },
             None => problem = "No pic".to_string(),
         }
 
-        display.show(&[&format!("Rec {}", state.sent), &problem]);
+        display.show(&[&format!("Rec {}", state.frames_sent), &problem]);
 
-        if state.recording && state.rate > 0.0 {
-            thread::sleep(state.gap().saturating_sub(started.elapsed()));
+        if state.recording && state.frames_per_minute > 0.0 {
+            thread::sleep(state.frame_interval().saturating_sub(started.elapsed()));
         }
     }
 }

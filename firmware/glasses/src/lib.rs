@@ -55,8 +55,8 @@ pub fn take_photo() -> Option<(Vec<u8>, usize, usize)> {
     Some(photo)
 }
 
-pub const PHOTO: camera::framesize_t = camera::framesize_t_FRAMESIZE_UXGA;
-pub const STREAM: camera::framesize_t = camera::framesize_t_FRAMESIZE_XGA;
+pub const PHOTO_FRAME_SIZE: camera::framesize_t = camera::framesize_t_FRAMESIZE_UXGA;
+pub const STREAM_FRAME_SIZE: camera::framesize_t = camera::framesize_t_FRAMESIZE_XGA;
 
 pub fn start_camera(frame_size: camera::framesize_t) -> Result<(), i32> {
     let started = unsafe { camera::esp_camera_init(&xiao_sense_camera(frame_size)) };

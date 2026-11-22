@@ -8,27 +8,31 @@ use esp32_nimble::utilities::mutex::Mutex;
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties};
 use esp_idf_svc::sys;
-use protocol::{auth, frame, update, word};
+use protocol::{auth, frame, read_u32_le, update};
 
 fn uuid(text: &str) -> BleUuid {
     BleUuid::from_uuid128_string(text).expect("a valid UUID")
 }
 
-
-pub enum Message {
+pub enum PhoneMessage {
     Settings(Vec<u8>),
     Ack(u32),
 }
 
 pub struct Link {
-    frame: Arc<Mutex<BLECharacteristic>>,
-    messages: Receiver<Message>,
+    frame_characteristic: Arc<Mutex<BLECharacteristic>>,
+    messages: Receiver<PhoneMessage>,
     connected: Arc<AtomicBool>,
     subscribed: Arc<AtomicBool>,
     trusted: Arc<AtomicBool>,
     mtu: Arc<AtomicU16>,
-    progress: Arc<AtomicU8>,
-    updating: Arc<AtomicBool>,
+    update_percent: Arc<AtomicU8>,
+    update_in_progress: Arc<AtomicBool>,
+}
+
+struct Nonces {
+    phone: [u8; auth::NONCE_BYTES],
+    glasses: [u8; auth::NONCE_BYTES],
 }
 
 fn random_nonce() -> [u8; auth::NONCE_BYTES] {
@@ -39,6 +43,10 @@ fn random_nonce() -> [u8; auth::NONCE_BYTES] {
     }
 
     nonce
+}
+
+fn fresh_nonces() -> Nonces {
+    Nonces { phone: random_nonce(), glasses: random_nonce() }
 }
 
 impl Link {
@@ -52,139 +60,142 @@ impl Link {
         let connected = Arc::new(AtomicBool::new(false));
         let subscribed = Arc::new(AtomicBool::new(false));
         let trusted = Arc::new(AtomicBool::new(token.is_empty()));
-        let nonces = Arc::new(Mutex::new((random_nonce(), random_nonce())));
+        let nonces = Arc::new(Mutex::new(fresh_nonces()));
         let mtu = Arc::new(AtomicU16::new(23));
-        let progress = Arc::new(AtomicU8::new(0));
-        let updating = Arc::new(AtomicBool::new(false));
-        let (send, messages) = channel();
-        let (update_send, update_receive) = channel::<Vec<u8>>();
+        let update_percent = Arc::new(AtomicU8::new(0));
+        let update_in_progress = Arc::new(AtomicBool::new(false));
+        let (message_sender, messages) = channel();
+        let (update_sender, update_receiver) = channel::<Vec<u8>>();
 
         server.advertise_on_disconnect(true);
 
-        let on_connect = (connected.clone(), mtu.clone(), trusted.clone(), nonces.clone());
+        let (connect_connected, connect_mtu, connect_trusted, connect_nonces) =
+            (connected.clone(), mtu.clone(), trusted.clone(), nonces.clone());
         server.on_connect(move |server, desc| {
-            on_connect.0.store(true, Ordering::SeqCst);
-            on_connect.1.store(desc.mtu(), Ordering::SeqCst);
-            on_connect.2.store(token.is_empty(), Ordering::SeqCst);
-            *on_connect.3.lock() = (random_nonce(), random_nonce());
+            connect_connected.store(true, Ordering::SeqCst);
+            connect_mtu.store(desc.mtu(), Ordering::SeqCst);
+            connect_trusted.store(token.is_empty(), Ordering::SeqCst);
+            *connect_nonces.lock() = fresh_nonces();
             let _ = server.update_conn_params(desc.conn_handle(), 6, 12, 0, 400);
             println!("phone connected, mtu {}", desc.mtu());
         });
 
-        let on_disconnect = (connected.clone(), subscribed.clone(), trusted.clone(), updating.clone(), update_send.clone());
+        let (gone_connected, gone_subscribed, gone_trusted, gone_update_in_progress, gone_update_sender) =
+            (connected.clone(), subscribed.clone(), trusted.clone(), update_in_progress.clone(), update_sender.clone());
         server.on_disconnect(move |_, reason| {
-            on_disconnect.0.store(false, Ordering::SeqCst);
-            on_disconnect.1.store(false, Ordering::SeqCst);
-            on_disconnect.2.store(token.is_empty(), Ordering::SeqCst);
+            gone_connected.store(false, Ordering::SeqCst);
+            gone_subscribed.store(false, Ordering::SeqCst);
+            gone_trusted.store(token.is_empty(), Ordering::SeqCst);
 
-            if on_disconnect.3.load(Ordering::SeqCst) {
-                let _ = on_disconnect.4.send(vec![update::CANCEL]);
+            if gone_update_in_progress.load(Ordering::SeqCst) {
+                let _ = gone_update_sender.send(vec![update::CANCEL]);
             }
 
             println!("phone disconnected: {reason:?}");
         });
 
-        let service = server.create_service(uuid(protocol::SERVICE));
+        let service = server.create_service(uuid(protocol::SERVICE_UUID));
 
-        let frame = service.lock().create_characteristic(uuid(protocol::FRAME), NimbleProperties::NOTIFY);
-        let on_subscribe = (subscribed.clone(), mtu.clone());
-        frame.lock().on_subscribe(move |characteristic, desc, _| {
-            on_subscribe.0.store(characteristic.subscribed_count() > 0, Ordering::SeqCst);
-            on_subscribe.1.store(desc.mtu(), Ordering::SeqCst);
+        let frame_characteristic = service.lock().create_characteristic(uuid(protocol::FRAME_UUID), NimbleProperties::NOTIFY);
+        let (subscribe_subscribed, subscribe_mtu) = (subscribed.clone(), mtu.clone());
+        frame_characteristic.lock().on_subscribe(move |characteristic, desc, _| {
+            subscribe_subscribed.store(characteristic.subscribed_count() > 0, Ordering::SeqCst);
+            subscribe_mtu.store(desc.mtu(), Ordering::SeqCst);
         });
 
-        let settings = (send.clone(), trusted.clone());
-        service.lock().create_characteristic(uuid(protocol::SETTINGS), NimbleProperties::WRITE).lock().on_write(move |args| {
-            if settings.1.load(Ordering::SeqCst) {
-                let _ = settings.0.send(Message::Settings(args.recv_data().to_vec()));
+        let (settings_sender, settings_trusted) = (message_sender.clone(), trusted.clone());
+        service.lock().create_characteristic(uuid(protocol::SETTINGS_UUID), NimbleProperties::WRITE).lock().on_write(move |args| {
+            if settings_trusted.load(Ordering::SeqCst) {
+                let _ = settings_sender.send(PhoneMessage::Settings(args.recv_data().to_vec()));
             }
         });
 
         let ack_trusted = trusted.clone();
-        service.lock().create_characteristic(uuid(protocol::ACK), NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
-            if let Some(number) = word(args.recv_data()).filter(|_| ack_trusted.load(Ordering::SeqCst)) {
-                let _ = send.send(Message::Ack(number));
+        service.lock().create_characteristic(uuid(protocol::ACK_UUID), NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
+            if let Some(number) = read_u32_le(args.recv_data()).filter(|_| ack_trusted.load(Ordering::SeqCst)) {
+                let _ = message_sender.send(PhoneMessage::Ack(number));
             }
         });
 
         let update_trusted = trusted.clone();
-        service.lock().create_characteristic(uuid(protocol::UPDATE), NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
+        service.lock().create_characteristic(uuid(protocol::UPDATE_UUID), NimbleProperties::WRITE_NO_RSP).lock().on_write(move |args| {
             if update_trusted.load(Ordering::SeqCst) {
-                let _ = update_send.send(args.recv_data().to_vec());
+                let _ = update_sender.send(args.recv_data().to_vec());
             }
         });
 
         if !token.is_empty() {
-            let auth = service.lock().create_characteristic(uuid(protocol::AUTH), NimbleProperties::READ | NimbleProperties::WRITE);
-            let asked = nonces.clone();
-            let answered = (nonces.clone(), trusted.clone());
+            let auth_characteristic = service.lock().create_characteristic(uuid(protocol::AUTH_UUID), NimbleProperties::READ | NimbleProperties::WRITE);
+            let read_nonces = nonces.clone();
+            let (write_nonces, write_trusted) = (nonces.clone(), trusted.clone());
 
-            auth.lock().on_read(move |characteristic, _| {
-                let pair = asked.lock();
-                characteristic.set_value(&auth::glasses_answer(token, &pair.0, &pair.1));
+            auth_characteristic.lock().on_read(move |characteristic, _| {
+                let nonces = read_nonces.lock();
+                characteristic.set_value(&auth::glasses_challenge_answer(token, &nonces.phone, &nonces.glasses));
             });
 
-            auth.lock().on_write(move |args| {
-                let data = args.recv_data();
-                let mut pair = answered.0.lock();
+            auth_characteristic.lock().on_write(move |args| {
+                let written = args.recv_data();
+                let mut nonces = write_nonces.lock();
 
-                if data.len() == auth::NONCE_BYTES {
-                    pair.0.copy_from_slice(data);
-                    pair.1 = random_nonce();
-                    answered.1.store(false, Ordering::SeqCst);
-                } else if data.len() == auth::PROOF_BYTES {
-                    answered.1.store(auth::phone_is_right(token, &pair.0, &pair.1, data), Ordering::SeqCst);
-                    pair.1 = random_nonce();
+                if written.len() == auth::NONCE_BYTES {
+                    nonces.phone.copy_from_slice(written);
+                    nonces.glasses = random_nonce();
+                    write_trusted.store(false, Ordering::SeqCst);
+                } else if written.len() == auth::PROOF_BYTES {
+                    let proved = auth::verify_phone_proof(token, &nonces.phone, &nonces.glasses, written);
+                    write_trusted.store(proved, Ordering::SeqCst);
+                    nonces.glasses = random_nonce();
                 }
             });
         }
 
-        let update_status = service.lock().create_characteristic(uuid(protocol::UPDATE_STATUS), NimbleProperties::NOTIFY);
+        let status_characteristic = service.lock().create_characteristic(uuid(protocol::UPDATE_STATUS_UUID), NimbleProperties::NOTIFY);
 
-        service.lock().create_characteristic(uuid(protocol::VERSION), NimbleProperties::READ).lock().set_value(version.as_bytes());
+        service.lock().create_characteristic(uuid(protocol::VERSION_UUID), NimbleProperties::READ).lock().set_value(version.as_bytes());
 
-        let mut data = BLEAdvertisementData::new();
-        data.name(protocol::DEVICE_NAME).add_service_uuid(uuid(protocol::SERVICE));
-        let _ = advertising.lock().scan_response(true).set_data(&mut data);
+        let mut advertisement = BLEAdvertisementData::new();
+        advertisement.name(protocol::DEVICE_NAME).add_service_uuid(uuid(protocol::SERVICE_UUID));
+        let _ = advertising.lock().scan_response(true).set_data(&mut advertisement);
         let _ = advertising.lock().start();
 
-        let worker = (progress.clone(), updating.clone());
+        let (thread_percent, thread_in_progress) = (update_percent.clone(), update_in_progress.clone());
         thread::Builder::new()
             .stack_size(8192)
-            .spawn(move || run_updates(update_receive, update_status, worker.0, worker.1))
+            .spawn(move || run_updates(update_receiver, status_characteristic, thread_percent, thread_in_progress))
             .expect("update thread");
 
-        Link { frame, messages, connected, subscribed, trusted, mtu, progress, updating }
+        Link { frame_characteristic, messages, connected, subscribed, trusted, mtu, update_percent, update_in_progress }
     }
 
-    pub fn ready(&self) -> bool {
+    pub fn phone_ready(&self) -> bool {
         self.connected.load(Ordering::SeqCst) && self.subscribed.load(Ordering::SeqCst)
             && self.trusted.load(Ordering::SeqCst)
     }
 
-    pub fn updating(&self) -> Option<u8> {
-        self.updating.load(Ordering::SeqCst).then(|| self.progress.load(Ordering::SeqCst))
+    pub fn update_progress(&self) -> Option<u8> {
+        self.update_in_progress.load(Ordering::SeqCst).then(|| self.update_percent.load(Ordering::SeqCst))
     }
 
-    pub fn next_message(&self, wait: Duration) -> Option<Message> {
+    pub fn next_message(&self, wait: Duration) -> Option<PhoneMessage> {
         match self.messages.recv_timeout(wait) {
             Ok(message) => Some(message),
             Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => None,
         }
     }
 
-    fn notify(&self, value: &[u8]) -> bool {
+    fn notify_frame_packet(&self, packet: &[u8]) -> bool {
         let deadline = Instant::now() + Duration::from_secs(5);
 
         loop {
-            if !self.ready() {
+            if !self.phone_ready() {
                 return false;
             }
 
             let sent = {
-                let characteristic = self.frame.lock();
+                let characteristic = self.frame_characteristic.lock();
                 let handle = BLEDevice::take().get_server().connections().next().map(|desc| desc.conn_handle());
-                handle.map(|handle| characteristic.notify_with(value, handle).is_ok()).unwrap_or(false)
+                handle.map(|handle| characteristic.notify_with(packet, handle).is_ok()).unwrap_or(false)
             };
 
             if sent {
@@ -199,8 +210,8 @@ impl Link {
         }
     }
 
-    pub fn send_frame(&self, jpeg: &[u8], number: u32, recording: &str) -> bool {
-        if !self.notify(&frame::start(jpeg.len() as u32, number, recording)) {
+    pub fn send_frame(&self, jpeg: &[u8], number: u32, recording_id: &str) -> bool {
+        if !self.notify_frame_packet(&frame::start(jpeg.len() as u32, number, recording_id)) {
             return false;
         }
 
@@ -208,75 +219,76 @@ impl Link {
             .unwrap_or_else(|| self.mtu.load(Ordering::SeqCst));
 
         for piece in jpeg.chunks(frame::piece_size(mtu)) {
-            if !self.notify(&frame::data(piece)) {
+            if !self.notify_frame_packet(&frame::data(piece)) {
                 return false;
             }
         }
 
-        self.notify(&frame::end(protocol::crc32(jpeg)))
+        self.notify_frame_packet(&frame::end(protocol::crc32(jpeg)))
     }
 }
 
-struct Update {
-    handle: sys::esp_ota_handle_t,
+struct FirmwareUpdate {
+    ota_handle: sys::esp_ota_handle_t,
     partition: *const sys::esp_partition_t,
-    size: u32,
-    crc: u32,
-    received: u32,
-    running_crc: u32,
-    reported: u32,
+    expected_bytes: u32,
+    expected_crc: u32,
+    received_bytes: u32,
+    received_crc: u32,
+    steps_reported: u32,
 }
 
-unsafe impl Send for Update {}
+unsafe impl Send for FirmwareUpdate {}
 
-fn say(status: &Arc<Mutex<BLECharacteristic>>, message: update::Status) {
-    let text = message.text();
+fn report_update_status(status_characteristic: &Arc<Mutex<BLECharacteristic>>, status: update::Status) {
+    let text = status.text();
 
     println!("update: {text}");
-    status.lock().set_value(text.as_bytes()).notify();
+    status_characteristic.lock().set_value(text.as_bytes()).notify();
 }
 
-fn fail(status: &Arc<Mutex<BLECharacteristic>>, reason: impl Into<String>) {
-    say(status, update::Status::Error(reason.into()));
+fn report_update_error(status_characteristic: &Arc<Mutex<BLECharacteristic>>, reason: impl Into<String>) {
+    report_update_status(status_characteristic, update::Status::Error(reason.into()));
 }
 
-fn abandon(update: &mut Option<Update>) {
-    if let Some(current) = update.take() {
-        unsafe { sys::esp_ota_abort(current.handle) };
+fn abort_update(update: &mut Option<FirmwareUpdate>) {
+    if let Some(in_progress) = update.take() {
+        unsafe { sys::esp_ota_abort(in_progress.ota_handle) };
     }
 }
 
-fn begin(size: u32, crc: u32) -> Result<Update, String> {
+fn begin_firmware_write(expected_bytes: u32, expected_crc: u32) -> Result<FirmwareUpdate, String> {
     let partition = unsafe { sys::esp_ota_get_next_update_partition(std::ptr::null()) };
     if partition.is_null() {
         return Err("no update slot".into());
     }
 
-    if size > unsafe { (*partition).size } {
+    if expected_bytes > unsafe { (*partition).size } {
         return Err("image too big".into());
     }
 
-    let mut handle: sys::esp_ota_handle_t = 0;
-    let result = unsafe { sys::esp_ota_begin(partition, size as usize, &mut handle) };
+    let mut ota_handle: sys::esp_ota_handle_t = 0;
+    let result = unsafe { sys::esp_ota_begin(partition, expected_bytes as usize, &mut ota_handle) };
     if result != sys::ESP_OK {
         return Err(format!("begin failed {result}"));
     }
 
-    Ok(Update { handle, partition, size, crc, received: 0, running_crc: 0, reported: 0 })
+    Ok(FirmwareUpdate { ota_handle, partition, expected_bytes, expected_crc, received_bytes: 0, received_crc: 0,
+                        steps_reported: 0 })
 }
 
-fn finish(update: Update) -> Result<(), String> {
-    if update.received != update.size {
-        unsafe { sys::esp_ota_abort(update.handle) };
-        return Err(format!("got {} of {} bytes", update.received, update.size));
+fn install_update(update: FirmwareUpdate) -> Result<(), String> {
+    if update.received_bytes != update.expected_bytes {
+        unsafe { sys::esp_ota_abort(update.ota_handle) };
+        return Err(format!("got {} of {} bytes", update.received_bytes, update.expected_bytes));
     }
 
-    if update.running_crc != update.crc {
-        unsafe { sys::esp_ota_abort(update.handle) };
+    if update.received_crc != update.expected_crc {
+        unsafe { sys::esp_ota_abort(update.ota_handle) };
         return Err("crc mismatch".into());
     }
 
-    let result = unsafe { sys::esp_ota_end(update.handle) };
+    let result = unsafe { sys::esp_ota_end(update.ota_handle) };
     if result != sys::ESP_OK {
         return Err(format!("image rejected {result}"));
     }
@@ -289,80 +301,83 @@ fn finish(update: Update) -> Result<(), String> {
     Ok(())
 }
 
-fn run_updates(incoming: Receiver<Vec<u8>>, status: Arc<Mutex<BLECharacteristic>>, progress: Arc<AtomicU8>,
-               updating: Arc<AtomicBool>) {
-    let mut update: Option<Update> = None;
+fn run_updates(update_packets: Receiver<Vec<u8>>, status_characteristic: Arc<Mutex<BLECharacteristic>>,
+               update_percent: Arc<AtomicU8>, update_in_progress: Arc<AtomicBool>) {
+    let mut update: Option<FirmwareUpdate> = None;
 
-    for message in incoming {
-        match update::parse(&message) {
+    for packet in update_packets {
+        match update::parse(&packet) {
             Some(update::Packet::Begin { size, crc }) => {
-                abandon(&mut update);
-                updating.store(true, Ordering::SeqCst);
-                progress.store(0, Ordering::SeqCst);
+                abort_update(&mut update);
+                update_in_progress.store(true, Ordering::SeqCst);
+                update_percent.store(0, Ordering::SeqCst);
 
-                match begin(size, crc) {
+                match begin_firmware_write(size, crc) {
                     Ok(started) => {
                         update = Some(started);
-                        say(&status, update::Status::Ready);
+                        report_update_status(&status_characteristic, update::Status::Ready);
                     }
                     Err(reason) => {
-                        updating.store(false, Ordering::SeqCst);
-                        fail(&status, reason);
+                        update_in_progress.store(false, Ordering::SeqCst);
+                        report_update_error(&status_characteristic, reason);
                     }
                 }
             }
-            Some(update::Packet::Data(payload)) => {
-                let Some(current) = update.as_mut() else { continue };
+            Some(update::Packet::Data(piece)) => {
+                let Some(in_progress) = update.as_mut() else { continue };
 
-                if current.received + payload.len() as u32 > current.size {
-                    abandon(&mut update);
-                    updating.store(false, Ordering::SeqCst);
-                    fail(&status, "too many bytes");
+                if in_progress.received_bytes + piece.len() as u32 > in_progress.expected_bytes {
+                    abort_update(&mut update);
+                    update_in_progress.store(false, Ordering::SeqCst);
+                    report_update_error(&status_characteristic, "too many bytes");
                     continue;
                 }
 
-                let result = unsafe { sys::esp_ota_write(current.handle, payload.as_ptr() as _, payload.len()) };
+                let result = unsafe { sys::esp_ota_write(in_progress.ota_handle, piece.as_ptr() as _, piece.len()) };
                 if result != sys::ESP_OK {
-                    abandon(&mut update);
-                    updating.store(false, Ordering::SeqCst);
-                    fail(&status, format!("write failed {result}"));
+                    abort_update(&mut update);
+                    update_in_progress.store(false, Ordering::SeqCst);
+                    report_update_error(&status_characteristic, format!("write failed {result}"));
                     continue;
                 }
 
-                current.received += payload.len() as u32;
-                current.running_crc = protocol::crc32_continue(current.running_crc, payload);
-                progress.store((current.received as u64 * 100 / current.size.max(1) as u64) as u8, Ordering::SeqCst);
+                in_progress.received_bytes += piece.len() as u32;
+                in_progress.received_crc = protocol::crc32_continue(in_progress.received_crc, piece);
 
-                if current.received / update::STEP as u32 > current.reported {
-                    current.reported = current.received / update::STEP as u32;
-                    say(&status, update::Status::Got(current.received));
+                let percent = in_progress.received_bytes as u64 * 100 / in_progress.expected_bytes.max(1) as u64;
+                update_percent.store(percent as u8, Ordering::SeqCst);
+
+                let steps = in_progress.received_bytes / update::STATUS_EVERY_BYTES as u32;
+                if steps > in_progress.steps_reported {
+                    in_progress.steps_reported = steps;
+                    report_update_status(&status_characteristic, update::Status::Received(in_progress.received_bytes));
                 }
             }
             Some(update::Packet::End) => {
-                let Some(current) = update.take() else { continue };
+                let Some(received) = update.take() else { continue };
 
-                match finish(current) {
+                match install_update(received) {
                     Ok(()) => {
-                        say(&status, update::Status::Done);
+                        report_update_status(&status_characteristic, update::Status::Done);
                         thread::sleep(Duration::from_millis(500));
                         unsafe { sys::esp_restart() };
                     }
                     Err(reason) => {
-                        updating.store(false, Ordering::SeqCst);
-                        fail(&status, reason);
+                        update_in_progress.store(false, Ordering::SeqCst);
+                        report_update_error(&status_characteristic, reason);
                     }
                 }
             }
             Some(update::Packet::Cancel) => {
-                abandon(&mut update);
-                updating.store(false, Ordering::SeqCst);
-                fail(&status, "cancelled");
+                abort_update(&mut update);
+                update_in_progress.store(false, Ordering::SeqCst);
+                report_update_error(&status_characteristic, "cancelled");
             }
             None => {}
         }
     }
 }
 
-pub fn keep_this_firmware() {
+pub fn mark_firmware_valid() {
     unsafe { sys::esp_ota_mark_app_valid_cancel_rollback() };
 }

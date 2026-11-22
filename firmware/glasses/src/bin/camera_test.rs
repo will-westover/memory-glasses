@@ -23,7 +23,7 @@ fn main() {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    if let Err(error) = start_camera(glasses::PHOTO) {
+    if let Err(error) = start_camera(glasses::PHOTO_FRAME_SIZE) {
         log::error!("camera failed to start: error {error}");
         return;
     }
