@@ -112,7 +112,7 @@ struct API {
         _ = try await data(for: request(path, method: "DELETE"))
     }
 
-    func image(_ path: String) async throws -> Data {
+    func download(_ path: String) async throws -> Data {
         try await data(for: request(path))
     }
 

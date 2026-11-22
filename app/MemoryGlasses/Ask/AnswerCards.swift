@@ -209,7 +209,7 @@ struct QuoteCard: View {
             let data: Data
 
             if let url = fact.audioUrl {
-                data = try await API.current.image(url)
+                data = try await API.current.download(url)
             } else {
                 let start = max(0, fact.offsetSeconds - 1)
                 data = try await API.current.audio(moment: fact.momentId, from: start,

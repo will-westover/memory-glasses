@@ -22,7 +22,7 @@ struct MomentView: View {
                         content(detail)
                             .padding(.vertical, 12)
                     }
-                    .onChange(of: router.focusToken) { applyFocus(scroller) }
+                    .onChange(of: router.focusChangeCount) { applyFocus(scroller) }
                     .onAppear { applyFocus(scroller) }
                 }
             } else if let problem {
@@ -94,14 +94,14 @@ struct MomentView: View {
                         SectionTitle("Chapters")
 
                         ForEach(chapters) { chapter in
-                            chapterRow(chapter, open: owner(offset, in: chapters)?.id == chapter.id || focused?.id == chapter.id,
-                                       lines: detail.transcript.filter { owner($0.start, in: chapters)?.id == chapter.id },
+                            chapterRow(chapter, open: chapterContaining(offset, in: chapters)?.id == chapter.id || focused?.id == chapter.id,
+                                       lines: detail.transcript.filter { chapterContaining($0.start, in: chapters)?.id == chapter.id },
                                        detail: detail)
                         }
                     }
                 }
 
-                let outside = detail.transcript.filter { owner($0.start, in: chapters) == nil }
+                let outside = detail.transcript.filter { chapterContaining($0.start, in: chapters) == nil }
 
                 if !outside.isEmpty {
                     transcript(outside, title: chapters.isEmpty ? "Transcript" : "Also said", hasVideo: detail.hasVideo)
@@ -156,13 +156,13 @@ struct MomentView: View {
 
             PeopleChips(people: frame.people)
 
-            Text(Highlight.mark(frame.short ?? firstSentence(frame.summary), marked(frame.offsetSeconds)))
+            Text(KeywordMatch.emphasize(frame.short ?? firstSentence(frame.summary), emphasisWords(at: frame.offsetSeconds)))
                 .font(.body)
                 .lineSpacing(2)
 
             DisclosureGroup(isExpanded: $showDetails) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(Highlight.mark(frame.summary, marked(frame.offsetSeconds)))
+                    Text(KeywordMatch.emphasize(frame.summary, emphasisWords(at: frame.offsetSeconds)))
                         .font(.subheadline)
                         .lineSpacing(2)
 
@@ -173,7 +173,7 @@ struct MomentView: View {
                     }
 
                     ForEach(frame.texts, id: \.self) { seen in
-                        Text(Highlight.mark("Text on \(seen.surface): \(seen.text)", marked(frame.offsetSeconds)))
+                        Text(KeywordMatch.emphasize("Text on \(seen.surface): \(seen.text)", emphasisWords(at: frame.offsetSeconds)))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -214,7 +214,7 @@ struct MomentView: View {
             .buttonStyle(.plain)
 
             if open {
-                Text(Highlight.mark(chapter.text, focusedHere ? router.focusWords : []))
+                Text(KeywordMatch.emphasize(chapter.text, focusedHere ? router.focusWords : []))
                     .font(.subheadline)
                     .lineSpacing(3)
 
@@ -231,7 +231,7 @@ struct MomentView: View {
     }
 
     private func spokenLine(_ line: SpokenLine, hasVideo: Bool) -> some View {
-        let spoken = said(line)
+        let spoken = isFocusedLine(line)
 
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
             if hasVideo {
@@ -246,7 +246,7 @@ struct MomentView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.tertiary)
 
-            Text(Highlight.mark("\(line.speaker.map { "\($0): " } ?? "")\(line.text)", spoken ? router.focusWords : []))
+            Text(KeywordMatch.emphasize("\(line.speaker.map { "\($0): " } ?? "")\(line.text)", spoken ? router.focusWords : []))
                 .font(.subheadline)
         }
         .padding(spoken ? 8 : 0)
@@ -269,7 +269,7 @@ struct MomentView: View {
         }
     }
 
-    private func owner(_ offset: Double, in chapters: [Chapter]) -> Chapter? {
+    private func chapterContaining(_ offset: Double, in chapters: [Chapter]) -> Chapter? {
         chapters.last { $0.start <= offset }
     }
 
@@ -333,7 +333,7 @@ struct MomentView: View {
         return focused.offsetSeconds...max(end, focused.offsetSeconds)
     }
 
-    private func marked(_ offset: Double) -> Set<String> {
+    private func emphasisWords(at offset: Double) -> Set<String> {
         guard let focused else { return [] }
 
         if let focusRange, focusRange.contains(offset) { return router.focusWords }
@@ -341,7 +341,7 @@ struct MomentView: View {
         return abs(focused.offsetSeconds - offset) < 1 ? router.focusWords : []
     }
 
-    private func said(_ line: SpokenLine) -> Bool {
+    private func isFocusedLine(_ line: SpokenLine) -> Bool {
         guard let focused, focused.isSpeech, let focusRange else { return false }
 
         return line.end >= focusRange.lowerBound && line.start <= focusRange.upperBound
@@ -350,7 +350,7 @@ struct MomentView: View {
     private func markers(_ detail: MomentDetail) -> [Int: Int] {
         var result: [Int: Int] = [:]
 
-        for (number, fact) in router.numbers(in: link.id) {
+        for (number, fact) in router.citedSources(in: link.id) {
             if let position = nearest(fact.offsetSeconds, in: detail.frames), result[position] == nil {
                 result[position] = number
             }
@@ -372,12 +372,12 @@ struct MomentView: View {
 
         let chapters = chapters(of: detail)
 
-        if focused.isSpeech, let line = detail.transcript.first(where: said) {
-            if owner(line.start, in: chapters) == nil { showTranscript = true }
+        if focused.isSpeech, let line = detail.transcript.first(where: isFocusedLine) {
+            if chapterContaining(line.start, in: chapters) == nil { showTranscript = true }
 
             scroll(scroller, to: "line-\(line.start)")
         } else if focused.kind == "summary" {
-            if let chapter = chapters.first(where: { $0.id == focused.id }) ?? owner(focused.offsetSeconds, in: chapters) {
+            if let chapter = chapters.first(where: { $0.id == focused.id }) ?? chapterContaining(focused.offsetSeconds, in: chapters) {
                 scroll(scroller, to: "chapter-\(chapter.id)")
             }
         }
@@ -416,7 +416,7 @@ struct TrailPill: View {
         if let trail = router.trail {
             HStack(spacing: 10) {
                 Button {
-                    trail.fromSearch ? router.clear() : router.backToChat()
+                    trail.fromSearch ? router.clearTrail() : router.backToChat()
                 } label: {
                     Label(trail.fromSearch ? "Done" : "Back to chat",
                           systemImage: trail.fromSearch ? "xmark" : "chevron.left")
@@ -426,14 +426,14 @@ struct TrailPill: View {
                 Spacer()
 
                 if trail.sources.count > 1 {
-                    Button { router.step(by: -1) } label: { Image(systemName: "chevron.left") }
+                    Button { router.stepSource(by: -1) } label: { Image(systemName: "chevron.left") }
                         .disabled(trail.index == 0)
                         .accessibilityLabel("Previous source")
 
                     Text("\(trail.fromSearch ? "Result" : "Source") \(trail.index + 1) of \(trail.sources.count)")
                         .font(.subheadline.monospacedDigit())
 
-                    Button { router.step(by: 1) } label: { Image(systemName: "chevron.right") }
+                    Button { router.stepSource(by: 1) } label: { Image(systemName: "chevron.right") }
                         .disabled(trail.index == trail.sources.count - 1)
                         .accessibilityLabel("Next source")
                 }

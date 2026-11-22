@@ -194,7 +194,7 @@ struct PlaceSceneView: View {
                 let file = FileManager.default.temporaryDirectory.appending(path: "room-\(meshMoment).obj")
 
                 if !FileManager.default.fileExists(atPath: file.path) {
-                    try await API.current.image("/moments/\(meshMoment)/mesh").write(to: file)
+                    try await API.current.download("/moments/\(meshMoment)/mesh").write(to: file)
                 }
 
                 mesh = file

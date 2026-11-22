@@ -4,7 +4,7 @@ enum AppTab: Hashable {
     case ask, timeline, world, stats, glasses
 }
 
-struct Trail: Equatable {
+struct SourceTrail: Equatable {
     let sources: [Fact]
     let words: [Int: Set<String>]
     let fromSearch: Bool
@@ -16,9 +16,9 @@ struct Trail: Equatable {
 @Observable
 final class Router {
     var tab: AppTab = .ask
-    var trail: Trail?
+    var trail: SourceTrail?
     var timelinePath = NavigationPath()
-    var focusToken = 0
+    var focusChangeCount = 0
 
     var focus: Fact? { trail?.current }
 
@@ -32,22 +32,22 @@ final class Router {
         let sources = answer?.sources ?? [fact]
         let index = sources.firstIndex(of: fact) ?? 0
         let words = Dictionary(uniqueKeysWithValues: sources.indices.map { position in
-            (position, Highlight.shared(source: sources[position].text,
-                                        context: Highlight.citing(position + 1, in: answer?.answer ?? "") + " " + question))
+            (position, KeywordMatch.sharedKeywords(source: sources[position].text,
+                                        context: KeywordMatch.sentencesCiting(position + 1, in: answer?.answer ?? "") + " " + question))
         })
 
-        show(Trail(sources: sources, words: words, fromSearch: false, index: index))
+        show(SourceTrail(sources: sources, words: words, fromSearch: false, index: index))
     }
 
     func openSearch(_ results: [Fact], at index: Int, query: String) {
         let words = Dictionary(uniqueKeysWithValues: results.indices.map { position in
-            (position, Highlight.shared(source: results[position].text, context: query))
+            (position, KeywordMatch.sharedKeywords(source: results[position].text, context: query))
         })
 
-        show(Trail(sources: results, words: words, fromSearch: true, index: index))
+        show(SourceTrail(sources: results, words: words, fromSearch: true, index: index))
     }
 
-    func step(by change: Int) {
+    func stepSource(by change: Int) {
         guard var trail, trail.sources.indices.contains(trail.index + change) else { return }
 
         trail.index += change
@@ -60,21 +60,21 @@ final class Router {
         tab = .ask
     }
 
-    func clear() {
+    func clearTrail() {
         trail = nil
     }
 
-    func numbers(in momentId: String) -> [(number: Int, fact: Fact)] {
+    func citedSources(in momentId: String) -> [(number: Int, fact: Fact)] {
         guard let trail else { return [] }
 
         return trail.sources.enumerated().filter { $0.element.momentId == momentId }.map { ($0.offset + 1, $0.element) }
     }
 
-    private func show(_ next: Trail) {
+    private func show(_ next: SourceTrail) {
         let previous = trail?.current.momentId
 
         trail = next
-        focusToken += 1
+        focusChangeCount += 1
         tab = .timeline
 
         if previous != next.current.momentId || timelinePath.isEmpty {
@@ -83,8 +83,8 @@ final class Router {
     }
 }
 
-enum Highlight {
-    static let common: Set<String> = [
+enum KeywordMatch {
+    static let stopWords: Set<String> = [
         "about", "after", "again", "also", "around", "been", "before", "being", "could", "does", "doing", "down",
         "each", "from", "have", "having", "here", "into", "just", "like", "more", "most", "near", "next", "only",
         "other", "over", "record", "recording", "said", "same", "seen", "shows", "some", "than", "that", "their",
@@ -92,16 +92,16 @@ enum Highlight {
         "when", "where", "which", "while", "with", "would", "your", "yours", "today",
     ]
 
-    static func words(_ text: String) -> Set<String> {
+    static func keywords(in text: String) -> Set<String> {
         Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
-            .filter { $0.count >= 4 && !common.contains($0) })
+            .filter { $0.count >= 4 && !stopWords.contains($0) })
     }
 
-    static func shared(source: String, context: String) -> Set<String> {
-        words(source).intersection(words(context))
+    static func sharedKeywords(source: String, context: String) -> Set<String> {
+        keywords(in: source).intersection(keywords(in: context))
     }
 
-    static func citing(_ number: Int, in answer: String) -> String {
+    static func sentencesCiting(_ number: Int, in answer: String) -> String {
         let moved = answer.replacing(/([.!?])((?:\s*\[\d+\])+)/) { "\($0.2)\($0.1)" }
         let sentences = moved.split(whereSeparator: { ".!?\n".contains($0) })
         let cited = sentences.filter { $0.contains("[\(number)]") }
@@ -109,7 +109,7 @@ enum Highlight {
         return (cited.isEmpty ? sentences : cited).joined(separator: " ")
     }
 
-    static func mark(_ text: String, _ marked: Set<String>) -> AttributedString {
+    static func emphasize(_ text: String, _ marked: Set<String>) -> AttributedString {
         var result = AttributedString(text)
 
         guard !marked.isEmpty else { return result }

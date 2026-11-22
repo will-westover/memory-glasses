@@ -160,7 +160,7 @@ struct FrameChat: View {
             }
         }
         .environment(\.openSource) { [router] in router.open($0) }
-        .onChange(of: router.focusToken) { dismiss() }
+        .onChange(of: router.focusChangeCount) { dismiss() }
         .task { if chat == nil { await begin() } }
     }
 

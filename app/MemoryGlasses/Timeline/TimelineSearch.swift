@@ -21,7 +21,7 @@ struct SearchResults: View {
                     Section {
                         ForEach(group.hits, id: \.fact.id) { hit in
                             Button { router.openSearch(results, at: hit.position, query: query) } label: {
-                                HitRow(fact: hit.fact, marked: Highlight.shared(source: hit.fact.text, context: query))
+                                HitRow(fact: hit.fact, marked: KeywordMatch.sharedKeywords(source: hit.fact.text, context: query))
                             }
                             .buttonStyle(.plain)
                         }
@@ -85,7 +85,7 @@ struct HitRow: View {
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
 
-                Text(Highlight.mark(fact.text, marked))
+                Text(KeywordMatch.emphasize(fact.text, marked))
                     .font(.subheadline)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)

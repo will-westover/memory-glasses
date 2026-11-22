@@ -55,7 +55,7 @@ struct FrameView: View {
 
                 listenButton
 
-                said(detail.transcript, around: frame.offsetSeconds)
+                speechNearby(detail.transcript, around: frame.offsetSeconds)
 
                 seen(frame)
 
@@ -85,7 +85,7 @@ struct FrameView: View {
     }
 
     @ViewBuilder
-    private func said(_ lines: [SpokenLine], around offset: Double) -> some View {
+    private func speechNearby(_ lines: [SpokenLine], around offset: Double) -> some View {
         let nearby = lines.filter { abs($0.start - offset) <= Self.saidWindow }
 
         if !nearby.isEmpty {

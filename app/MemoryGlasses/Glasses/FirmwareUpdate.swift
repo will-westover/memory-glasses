@@ -3,36 +3,36 @@ import Foundation
 extension GlassesLink {
     @MainActor
     func startUpdate() async {
-        guard let info = availableUpdate, update == nil else { return }
+        guard let info = availableUpdate, firmwareTransfer == nil else { return }
 
-        updateStage = "Downloading the update…"
+        updateMessage = "Downloading the update…"
         updateProgress = 0
 
         guard let image = await Self.download(info.url) else {
-            updateStage = "Couldn't download the update"
+            updateMessage = "Couldn't download the update"
             updateProgress = nil
             return
         }
 
         guard image.count == info.size, CRC32.of(image) == info.crc32 else {
-            updateStage = "The downloaded update was damaged; nothing was sent"
+            updateMessage = "The downloaded update was damaged; nothing was sent"
             updateProgress = nil
             return
         }
 
-        guard state == .connected, updateOut != nil, update == nil else {
-            updateStage = "The glasses disconnected before the update was sent"
+        guard state == .connected, updateCharacteristic != nil, firmwareTransfer == nil else {
+            updateMessage = "The glasses disconnected before the update was sent"
             updateProgress = nil
             return
         }
 
-        update = (image, 0, 0, info.version, false)
-        updateHeard = Date()
-        updateStage = "Sending the update…"
+        firmwareTransfer = (image, 0, 0, info.version, false)
+        lastUpdateReplyAt = Date()
+        updateMessage = "Sending the update…"
 
-        Task { @MainActor in await self.watchUpdate(info.version) }
+        Task { @MainActor in await self.cancelIfUpdateStalls(info.version) }
 
-        sendUpdate(GlassesPackets.updateBegin(size: image.count, crc: info.crc32))
+        writeUpdatePacket(GlassesPackets.updateBegin(size: image.count, crc: info.crc32))
     }
 
     static func download(_ link: String) async -> Data? {
@@ -43,77 +43,77 @@ extension GlassesLink {
     }
 
     @MainActor
-    func watchUpdate(_ version: String) async {
-        while update?.version == version {
+    func cancelIfUpdateStalls(_ version: String) async {
+        while firmwareTransfer?.version == version {
             try? await Task.sleep(for: .seconds(5))
 
-            if update?.version == version, Date().timeIntervalSince(updateHeard) > Self.updateQuiet {
-                sendUpdate(GlassesPackets.updateCancel)
-                failedVersion = version
-                update = nil
+            if firmwareTransfer?.version == version, Date().timeIntervalSince(lastUpdateReplyAt) > Self.updateStallTimeout {
+                writeUpdatePacket(GlassesPackets.updateCancel)
+                versionNotToRetry = version
+                firmwareTransfer = nil
                 updateProgress = nil
-                updateStage = "The update stalled; nothing was installed"
+                updateMessage = "The update stalled; nothing was installed"
             }
         }
     }
 
     func cancelUpdate() {
-        guard update != nil else { return }
+        guard firmwareTransfer != nil else { return }
 
-        sendUpdate(GlassesPackets.updateCancel)
-        update = nil
+        writeUpdatePacket(GlassesPackets.updateCancel)
+        firmwareTransfer = nil
         updateProgress = nil
-        updateStage = "Update cancelled"
+        updateMessage = "Update cancelled"
     }
 
-    func sendUpdate(_ value: Data) {
-        guard let peripheral, let updateOut, peripheral.state == .connected else { return }
+    func writeUpdatePacket(_ value: Data) {
+        guard let peripheral, let updateCharacteristic, peripheral.state == .connected else { return }
 
-        peripheral.writeValue(value, for: updateOut, type: .withoutResponse)
+        peripheral.writeValue(value, for: updateCharacteristic, type: .withoutResponse)
     }
 
-    func pump() {
-        guard let peripheral, let job = update, !job.ended else { return }
+    func sendNextFirmwareChunks() {
+        guard let peripheral, let transfer = firmwareTransfer, !transfer.endSent else { return }
 
         let chunk = max(peripheral.maximumWriteValueLength(for: .withoutResponse) - 1, 20)
-        var sent = job.sent
+        var sent = transfer.bytesSent
 
-        while sent < job.image.count, sent - job.confirmed < Self.confirmEvery, peripheral.canSendWriteWithoutResponse {
-            let end = min(sent + chunk, job.image.count, job.confirmed + Self.confirmEvery)
-            sendUpdate(GlassesPackets.updateData(job.image.subdata(in: sent..<end)))
+        while sent < transfer.image.count, sent - transfer.bytesConfirmed < Self.maxUnconfirmedBytes, peripheral.canSendWriteWithoutResponse {
+            let end = min(sent + chunk, transfer.image.count, transfer.bytesConfirmed + Self.maxUnconfirmedBytes)
+            writeUpdatePacket(GlassesPackets.updateData(transfer.image.subdata(in: sent..<end)))
             sent = end
         }
 
-        update?.sent = sent
-        updateProgress = Double(job.confirmed) / Double(job.image.count)
+        firmwareTransfer?.bytesSent = sent
+        updateProgress = Double(transfer.bytesConfirmed) / Double(transfer.image.count)
 
-        if sent == job.image.count, peripheral.canSendWriteWithoutResponse {
-            sendUpdate(GlassesPackets.updateEnd)
-            update?.ended = true
+        if sent == transfer.image.count, peripheral.canSendWriteWithoutResponse {
+            writeUpdatePacket(GlassesPackets.updateEnd)
+            firmwareTransfer?.endSent = true
         }
     }
 
-    func updateSaid(_ text: String) {
-        guard update != nil else { return }
+    func handleUpdateStatus(_ text: String) {
+        guard firmwareTransfer != nil else { return }
 
-        updateHeard = Date()
+        lastUpdateReplyAt = Date()
 
         switch UpdateStatus(text) {
         case .ready:
-            pump()
+            sendNextFirmwareChunks()
         case .got(let bytes):
-            update?.confirmed = bytes
-            pump()
+            firmwareTransfer?.bytesConfirmed = bytes
+            sendNextFirmwareChunks()
         case .done:
-            expectedVersion = update?.version
-            update = nil
+            versionAfterRestart = firmwareTransfer?.version
+            firmwareTransfer = nil
             updateProgress = 1
-            updateStage = "Restarting…"
+            updateMessage = "Restarting…"
         case .error(let reason):
-            failedVersion = update?.version
-            update = nil
+            versionNotToRetry = firmwareTransfer?.version
+            firmwareTransfer = nil
             updateProgress = nil
-            updateStage = "Update failed: \(reason)"
+            updateMessage = "Update failed: \(reason)"
         case nil:
             break
         }
@@ -122,11 +122,11 @@ extension GlassesLink {
     func versionArrived(_ version: String) {
         glassesVersion = version
 
-        if let expected = expectedVersion {
-            updateStage = version == expected ? "Updated to \(version)" : "The glasses still run \(version)"
-            failedVersion = version == expected ? nil : expected
+        if let expected = versionAfterRestart {
+            updateMessage = version == expected ? "Updated to \(version)" : "The glasses still run \(version)"
+            versionNotToRetry = version == expected ? nil : expected
             updateProgress = nil
-            expectedVersion = nil
+            versionAfterRestart = nil
         }
 
         Task { @MainActor in await self.checkForUpdate() }
@@ -134,22 +134,22 @@ extension GlassesLink {
 
     @MainActor
     func checkForUpdate(install: Bool = true) async {
-        guard let version = glassesVersion, !checking, update == nil else { return }
+        guard let version = glassesVersion, !isCheckingForUpdate, firmwareTransfer == nil else { return }
 
-        checking = true
-        defer { checking = false }
+        isCheckingForUpdate = true
+        defer { isCheckingForUpdate = false }
 
         let latest: FirmwareInfo? = try? await API.current.get("/glasses/firmware")
         availableUpdate = latest.flatMap { $0.version > version ? $0 : nil }
 
         guard let found = availableUpdate else {
-            if updateProgress == nil, expectedVersion == nil, !(updateStage ?? "").hasPrefix("Updated") {
-                updateStage = "Up to date"
+            if updateProgress == nil, versionAfterRestart == nil, !(updateMessage ?? "").hasPrefix("Updated") {
+                updateMessage = "Up to date"
             }
             return
         }
 
-        if install, canUpdate, found.version != failedVersion {
+        if install, canUpdate, found.version != versionNotToRetry {
             await startUpdate()
         }
     }

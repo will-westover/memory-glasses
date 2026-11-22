@@ -77,7 +77,7 @@ struct FrameImage: View {
             return
         }
 
-        guard let data = try? await API.current.image(path), let loaded = UIImage(data: data) else { return }
+        guard let data = try? await API.current.download(path), let loaded = UIImage(data: data) else { return }
 
         Self.cache.setObject(loaded, forKey: path as NSString)
         image = loaded

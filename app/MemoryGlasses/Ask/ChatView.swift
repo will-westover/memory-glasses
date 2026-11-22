@@ -123,7 +123,7 @@ struct ChatView: View {
         guard !question.isEmpty else { return }
 
         draft = ""
-        router.clear()
+        router.clearTrail()
         Task { await store.ask(question, in: id) }
     }
 }

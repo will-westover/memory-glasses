@@ -38,7 +38,7 @@ struct TimelineView: View {
                                         VStack(alignment: .leading, spacing: 6) {
                                             MomentRow(moment: moment)
 
-                                            let marks = router.numbers(in: moment.id)
+                                            let marks = router.citedSources(in: moment.id)
 
                                             if !marks.isEmpty {
                                                 MarkerStrip(duration: moment.durationSeconds,

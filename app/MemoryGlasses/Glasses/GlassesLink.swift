@@ -44,50 +44,50 @@ final class GlassesLink: NSObject {
     static let shared = GlassesLink()
 
     static let service = CBUUID(string: GlassesProtocol.serviceUUID)
-    static let frameCharacteristic = CBUUID(string: GlassesProtocol.frameUUID)
-    static let settingsCharacteristic = CBUUID(string: GlassesProtocol.settingsUUID)
-    static let ackCharacteristic = CBUUID(string: GlassesProtocol.ackUUID)
-    static let updateCharacteristic = CBUUID(string: GlassesProtocol.updateUUID)
-    static let updateStatusCharacteristic = CBUUID(string: GlassesProtocol.updateStatusUUID)
-    static let versionCharacteristic = CBUUID(string: GlassesProtocol.versionUUID)
-    static let authCharacteristic = CBUUID(string: GlassesProtocol.authUUID)
-    static let confirmEvery = GlassesProtocol.updateStep
-    static let updateQuiet = 45.0
+    static let frameCharacteristicID = CBUUID(string: GlassesProtocol.frameUUID)
+    static let settingsCharacteristicID = CBUUID(string: GlassesProtocol.settingsUUID)
+    static let ackCharacteristicID = CBUUID(string: GlassesProtocol.ackUUID)
+    static let updateCharacteristicID = CBUUID(string: GlassesProtocol.updateUUID)
+    static let updateStatusCharacteristicID = CBUUID(string: GlassesProtocol.updateStatusUUID)
+    static let versionCharacteristicID = CBUUID(string: GlassesProtocol.versionUUID)
+    static let authCharacteristicID = CBUUID(string: GlassesProtocol.authUUID)
+    static let maxUnconfirmedBytes = GlassesProtocol.updateStep
+    static let updateStallTimeout = 45.0
 
-    static let rememberedKey = "glassesPeripheral"
-    static let restoreKey = "memory-glasses-link"
+    static let savedPeripheralDefaultsKey = "glassesPeripheral"
+    static let restoreIdentifier = "memory-glasses-link"
 
     var state = GlassesLinkState.looking
     var recording: String?
     var photosSent = 0
     var lastUpload: Date?
-    var status = ""
+    var glassesDisplayText = ""
     var glassesVersion: String?
     var availableUpdate: FirmwareInfo?
     var updateProgress: Double?
-    var updateStage: String?
+    var updateMessage: String?
 
     var canUpdate: Bool {
-        state == .connected && trusted && availableUpdate != nil && update == nil
+        state == .connected && isAuthenticated && availableUpdate != nil && firmwareTransfer == nil
     }
 
     var central: CBCentralManager?
     var peripheral: CBPeripheral?
-    var settingsOut: CBCharacteristic?
-    var ackOut: CBCharacteristic?
-    var updateOut: CBCharacteristic?
+    var settingsCharacteristic: CBCharacteristic?
+    var ackCharacteristic: CBCharacteristic?
+    var updateCharacteristic: CBCharacteristic?
     var versionIn: CBCharacteristic?
-    var update: (image: Data, sent: Int, confirmed: Int, version: String, ended: Bool)?
-    var updateHeard = Date()
-    var trusted = false
-    var ending: Set<String> = []
-    var challenge: Data?
-    var expectedVersion: String?
-    var incoming: (length: Int, number: UInt32, recording: String, data: Data)?
+    var firmwareTransfer: (image: Data, bytesSent: Int, bytesConfirmed: Int, version: String, endSent: Bool)?
+    var lastUpdateReplyAt = Date()
+    var isAuthenticated = false
+    var recordingsToEnd: Set<String> = []
+    var phoneNonce: Data?
+    var versionAfterRestart: String?
+    var partialFrame: (length: Int, number: UInt32, recording: String, data: Data)?
     var lastSettings: GlassesSettings?
     let uploader = FrameUploader()
-    var checking = false
-    var failedVersion: String?
+    var isCheckingForUpdate = false
+    var versionNotToRetry: String?
 
     override private init() {
         super.init()
@@ -97,7 +97,7 @@ final class GlassesLink: NSObject {
         guard central == nil else { return }
 
         central = CBCentralManager(delegate: self, queue: nil,
-                                   options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreKey])
+                                   options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreIdentifier])
 
         Task { @MainActor in
             while true {
@@ -109,19 +109,19 @@ final class GlassesLink: NSObject {
         Task { @MainActor in
             while true {
                 if await self.uploader.waiting() > 0 {
-                    await self.deliver()
+                    await self.uploadQueuedFrames()
                 }
 
-                await self.settleEndings()
+                await self.reportEndedRecordings()
 
                 try? await Task.sleep(for: .seconds(60))
             }
         }
     }
 
-    func push(_ settings: GlassesSettings) {
+    func applySettings(_ settings: GlassesSettings) {
         lastSettings = settings
-        write(settings, status: status.isEmpty ? nil : status)
+        sendSettings(settings, displayText: glassesDisplayText.isEmpty ? nil : glassesDisplayText)
 
         if !settings.recording {
             finishRecording()
@@ -131,51 +131,51 @@ final class GlassesLink: NSObject {
     func finishRecording() {
         guard let id = recording else { return }
 
-        ending.insert(id)
+        recordingsToEnd.insert(id)
         recording = nil
 
         Task { @MainActor in
-            await self.deliver()
-            await self.settleEndings()
+            await self.uploadQueuedFrames()
+            await self.reportEndedRecordings()
         }
     }
 
     @MainActor
-    func settleEndings() async {
-        for id in ending where await uploader.waiting(for: id) == 0 {
+    func reportEndedRecordings() async {
+        for id in recordingsToEnd where await uploader.waiting(for: id) == 0 {
             let done: RecordingEnded? = try? await API.current.send("/glasses/recordings/\(id)/end", method: "POST",
                                                                     body: [String: String]())
 
             if done != nil {
-                ending.remove(id)
+                recordingsToEnd.remove(id)
             }
         }
     }
 
-    func write(_ settings: GlassesSettings, status: String?) {
-        guard let peripheral, let settingsOut, peripheral.state == .connected,
+    func sendSettings(_ settings: GlassesSettings, displayText: String?) {
+        guard let peripheral, let settingsCharacteristic, peripheral.state == .connected,
               let encoded = try? API.encoder.encode(settings),
               var values = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any] else { return }
 
-        if let status {
-            values["status"] = status
+        if let displayText {
+            values["status"] = displayText
         }
 
         guard let data = try? JSONSerialization.data(withJSONObject: values) else { return }
 
-        peripheral.writeValue(data, for: settingsOut, type: .withResponse)
+        peripheral.writeValue(data, for: settingsCharacteristic, type: .withResponse)
     }
 
     func acknowledge(_ number: UInt32) {
-        guard let peripheral, let ackOut, peripheral.state == .connected else { return }
+        guard let peripheral, let ackCharacteristic, peripheral.state == .connected else { return }
 
-        peripheral.writeValue(GlassesPackets.ack(number), for: ackOut, type: .withoutResponse)
+        peripheral.writeValue(GlassesPackets.ack(number), for: ackCharacteristic, type: .withoutResponse)
     }
 
     func findGlasses() {
         guard let central, central.state == .poweredOn else { return }
 
-        if let saved = UserDefaults.standard.string(forKey: Self.rememberedKey), let id = UUID(uuidString: saved),
+        if let saved = UserDefaults.standard.string(forKey: Self.savedPeripheralDefaultsKey), let id = UUID(uuidString: saved),
            let known = central.retrievePeripherals(withIdentifiers: [id]).first {
             connect(known)
         } else if let attached = central.retrieveConnectedPeripherals(withServices: [Self.service]).first {
@@ -190,30 +190,30 @@ final class GlassesLink: NSObject {
         peripheral = found
         found.delegate = self
         central?.connect(found)
-        UserDefaults.standard.set(found.identifier.uuidString, forKey: Self.rememberedKey)
+        UserDefaults.standard.set(found.identifier.uuidString, forKey: Self.savedPeripheralDefaultsKey)
     }
 
-    func received(_ value: Data) {
-        guard trusted, update == nil else { return }
+    func handleFramePacket(_ value: Data) {
+        guard isAuthenticated, firmwareTransfer == nil else { return }
 
         switch FramePacket(value) {
         case .start(let length, let number, let name):
-            incoming = (length, number, name, Data(capacity: length))
+            partialFrame = (length, number, name, Data(capacity: length))
         case .data(let piece):
-            incoming?.data.append(piece)
+            partialFrame?.data.append(piece)
         case .end(let crc):
-            finish(expected: crc)
+            completeFrame(expectedCRC: crc)
         case nil:
             break
         }
     }
 
-    func finish(expected: UInt32) {
-        guard let frame = incoming else { return }
+    func completeFrame(expectedCRC: UInt32) {
+        guard let frame = partialFrame else { return }
 
-        incoming = nil
+        partialFrame = nil
 
-        guard frame.data.count == frame.length, CRC32.of(frame.data) == expected else {
+        guard frame.data.count == frame.length, CRC32.of(frame.data) == expectedCRC else {
             acknowledge(frame.number)
             return
         }
@@ -223,37 +223,37 @@ final class GlassesLink: NSObject {
             photosSent = 0
         }
 
-        ending.remove(frame.recording)
+        recordingsToEnd.remove(frame.recording)
 
         let received = ReceivedFrame(recording: frame.recording, number: frame.number, jpeg: frame.data)
 
         Task { @MainActor in
             await self.uploader.enqueue(received)
             self.acknowledge(received.number)
-            await self.deliver()
+            await self.uploadQueuedFrames()
         }
     }
 
     @MainActor
-    func deliver() async {
-        let result = await uploader.flush()
+    func uploadQueuedFrames() async {
+        let flush = await uploader.flush()
 
-        guard !result.busy else { return }
+        guard !flush.busy else { return }
 
-        if let settings = result.settings {
+        if let settings = flush.settings {
             lastSettings = settings
         }
 
-        photosSent += result.sent
+        photosSent += flush.sent
 
-        if result.sent > 0 {
+        if flush.sent > 0 {
             lastUpload = Date()
         }
 
-        status = result.waiting == 0 ? "Rec \(photosSent)" : (result.sent > 0 ? "Sending…" : "Phone offline")
+        glassesDisplayText = flush.waiting == 0 ? "Rec \(photosSent)" : (flush.sent > 0 ? "Sending…" : "Phone offline")
 
         if let settings = lastSettings {
-            write(settings, status: status)
+            sendSettings(settings, displayText: glassesDisplayText)
         }
     }
 }

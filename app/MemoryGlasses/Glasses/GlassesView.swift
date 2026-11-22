@@ -5,9 +5,9 @@ struct GlassesView: View {
     @AppStorage("serverToken") private var token = API.defaultToken
 
     @State private var settings = GlassesSettings()
-    @State private var glasses: GlassesStatus?
-    @State private var status = "Checking…"
-    @State private var connected = false
+    @State private var glassesStatus: GlassesStatus?
+    @State private var serverMessage = "Checking…"
+    @State private var serverReachable = false
 
     private let link = GlassesLink.shared
 
@@ -18,10 +18,10 @@ struct GlassesView: View {
                     Toggle(isOn: $settings.recording) {
                         Label("Recording", systemImage: settings.recording ? "record.circle.fill" : "pause.circle")
                     }
-                    .disabled(!connected)
+                    .disabled(!serverReachable)
 
-                    Label(glassesLabel, systemImage: glasses?.sending == true ? "dot.radiowaves.up.forward" : "eyeglasses")
-                        .foregroundStyle(glasses?.sending == true ? .green : .secondary)
+                    Label(glassesLabel, systemImage: glassesStatus?.sending == true ? "dot.radiowaves.up.forward" : "eyeglasses")
+                        .foregroundStyle(glassesStatus?.sending == true ? .green : .secondary)
                 } header: {
                     Text("Glasses")
                 } footer: {
@@ -39,8 +39,8 @@ struct GlassesView: View {
                             LabeledContent("Last upload", value: last.formatted(date: .omitted, time: .standard))
                         }
 
-                        if !link.status.isEmpty {
-                            LabeledContent("On the glasses", value: link.status)
+                        if !link.glassesDisplayText.isEmpty {
+                            LabeledContent("On the glasses", value: link.glassesDisplayText)
                         }
                     }
 
@@ -57,13 +57,13 @@ struct GlassesView: View {
 
                     if let progress = link.updateProgress, progress < 1 {
                         ProgressView(value: progress) {
-                            Text(link.updateStage ?? "Updating…")
+                            Text(link.updateMessage ?? "Updating…")
                         } currentValueLabel: {
                             Text("\(Int(progress * 100))%")
                         }
 
                         Button("Cancel update", role: .destructive) { link.cancelUpdate() }
-                    } else if let stage = link.updateStage {
+                    } else if let stage = link.updateMessage {
                         Text(stage)
                             .foregroundStyle(.secondary)
                     }
@@ -82,7 +82,7 @@ struct GlassesView: View {
                         Slider(value: $settings.framesPerMinute, in: 0...60, step: 1) { editing in
                             if !editing { Task { await save() } }
                         }
-                        .disabled(!connected)
+                        .disabled(!serverReachable)
                         .accessibilityLabel("Pictures a minute")
                     }
                 } header: {
@@ -97,7 +97,7 @@ struct GlassesView: View {
                     } label: {
                         Label("Display", systemImage: "eyeglasses")
                     }
-                    .disabled(!connected)
+                    .disabled(!serverReachable)
                 } footer: {
                     Text("Focus pattern, size, position, text size, brightness and which way round the picture is.")
                 }
@@ -126,8 +126,8 @@ struct GlassesView: View {
 
                     SecureField("Token (if the server needs one)", text: $token)
 
-                    Label(status, systemImage: connected ? "checkmark.circle.fill" : "xmark.circle")
-                        .foregroundStyle(connected ? .green : .secondary)
+                    Label(serverMessage, systemImage: serverReachable ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundStyle(serverReachable ? .green : .secondary)
 
                     Button("Check connection") { Task { await load() } }
                 } header: {
@@ -149,14 +149,14 @@ struct GlassesView: View {
     }
 
     private var glassesLabel: String {
-        guard let glasses else { return "Checking the glasses…" }
+        guard let glassesStatus else { return "Checking the glasses…" }
 
-        if glasses.sending {
-            return "Sending, \(glasses.photos) pictures in this moment"
+        if glassesStatus.sending {
+            return "Sending, \(glassesStatus.photos) pictures in this moment"
         }
 
-        if glasses.processing > 0 {
-            return glasses.processing == 1 ? "Processing a moment" : "Processing \(glasses.processing) moments"
+        if glassesStatus.processing > 0 {
+            return glassesStatus.processing == 1 ? "Processing a moment" : "Processing \(glassesStatus.processing) moments"
         }
 
         return settings.recording ? "Not sending. Keep the glasses on and near this phone." : "Paused"
@@ -164,7 +164,7 @@ struct GlassesView: View {
 
     private func watchGlasses() async {
         while !Task.isCancelled {
-            glasses = try? await API.current.get("/glasses/status")
+            glassesStatus = try? await API.current.get("/glasses/status")
             try? await Task.sleep(for: .seconds(5))
         }
     }
@@ -172,21 +172,21 @@ struct GlassesView: View {
     private func load() async {
         do {
             settings = try await API.current.get("/settings")
-            connected = true
-            status = "Connected"
+            serverReachable = true
+            serverMessage = "Connected"
         } catch {
-            connected = false
-            status = error.localizedDescription
+            serverReachable = false
+            serverMessage = error.localizedDescription
         }
     }
 
     private func save() async {
         do {
             settings = try await API.current.send("/settings", method: "PUT", body: settings)
-            link.push(settings)
-            status = "Saved"
+            link.applySettings(settings)
+            serverMessage = "Saved"
         } catch {
-            status = error.localizedDescription
+            serverMessage = error.localizedDescription
         }
     }
 }

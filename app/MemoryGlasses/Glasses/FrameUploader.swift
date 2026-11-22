@@ -1,23 +1,23 @@
 import Foundation
 
-struct UploadResult {
+struct FlushResult {
     let sent: Int
     let waiting: Int
     let settings: GlassesSettings?
     var busy = false
 }
 
-private struct FrameReply: Decodable {
+private struct PresignedFrameUpload: Decodable {
     let uploadUrl: String?
     let uploadName: String?
 }
 
 actor FrameUploader {
-    private static let limit = 50
+    private static let maxQueuedFrames = 50
 
     private let folder: URL
-    private var slots: [String: (url: URL, name: String)] = [:]
-    private var counter = 0
+    private var presignedUploads: [String: (url: URL, name: String)] = [:]
+    private var fileSequence = 0
     private var flushing = false
 
     init() {
@@ -27,14 +27,14 @@ actor FrameUploader {
     }
 
     func enqueue(_ frame: ReceivedFrame) {
-        counter += 1
-        let name = String(format: "%.3f-%06d-%@-%u.jpg", Date().timeIntervalSince1970, counter, frame.recording, frame.number)
+        fileSequence += 1
+        let name = String(format: "%.3f-%06d-%@-%u.jpg", Date().timeIntervalSince1970, fileSequence, frame.recording, frame.number)
         try? frame.jpeg.write(to: folder.appendingPathComponent(name))
 
         let waiting = queued()
 
-        if waiting.count > Self.limit {
-            for old in waiting.prefix(waiting.count - Self.limit) {
+        if waiting.count > Self.maxQueuedFrames {
+            for old in waiting.prefix(waiting.count - Self.maxQueuedFrames) {
                 try? FileManager.default.removeItem(at: old)
             }
         }
@@ -48,8 +48,8 @@ actor FrameUploader {
         queued().filter { Self.recording(of: $0) == recording }.count
     }
 
-    func flush() async -> UploadResult {
-        guard !flushing else { return UploadResult(sent: 0, waiting: queued().count, settings: nil, busy: true) }
+    func flush() async -> FlushResult {
+        guard !flushing else { return FlushResult(sent: 0, waiting: queued().count, settings: nil, busy: true) }
 
         flushing = true
         defer { flushing = false }
@@ -76,7 +76,7 @@ actor FrameUploader {
             try? FileManager.default.removeItem(at: file)
         }
 
-        return UploadResult(sent: sent, waiting: queued().count, settings: settings)
+        return FlushResult(sent: sent, waiting: queued().count, settings: settings)
     }
 
     private func queued() -> [URL] {
@@ -98,35 +98,35 @@ actor FrameUploader {
     private func upload(_ jpeg: Data, recording: String, taken: Double?) async throws -> GlassesSettings {
         let api = API.current
 
-        if slots[recording] == nil {
-            remember(try await api.data(for: framed(api.request("/settings"), recording)), for: recording)
+        if presignedUploads[recording] == nil {
+            storePresignedUpload(from: try await api.data(for: withRecordingHeader(api.request("/settings"), recording)), for: recording)
         }
 
-        if let slot = slots[recording] {
+        if let slot = presignedUploads[recording] {
             if try await !put(jpeg, to: slot.url) {
-                slots[recording] = nil
-                remember(try await api.data(for: framed(api.request("/settings"), recording)), for: recording)
+                presignedUploads[recording] = nil
+                storePresignedUpload(from: try await api.data(for: withRecordingHeader(api.request("/settings"), recording)), for: recording)
 
-                guard let fresh = slots[recording], try await put(jpeg, to: fresh.url) else { throw APIError.status(0) }
+                guard let fresh = presignedUploads[recording], try await put(jpeg, to: fresh.url) else { throw APIError.status(0) }
             }
 
-            var notify = framed(try api.request("/glasses/frames", method: "POST"), recording)
-            notify.setValue(slots[recording]?.name, forHTTPHeaderField: "X-Uploaded")
+            var notify = withRecordingHeader(try api.request("/glasses/frames", method: "POST"), recording)
+            notify.setValue(presignedUploads[recording]?.name, forHTTPHeaderField: "X-Uploaded")
             notify.setValue(taken.map { String($0) }, forHTTPHeaderField: "X-Taken")
-            slots[recording] = nil
+            presignedUploads[recording] = nil
 
-            return try finished(await api.data(for: notify), for: recording)
+            return try settings(from: await api.data(for: notify), for: recording)
         }
 
-        var direct = framed(try api.request("/glasses/frames", method: "POST"), recording)
+        var direct = withRecordingHeader(try api.request("/glasses/frames", method: "POST"), recording)
         direct.httpBody = jpeg
         direct.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
         direct.setValue(taken.map { String($0) }, forHTTPHeaderField: "X-Taken")
 
-        return try finished(await api.data(for: direct), for: recording)
+        return try settings(from: await api.data(for: direct), for: recording)
     }
 
-    private func framed(_ request: URLRequest, _ recording: String) -> URLRequest {
+    private func withRecordingHeader(_ request: URLRequest, _ recording: String) -> URLRequest {
         var request = request
         request.setValue(recording, forHTTPHeaderField: "X-Recording")
 
@@ -144,15 +144,15 @@ actor FrameUploader {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
-    private func remember(_ reply: Data, for recording: String) {
-        guard let slot = try? API.decoder.decode(FrameReply.self, from: reply),
+    private func storePresignedUpload(from reply: Data, for recording: String) {
+        guard let slot = try? API.decoder.decode(PresignedFrameUpload.self, from: reply),
               let link = slot.uploadUrl, let url = URL(string: link), let name = slot.uploadName else { return }
 
-        slots[recording] = (url, name)
+        presignedUploads[recording] = (url, name)
     }
 
-    private func finished(_ reply: Data, for recording: String) throws -> GlassesSettings {
-        remember(reply, for: recording)
+    private func settings(from reply: Data, for recording: String) throws -> GlassesSettings {
+        storePresignedUpload(from: reply, for: recording)
 
         return try API.decoder.decode(GlassesSettings.self, from: reply)
     }

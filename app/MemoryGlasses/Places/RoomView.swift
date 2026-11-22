@@ -45,7 +45,7 @@ struct RoomView: View {
 
     private func load() async {
         do {
-            let data = try await API.current.image("/moments/\(momentId)/mesh")
+            let data = try await API.current.download("/moments/\(momentId)/mesh")
             let file = FileManager.default.temporaryDirectory.appending(path: "room-\(momentId).obj")
             try data.write(to: file)
 

@@ -45,18 +45,18 @@ extension GlassesLink: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral gone: CBPeripheral, error: Error?) {
         state = .looking
-        settingsOut = nil
-        ackOut = nil
-        updateOut = nil
+        settingsCharacteristic = nil
+        ackCharacteristic = nil
+        updateCharacteristic = nil
         versionIn = nil
-        incoming = nil
-        trusted = false
-        challenge = nil
+        partialFrame = nil
+        isAuthenticated = false
+        phoneNonce = nil
 
-        if update != nil {
-            update = nil
+        if firmwareTransfer != nil {
+            firmwareTransfer = nil
             updateProgress = nil
-            updateStage = "The glasses disconnected during the update"
+            updateMessage = "The glasses disconnected during the update"
         }
         central.connect(gone)
         central.scanForPeripherals(withServices: [Self.service])
@@ -75,25 +75,25 @@ extension GlassesLink: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let service = peripheral.services?.first(where: { $0.uuid == Self.service }) else { return }
 
-        peripheral.discoverCharacteristics([Self.frameCharacteristic, Self.settingsCharacteristic, Self.ackCharacteristic,
-                                            Self.updateCharacteristic, Self.updateStatusCharacteristic,
-                                            Self.versionCharacteristic, Self.authCharacteristic], for: service)
+        peripheral.discoverCharacteristics([Self.frameCharacteristicID, Self.settingsCharacteristicID, Self.ackCharacteristicID,
+                                            Self.updateCharacteristicID, Self.updateStatusCharacteristicID,
+                                            Self.versionCharacteristicID, Self.authCharacteristicID], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         for characteristic in service.characteristics ?? [] {
             switch characteristic.uuid {
-            case Self.frameCharacteristic:
+            case Self.frameCharacteristicID:
                 peripheral.setNotifyValue(true, for: characteristic)
-            case Self.settingsCharacteristic:
-                settingsOut = characteristic
-            case Self.ackCharacteristic:
-                ackOut = characteristic
-            case Self.updateCharacteristic:
-                updateOut = characteristic
-            case Self.updateStatusCharacteristic:
+            case Self.settingsCharacteristicID:
+                settingsCharacteristic = characteristic
+            case Self.ackCharacteristicID:
+                ackCharacteristic = characteristic
+            case Self.updateCharacteristicID:
+                updateCharacteristic = characteristic
+            case Self.updateStatusCharacteristicID:
                 peripheral.setNotifyValue(true, for: characteristic)
-            case Self.versionCharacteristic:
+            case Self.versionCharacteristicID:
                 versionIn = characteristic
                 peripheral.readValue(for: characteristic)
             default:
@@ -103,20 +103,20 @@ extension GlassesLink: CBPeripheralDelegate {
 
         let token = API.current.token
 
-        if let auth = service.characteristics?.first(where: { $0.uuid == Self.authCharacteristic }), !token.isEmpty {
-            let asked = Data((0..<GlassesProtocol.nonceBytes).map { _ in UInt8.random(in: .min ... .max) })
+        if let auth = service.characteristics?.first(where: { $0.uuid == Self.authCharacteristicID }), !token.isEmpty {
+            let nonce = Data((0..<GlassesProtocol.nonceBytes).map { _ in UInt8.random(in: .min ... .max) })
 
-            challenge = asked
-            peripheral.writeValue(asked, for: auth, type: .withResponse)
+            phoneNonce = nonce
+            peripheral.writeValue(nonce, for: auth, type: .withResponse)
             peripheral.readValue(for: auth)
         } else {
-            trusted = true
+            isAuthenticated = true
         }
 
         Task { @MainActor in
             if let settings: GlassesSettings = try? await API.current.get("/settings") {
                 self.lastSettings = settings
-                self.write(settings, status: self.status.isEmpty ? nil : self.status)
+                self.sendSettings(settings, displayText: self.glassesDisplayText.isEmpty ? nil : self.glassesDisplayText)
             }
         }
     }
@@ -125,38 +125,38 @@ extension GlassesLink: CBPeripheralDelegate {
         guard let value = characteristic.value else { return }
 
         switch characteristic.uuid {
-        case Self.frameCharacteristic:
-            received(value)
-        case Self.updateStatusCharacteristic:
-            updateSaid(String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
-        case Self.versionCharacteristic:
+        case Self.frameCharacteristicID:
+            handleFramePacket(value)
+        case Self.updateStatusCharacteristicID:
+            handleUpdateStatus(String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        case Self.versionCharacteristicID:
             versionArrived(String(decoding: value, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
-        case Self.authCharacteristic:
-            answer(value, on: peripheral, for: characteristic)
+        case Self.authCharacteristicID:
+            completeHandshake(value, on: peripheral, for: characteristic)
         default:
             break
         }
     }
 
-    func answer(_ value: Data, on peripheral: CBPeripheral, for auth: CBCharacteristic) {
-        guard let asked = challenge else { return }
+    func completeHandshake(_ value: Data, on peripheral: CBPeripheral, for auth: CBCharacteristic) {
+        guard let nonce = phoneNonce else { return }
 
-        challenge = nil
+        phoneNonce = nil
 
-        guard let reply = GlassesPackets.reply(to: value, token: API.current.token, phone: asked) else {
-            updateStage = "These glasses don't know this server's token"
+        guard let reply = GlassesPackets.reply(to: value, token: API.current.token, phone: nonce) else {
+            updateMessage = "These glasses don't know this server's token"
             return
         }
 
         peripheral.writeValue(reply, for: auth, type: .withResponse)
-        trusted = true
+        isAuthenticated = true
 
         if let settings = lastSettings {
-            write(settings, status: status.isEmpty ? nil : status)
+            sendSettings(settings, displayText: glassesDisplayText.isEmpty ? nil : glassesDisplayText)
         }
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
-        pump()
+        sendNextFirmwareChunks()
     }
 }

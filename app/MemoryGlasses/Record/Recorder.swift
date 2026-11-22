@@ -103,7 +103,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         }
 
         guard let places: [Place] = try? await API.current.get(path), let latest = places.first(where: \.hasMap),
-              let data = try? await API.current.image("/places/\(latest.id)/map"),
+              let data = try? await API.current.download("/places/\(latest.id)/map"),
               let map = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data)
         else { return nil }
 
