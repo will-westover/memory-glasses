@@ -11,7 +11,6 @@ from memory import db, storage
 from memory.config import DATA_DIR
 
 GLASSES_DIR = DATA_DIR / "glasses"
-RECORDING_QUIET_SECONDS = 300
 MAX_FRAME_BYTES = 2_000_000
 UPLOAD_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 

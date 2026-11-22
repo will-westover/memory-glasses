@@ -52,14 +52,14 @@ def start_job(conn: psycopg.Connection, job_id) -> None:
         raise
 
 
-def check_glasses() -> list[str]:
-    """Start processing every glasses recording that was ended or has gone quiet, and return their names."""
+def process_ended_recordings() -> list[str]:
+    """Start processing every glasses recording that was ended, and return their names."""
     started = []
 
     with db.connect() as conn:
         rate = float(db.setting(conn, "frames_per_minute", FRAMES_PER_MINUTE))
 
-        for name in db.recordings_to_close(conn, glasses.RECORDING_QUIET_SECONDS):
+        for name in db.ended_recordings(conn):
             job_id = db.new_job(conn, rate, {"kind": "glasses", "recording": name, "frames_per_minute": rate})
             db.close_recording(conn, name, job_id)
 

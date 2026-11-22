@@ -37,12 +37,10 @@ def end_recording(conn: psycopg.Connection, recording: str) -> list[str]:
     return [name for (name,) in rows]
 
 
-def recordings_to_close(conn: psycopg.Connection, idle_seconds: float) -> list[str]:
-    """Return the open glasses recordings that were ended, or have had no frame for idle_seconds."""
+def ended_recordings(conn: psycopg.Connection) -> list[str]:
+    """Return the glasses recordings that were ended and aren't being processed yet."""
     rows = conn.execute(
-        "select name from recording where job_id is null and photos > 0"
-        " and (ended_at is not null or last_frame_at < now() - make_interval(secs => %s)) order by started_at",
-        (idle_seconds,),
+        "select name from recording where job_id is null and photos > 0 and ended_at is not null order by started_at"
     )
 
     return [name for (name,) in rows]

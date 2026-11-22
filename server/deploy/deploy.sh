@@ -18,7 +18,7 @@ ENV_VARS="R2_ACCOUNT_ID=${R2_ACCOUNT_ID},R2_BUCKET=${R2_BUCKET}"
 cd "$(dirname "$0")/.."
 
 echo "Turning on services"
-gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudscheduler.googleapis.com \
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
   secretmanager.googleapis.com iam.googleapis.com --project "$PROJECT" >/dev/null
 
 echo "Server identity and secret access"
@@ -67,17 +67,5 @@ gcloud run deploy "$SERVER_SERVICE" --image "$IMAGE" --region "$REGION" --projec
   --set-env-vars "${ENV_VARS},WORKER_JOB=${WORKER_JOB_NAME},WORKER_REGION=${REGION}" --set-secrets "$SECRET_FLAGS" >/dev/null
 
 URL=$(gcloud run services describe "$SERVER_SERVICE" --region "$REGION" --project "$PROJECT" --format "value(status.url)")
-
-echo "Checking for stopped glasses recordings every minute"
-TOKEN=$(gcloud secrets versions access latest --secret API_TOKEN --project "$PROJECT")
-SCHEDULER_FLAGS=(--location "$REGION" --project "$PROJECT" --schedule "* * * * *" --uri "${URL}/glasses/check"
-          --http-method POST --attempt-deadline 60s)
-
-if gcloud scheduler jobs describe glasses-check --location "$REGION" --project "$PROJECT" >/dev/null 2>&1; then
-  gcloud scheduler jobs update http glasses-check "${SCHEDULER_FLAGS[@]}" --update-headers "Authorization=Bearer ${TOKEN}" >/dev/null
-else
-  gcloud scheduler jobs create http glasses-check "${SCHEDULER_FLAGS[@]}" --headers "Authorization=Bearer ${TOKEN}" >/dev/null
-fi
-unset TOKEN
 
 echo "Deployed: ${URL}"

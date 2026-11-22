@@ -13,12 +13,6 @@ from memory.api.shared import RECORDING_ID_PATTERN, STILL_SENDING_SECONDS, conne
 router = APIRouter()
 
 
-@router.post("/glasses/check")
-def glasses_check() -> dict:
-    """Start processing glasses recordings that have stopped; Cloud Scheduler calls this every minute."""
-    return {"started": jobs.check_glasses()}
-
-
 @router.post("/glasses/frames")
 async def glasses_frame(
     request: Request,
@@ -72,14 +66,14 @@ def latest_firmware() -> dict | None:
 
 @router.post("/glasses/recordings/{recording}/end")
 def end_recording(recording: str, conn: psycopg.Connection = Depends(connection)) -> dict:
-    """Say a glasses recording is over, so it is processed now instead of after it has gone quiet."""
+    """Say a glasses recording is over, which starts processing it."""
     if not RECORDING_ID_PATTERN.match(recording):
         raise HTTPException(422, "the recording id must be letters, digits and dashes")
 
     ended = db.end_recording(conn, recording)
     conn.commit()
 
-    return {"ended": ended, "started": jobs.check_glasses() if ended else []}
+    return {"ended": ended, "started": jobs.process_ended_recordings() if ended else []}
 
 
 @router.get("/glasses/firmware")

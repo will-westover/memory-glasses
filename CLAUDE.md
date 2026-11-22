@@ -65,7 +65,8 @@ Everything else is your call.
 - New tables go in a new numbered file in `server/migrations/`; they are applied on the next connection.
 - Few bytes pass through the server: file requests redirect to short-lived R2 links, the app and the glasses
   upload straight to R2, and captions give OpenAI an R2 link.
-- A glasses recording ends when the phone or glasses say so, or after five minutes without a photo. Photos that
+- A glasses recording ends only when the phone or glasses say so (`POST /glasses/recordings/{id}/end`); nothing
+  checks for ones that went quiet, so one whose end is never reported stays unprocessed. Photos that
   arrive later start a new part. Photos are filed by when they were taken, not when they arrived.
 - A moment is filed at the place the phone's map recognised, else the place whose frames look most alike (average
   embedding at least 0.75); for now each moment is one segment. Rooms come from one model call per moment, then a
