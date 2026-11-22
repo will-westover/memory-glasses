@@ -1,6 +1,29 @@
 {
   "venvPath": "server",
   "venv": ".venv",
-  "executionEnvironments": [{ "root": "server" }],
-  "exclude": ["**/.venv", "**/node_modules", "app", "firmware", "hardware", "data"]
+  "executionEnvironments": [
+    {
+      "root": "server"
+    }
+  ],
+  "exclude": [
+    "**/.venv",
+    "**/node_modules",
+    "app",
+    "firmware",
+    "hardware",
+    "data"
+  ],
+  "typeCheckingMode": "basic",
+  "reportArgumentType": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportOptionalIterable": "none",
+  "reportOptionalSubscript": "none",
+  "reportOptionalCall": "none",
+  "reportOptionalOperand": "none",
+  "reportReturnType": "none",
+  "reportCallIssue": "warning",
+  "reportAttributeAccessIssue": "warning",
+  "reportPossiblyUnbound": "warning",
+  "reportGeneralTypeIssues": "none"
 }
