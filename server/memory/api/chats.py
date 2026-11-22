@@ -28,9 +28,6 @@ def search_memories(
     return {"results": [fact_json(fact, details.get(fact["id"])) for fact in facts]}
 
 
-HISTORY_TURNS = 6
-
-
 def turn_json(turn: dict, details: dict) -> dict:
     """Return a stored turn in the shape the app reads."""
     answer = None
@@ -101,7 +98,7 @@ def prepare(conn: psycopg.Connection, conversation_id: UUID, body: ChatQuestion)
     if body.frame_id and frame is None:
         raise HTTPException(404, "no such frame")
 
-    history = [(turn["question"], turn["answer"]) for turn in turns if turn["answer"]][-HISTORY_TURNS:]
+    history = [(turn["question"], turn["answer"]) for turn in turns if turn["answer"]]
     content = {"text": body.question}
 
     if frame:
