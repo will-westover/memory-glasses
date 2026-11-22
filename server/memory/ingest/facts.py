@@ -33,8 +33,9 @@ Write, using only what is given:
 - title: two to five words on what this stretch was about, so someone scanning a list can tell stretches apart.
 - happened: two or three sentences on what took place, combining what was seen and said.
 - things: everything seen, each thing once. The same thing is often described in different words in different
-  photos; merge those into one. Give each a short name, where it was in the scene, and the numbers of the photos it
-  is in. Say where it was in plain words, never by photo number.
+  photos; merge those into one. Give each the most specific name the photos give, where it was in the scene, the
+  details that tell it apart (keep the colours, materials and writing the photos list), and the numbers of the photos
+  it is in. Say where it was in plain words, never by photo number.
 - said: for each passage, its number and one or two plain sentences stating what was said and by which speaker.
   Leave out filler words. Keep names, numbers and other specifics."""
 
@@ -45,8 +46,11 @@ class Said(BaseModel):
 
 
 class Thing(BaseModel):
-    name: str = Field(description="A short name for the thing")
+    name: str = Field(description="The most specific name for the thing")
     where: str = Field(description="Where it was in the scene, without photo numbers")
+    details: str = Field(
+        description="What tells it apart: colour, material, pattern, writing; keep the photos' details"
+    )
     photos: list[int] = Field(description="The numbers of the photos it is in")
 
 
@@ -236,7 +240,7 @@ def things_by_name(frames: list[dict]) -> list[Thing]:
 
     for number, frame in enumerate(frames, start=1):
         for item in frame["objects"]:
-            thing = Thing(name=item["name"], where=item["location"], photos=[])
+            thing = Thing(name=item["name"], where=item["location"], details=item.get("details") or "", photos=[])
             found.setdefault(item["name"].lower(), thing).photos.append(number)
 
     return list(found.values())
@@ -297,7 +301,8 @@ def stretch_facts(frames: list[dict], passages: list[list[dict]], place: str | N
         shown = [frames[number - 1] for number in sorted(set(thing.photos)) if 0 < number <= len(frames)]
 
         if shown:
-            facts.append(covering("object", f"{thing.name}: {thing.where}.{where} {context}", shown))
+            details = f" {thing.details.rstrip('.')}." if thing.details else ""
+            facts.append(covering("object", f"{thing.name}: {thing.where}.{details}{where} {context}", shown))
 
     people = grouped_by(frames, lambda frame: sorted({p["name"] for p in frame.get("people", []) if p["name"]}))
     facts += [covering("person", f"{name} was there.{where} {context}", shown) for name, shown in people.items()]

@@ -129,7 +129,10 @@ def test_a_stretch_gives_each_thing_person_and_text_once():
     stretch = Stretch(
         title="Coffee",
         happened="They make coffee. It is early.",
-        things=[Thing(name="edamame", where="in a bowl", photos=[1, 2]), Thing(name="stray", where="x", photos=[9])],
+        things=[
+            Thing(name="edamame", where="in a bowl", details="bright green pods", photos=[1, 2]),
+            Thing(name="stray", where="x", details="", photos=[9]),
+        ],
         said=[],
     )
 
@@ -140,7 +143,9 @@ def test_a_stretch_gives_each_thing_person_and_text_once():
 
     assert by_kind["summary"][0]["title"] == "Coffee"
     assert by_kind["summary"][0]["end_offset_seconds"] == 6.0
-    assert [fact["text"] for fact in by_kind["object"]] == ["edamame: in a bowl. At Home. They make coffee."]
+    assert [fact["text"] for fact in by_kind["object"]] == [
+        "edamame: in a bowl. bright green pods. At Home. They make coffee."
+    ]
     assert by_kind["object"][0]["frame_ids"] == [1, 2]
     assert {fact["text"].split(".")[0]: fact["frame_ids"] for fact in by_kind["person"]} == {
         "Friend 1 was there": [1, 2],
