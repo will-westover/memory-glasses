@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from memory import db, llm, storage
-from memory.config import DATA_DIR, TRANSCRIBE_MODEL, clock
+from memory.config import DATA_DIR, TRANSCRIBE_MODEL, minutes_seconds
 
 UPLOAD_KBPS = 48
 UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024
@@ -43,7 +43,7 @@ def transcribe(path: Path, model: str = TRANSCRIBE_MODEL):
 
 def print_report(lines: list[tuple], seconds: float, usage, usd: float, moment_dir: Path) -> None:
     for offset, speaker, text in lines:
-        print(f"  {clock(offset):>5}  {speaker or '?'}: {text}")
+        print(f"  {minutes_seconds(offset):>5}  {speaker or '?'}: {text}")
 
     speakers = {speaker for _, speaker, _ in lines}
 
@@ -56,7 +56,7 @@ def transcribe_moment(conn, moment_id: str, redo: bool = False) -> dict | None:
     moment_dir = DATA_DIR / "moments" / moment_id
     audio_path = moment_dir / "audio.wav"
 
-    if storage.local(audio_path) is None or (db.transcript(conn, moment_id) and not redo):
+    if storage.local_copy(audio_path) is None or (db.transcript(conn, moment_id) and not redo):
         return None
 
     llm.require_price(TRANSCRIBE_MODEL)
@@ -80,7 +80,7 @@ def main() -> int:
 
     moment_dir = DATA_DIR / "moments" / args.moment_id
 
-    if storage.local(moment_dir / "audio.wav") is None:
+    if storage.local_copy(moment_dir / "audio.wav") is None:
         print(f"error: no audio at {moment_dir / 'audio.wav'}", file=sys.stderr)
         return 1
 

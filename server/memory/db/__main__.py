@@ -5,7 +5,7 @@ from pathlib import Path
 
 import psycopg
 
-from memory.config import clock
+from memory.config import minutes_seconds
 from memory.db.core import connect
 from memory.db.moments import list_moments, save_moment
 
@@ -16,8 +16,10 @@ USAGE = "usage: python -m memory.db list | save <moment folder>"
 def print_moments(rows: list[tuple]) -> None:
     print(f"{'moment':<21} {'source':<10} {'length':>7} {'frames':>7}  sound")
 
-    for moment_id, source, _, duration, frames, has_sound, _, _, _ in rows:
-        print(f"{moment_id:<21} {source:<10} {clock(duration):>7} {frames:>7}  {'yes' if has_sound else 'no'}")
+    for moment_id, source, _started_at, duration, frames, has_sound, _lat, _lon, _title in rows:
+        print(
+            f"{moment_id:<21} {source:<10} {minutes_seconds(duration):>7} {frames:>7}  {'yes' if has_sound else 'no'}"
+        )
 
     if not rows:
         print("(no moments yet)")

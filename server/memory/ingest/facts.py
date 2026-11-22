@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pydantic import BaseModel, Field
 
 from memory import db, llm
-from memory.config import STRETCH_SECONDS, SUMMARY_MODEL
+from memory.config import SUMMARY_STRETCH_SECONDS, SUMMARY_MODEL
 from memory.overview import write_overview
 from memory.gps import place_for
 
@@ -124,19 +124,19 @@ def speech_fact(passage: list[dict], place: str | None, kind: str, text: str) ->
 
 
 def stretches(frames: list[dict], groups: list[list[dict]]) -> list[tuple[list, list]]:
-    """Split frames and passages into consecutive stretches of STRETCH_SECONDS."""
+    """Split frames and passages into consecutive stretches of SUMMARY_STRETCH_SECONDS."""
     slots: dict[int, tuple[list, list]] = {}
 
     for frame in frames:
-        slots.setdefault(int(frame["offset_seconds"] // STRETCH_SECONDS), ([], []))[0].append(frame)
+        slots.setdefault(int(frame["offset_seconds"] // SUMMARY_STRETCH_SECONDS), ([], []))[0].append(frame)
 
     for passage in groups:
-        slots.setdefault(int(passage[0]["start"] // STRETCH_SECONDS), ([], []))[1].append(passage)
+        slots.setdefault(int(passage[0]["start"] // SUMMARY_STRETCH_SECONDS), ([], []))[1].append(passage)
 
     return [slots[slot] for slot in sorted(slots)]
 
 
-def summarise(frames: list[dict], groups: list[list[dict]]):
+def summarise_stretch(frames: list[dict], groups: list[list[dict]]):
     """Ask the model what happened in one stretch and what each passage said. Return (Stretch, usage)."""
     seen = "\n".join(f"{int(frame['offset_seconds'])} s: {frame['summary']}" for frame in frames)
     heard = "\n".join(f"{number}. {spoken(passage)}" for number, passage in enumerate(groups, start=1))
@@ -184,7 +184,7 @@ def summary_facts(conn, frames: list[dict], groups: list[list[dict]], place: str
     facts = []
 
     with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
-        results = list(pool.map(lambda part: summarise(*part), parts))
+        results = list(pool.map(lambda part: summarise_stretch(*part), parts))
 
     for (stretch_frames, stretch_groups), (stretch, usage) in zip(parts, results):
         llm.log_cost(conn, "summary", SUMMARY_MODEL, usage)
@@ -210,7 +210,7 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     """Rebuild and embed every fact for a moment. Return how many of each kind were made."""
     llm.require_price(SUMMARY_MODEL)
 
-    _, lat, lon = db.moment_info(conn, moment_id)
+    _, lat, lon = db.moment_start_and_location(conn, moment_id)
     place = place_for(lat, lon, db.gps_places(conn))
 
     frames = db.captioned_frames(conn, moment_id)

@@ -11,9 +11,9 @@ from memory import db, storage
 from memory.config import DATA_DIR
 
 GLASSES_DIR = DATA_DIR / "glasses"
-IDLE_SECONDS = 300
+RECORDING_QUIET_SECONDS = 300
 MAX_FRAME_BYTES = 2_000_000
-UPLOAD_NAME = re.compile(r"^[0-9a-f]{32}$")
+UPLOAD_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 def frame_name(started: float, taken: float) -> str:
@@ -21,7 +21,7 @@ def frame_name(started: float, taken: float) -> str:
     return f"{max(0, round((taken - started) * 1000)):09d}.jpg"
 
 
-def place(conn, recording: str, taken: float | None) -> Path:
+def claim_frame_path(conn, recording: str, taken: float | None) -> Path:
     """Count a frame in its recording and return where it belongs, by the time it was taken when that is known."""
     now = time.time()
     taken = now if taken is None else min(taken, now)
@@ -32,7 +32,7 @@ def place(conn, recording: str, taken: float | None) -> Path:
 
 def save_frame(conn, recording: str, jpeg: bytes, taken: float | None = None) -> Path:
     """Store one frame sent to the server under its recording."""
-    path = place(conn, recording, taken)
+    path = claim_frame_path(conn, recording, taken)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(jpeg)
 
@@ -48,21 +48,21 @@ def upload_slot(recording: str) -> dict:
     return {"upload_url": storage.upload_url(GLASSES_DIR / recording / f"{name}.pending"), "upload_name": name}
 
 
-def arrived(conn, recording: str, name: str, taken: float | None = None) -> Path | None:
+def accept_uploaded_frame(conn, recording: str, name: str, taken: float | None = None) -> Path | None:
     """Give a frame the glasses put in R2 its place in the recording, or None if it isn't there or is too big."""
     pending = GLASSES_DIR / recording / f"{name}.pending"
-    size = storage.size(pending)
+    size = storage.stored_size(pending)
 
     if size is None:
         return None
 
     if size > MAX_FRAME_BYTES:
-        storage.delete(pending)
+        storage.delete_file(pending)
         return None
 
-    path = place(conn, recording, taken)
+    path = claim_frame_path(conn, recording, taken)
     storage.copy(pending, path)
-    storage.delete(pending)
+    storage.delete_file(pending)
 
     return path
 

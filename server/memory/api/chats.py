@@ -86,7 +86,9 @@ def conversation(conversation_id: UUID, conn: psycopg.Connection = Depends(conne
     return {"id": conversation_id, "turns": turns_json(conn, turns)}
 
 
-def prepare(conn: psycopg.Connection, conversation_id: UUID, body: ChatQuestion) -> tuple[list, dict | None, dict]:
+def question_context(
+    conn: psycopg.Connection, conversation_id: UUID, body: ChatQuestion
+) -> tuple[list, dict | None, dict]:
     """Return the conversation so far, the frame asked about, and the question as a message to store."""
     turns = db.conversation_turns(conn, conversation_id)
 
@@ -107,14 +109,14 @@ def prepare(conn: psycopg.Connection, conversation_id: UUID, body: ChatQuestion)
     return history, frame, {"role": "user", "at": datetime.now().astimezone(), "content": content}
 
 
-def failed(error: Exception) -> list[dict]:
+def failure_messages(error: Exception) -> list[dict]:
     """Return the message stored when an answer fails."""
     return [
         {"role": "assistant", "at": datetime.now().astimezone(), "content": {"error": f"The answer failed: {error}"}}
     ]
 
 
-def saved_turn(conn: psycopg.Connection, conversation_id: UUID, messages: list[dict]) -> dict:
+def save_turn(conn: psycopg.Connection, conversation_id: UUID, messages: list[dict]) -> dict:
     """Store a question and what followed it, and return that turn as the app reads it."""
     turn_id = db.save_messages(conn, conversation_id, messages)
     turn = next(turn for turn in db.conversation_turns(conn, conversation_id) if turn["id"] == turn_id)
@@ -134,22 +136,22 @@ def ask_in_conversation(
     conversation_id: UUID, body: ChatQuestion, conn: psycopg.Connection = Depends(connection)
 ) -> dict:
     """Answer a question using the conversation so far, and store both."""
-    history, frame, question = prepare(conn, conversation_id, body)
+    history, frame, question = question_context(conn, conversation_id, body)
 
     try:
         replies = ask_agent(conn, body.question, history=history, frame=frame)["messages"]
     except Exception as error:
         conn.rollback()
-        replies = failed(error)
+        replies = failure_messages(error)
 
-    turn = saved_turn(conn, conversation_id, [question, *replies])
+    turn = save_turn(conn, conversation_id, [question, *replies])
     conn.commit()
     give_title(conversation_id, body.question, (turn["answer"] or {}).get("answer"))
 
     return turn
 
 
-def event(name: str, data: dict) -> str:
+def sse_event(name: str, data: dict) -> str:
     """Return one server-sent event."""
     return f"event: {name}\ndata: {json.dumps(data, default=str)}\n\n"
 
@@ -165,18 +167,18 @@ def answer_stream(conversation_id: UUID, body: ChatQuestion, history: list, fram
                     replies = payload["messages"]
                 elif kind == "step":
                     images = [image_url(path) for path in payload["image_paths"]]
-                    yield event("step", {"kind": payload["kind"], "text": payload["text"], "images": images})
+                    yield sse_event("step", {"kind": payload["kind"], "text": payload["text"], "images": images})
                 else:
-                    yield event(kind, payload)
+                    yield sse_event(kind, payload)
         except Exception as error:
             conn.rollback()
-            replies = failed(error)
-            yield event("error", {"message": f"The answer failed: {error}"})
+            replies = failure_messages(error)
+            yield sse_event("error", {"message": f"The answer failed: {error}"})
 
-        turn = saved_turn(conn, conversation_id, [question, *replies])
+        turn = save_turn(conn, conversation_id, [question, *replies])
         conn.commit()
 
-        yield event("done", jsonable_encoder(turn))
+        yield sse_event("done", jsonable_encoder(turn))
 
     give_title(conversation_id, body.question, (turn["answer"] or {}).get("answer"))
 
@@ -186,7 +188,7 @@ def ask_stream(
     conversation_id: UUID, body: ChatQuestion, conn: psycopg.Connection = Depends(connection)
 ) -> StreamingResponse:
     """Answer a question as server-sent events: each step, the answer as it is written, then the stored turn."""
-    history, frame, question = prepare(conn, conversation_id, body)
+    history, frame, question = question_context(conn, conversation_id, body)
 
     return StreamingResponse(
         answer_stream(conversation_id, body, history, frame, question),
@@ -195,7 +197,7 @@ def ask_stream(
     )
 
 
-SUGGESTIONS: dict = {"moment": None, "questions": []}
+SUGGESTIONS_CACHE: dict = {"moment": None, "questions": []}
 
 
 @router.get("/suggestions")
@@ -203,10 +205,10 @@ def suggestions(conn: psycopg.Connection = Depends(connection)) -> dict:
     """Return questions to suggest, written from the newest records and kept until a new moment arrives."""
     latest = db.latest_moment_id(conn)
 
-    if latest != SUGGESTIONS["moment"] or not SUGGESTIONS["questions"]:
-        SUGGESTIONS.update(moment=latest, questions=chat.suggest(conn))
+    if latest != SUGGESTIONS_CACHE["moment"] or not SUGGESTIONS_CACHE["questions"]:
+        SUGGESTIONS_CACHE.update(moment=latest, questions=chat.suggest(conn))
 
-    return {"questions": SUGGESTIONS["questions"]}
+    return {"questions": SUGGESTIONS_CACHE["questions"]}
 
 
 @router.delete("/conversations/{conversation_id}")

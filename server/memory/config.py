@@ -34,17 +34,17 @@ SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gpt-6-luna")
 
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gpt-6-sol")
 
-STRETCH_SECONDS = 60
+SUMMARY_STRETCH_SECONDS = 60
 
 EMBED_MODEL = "text-embedding-3-small"
 
 
-def clock(seconds: float) -> str:
+def minutes_seconds(seconds: float) -> str:
     """Format seconds as m:ss."""
     return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
 
 
-def require(name: str) -> str:
+def require_env(name: str) -> str:
     """Return an environment variable, or stop if it is not set."""
     value = os.environ.get(name)
 

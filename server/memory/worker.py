@@ -16,7 +16,7 @@ def run(job_id: str) -> None:
     if task["kind"] == "upload":
         jobs.process_upload(job_id, task)
     elif task["kind"] == "reprocess":
-        jobs.run_reprocess(job_id, task["moment_id"], task["frames_per_minute"])
+        jobs.reprocess_moment(job_id, task["moment_id"], task["frames_per_minute"])
     elif task["kind"] == "glasses":
         jobs.process_glasses(job_id, task)
     elif task["kind"] == "facts":

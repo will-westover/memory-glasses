@@ -20,7 +20,7 @@ RUNS_DIR = DATA_DIR / "evals" / "runs"
 
 MODES = {"agent": ask_agent, "plain": ask_plain, "no-nearby": partial(ask_agent, use_nearby=False)}
 DEFAULT_MODES = ("agent", "plain")
-POINTS = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
+VERDICT_POINTS = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
 NOT_RECORDED = "NOT RECORDED"
 
 JUDGE_INSTRUCTIONS = f"""\
@@ -50,7 +50,7 @@ def load_questions() -> list[dict]:
     questions = []
 
     for path in QUESTION_FILES:
-        if storage.local(path) is None:
+        if storage.local_copy(path) is None:
             continue
 
         loaded = json.loads(path.read_text())
@@ -62,7 +62,7 @@ def load_questions() -> list[dict]:
     return questions
 
 
-def retrieved(evidence: list[str], shown: list[dict]) -> bool:
+def mentions_evidence(evidence: list[str], shown: list[dict]) -> bool:
     """Return whether any fact the model was shown contains one of the evidence phrases."""
     texts = [fact["text"].lower() for fact in shown]
 
@@ -103,8 +103,8 @@ def run_question(conn, question: dict, mode: str, model: str) -> dict:
         "verdict": graded.verdict,
         "supported": graded.supported,
         "reason": graded.reason,
-        "retrieved": retrieved(evidence, result["shown"]) if evidence else None,
-        "cited": retrieved(evidence, result["sources"]) if evidence else None,
+        "retrieved": mentions_evidence(evidence, result["shown"]) if evidence else None,
+        "cited": mentions_evidence(evidence, result["sources"]) if evidence else None,
         "found_right": result["found"] == bool(question["expected"]),
         "model_calls": result["model_calls"],
         "seconds": result["seconds"],
@@ -117,16 +117,16 @@ def average(values: list) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
-def summarise(rows: list[dict]) -> dict:
+def mode_scores(rows: list[dict]) -> dict:
     """Return the scores and averages for one mode's rows."""
     answerable = [row for row in rows if row["expected"]]
     unanswerable = [row for row in rows if not row["expected"]]
 
     return {
         "questions": len(rows),
-        "score": average([POINTS[row["verdict"]] for row in rows]),
-        "answerable": average([POINTS[row["verdict"]] for row in answerable]),
-        "unanswerable": average([POINTS[row["verdict"]] for row in unanswerable]),
+        "score": average([VERDICT_POINTS[row["verdict"]] for row in rows]),
+        "answerable": average([VERDICT_POINTS[row["verdict"]] for row in answerable]),
+        "unanswerable": average([VERDICT_POINTS[row["verdict"]] for row in unanswerable]),
         "supported": average([row["supported"] for row in rows]),
         "retrieved": average([row["retrieved"] for row in rows if row["retrieved"] is not None]),
         "cited": average([row["cited"] for row in rows if row["cited"] is not None]),
@@ -142,7 +142,7 @@ def by_kind(rows: list[dict]) -> dict:
     kinds = dict.fromkeys(row["kind"] for row in rows)
 
     return {
-        kind: {"questions": len(of_kind), "score": average([POINTS[row["verdict"]] for row in of_kind])}
+        kind: {"questions": len(of_kind), "score": average([VERDICT_POINTS[row["verdict"]] for row in of_kind])}
         for kind in kinds
         for of_kind in [[row for row in rows if row["kind"] == kind]]
     }
@@ -151,7 +151,7 @@ def by_kind(rows: list[dict]) -> dict:
 def spread(rows: list[dict]) -> tuple[float, float]:
     """Return the lowest and highest score among the repeats of a run."""
     scores = [
-        average([POINTS[row["verdict"]] for row in rows if row["run"] == run])
+        average([VERDICT_POINTS[row["verdict"]] for row in rows if row["run"] == run])
         for run in dict.fromkeys(row["run"] for row in rows)
     ]
 
@@ -171,7 +171,7 @@ def print_report(rows: list[dict], judge_usd: float) -> None:
 
     for mode in MODES:
         of_mode = [row for row in rows if row["mode"] == mode]
-        totals = summarise(of_mode)
+        totals = mode_scores(of_mode)
 
         if not of_mode:
             continue
@@ -203,7 +203,7 @@ def save_run(rows: list[dict], model: str, judge_usd: float) -> None:
     path = RUNS_DIR / f"{datetime.now():%Y-%m-%dT%H-%M-%S}.json"
 
     ran = dict.fromkeys(row["mode"] for row in rows)
-    scores = {mode: summarise([row for row in rows if row["mode"] == mode]) for mode in ran}
+    scores = {mode: mode_scores([row for row in rows if row["mode"] == mode]) for mode in ran}
     kinds = {mode: by_kind([row for row in rows if row["mode"] == mode]) for mode in ran}
     path.write_text(
         json.dumps(

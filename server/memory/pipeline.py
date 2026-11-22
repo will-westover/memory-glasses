@@ -55,7 +55,7 @@ def process(
 
         on_step(STEPS[4])
         if not reuse_frames or db.moment_place(conn, moment_id) is None:
-            places.file_moment(conn, moment_id, moment_dir, place_id)
+            places.assign_place(conn, moment_id, moment_dir, place_id)
 
         places.label_rooms(conn, moment_id)
         conn.commit()
@@ -73,7 +73,7 @@ def main() -> int:
     parser.add_argument("--replace", action="store_true", help="rebuild the moment if it already exists")
     args = parser.parse_args()
 
-    rate = recording.saved_rate() if args.frames_per_minute is None else args.frames_per_minute
+    rate = recording.saved_frames_per_minute() if args.frames_per_minute is None else args.frames_per_minute
 
     try:
         moment_id = process(args.video, rate, replace=args.replace, on_step=lambda step: print(f"{step}…"))

@@ -1,4 +1,4 @@
-from memory.agent import check_sources, fit
+from memory.agent import check_sources, fit_timeline
 
 
 def fact(fact_id: int, kind: str = "frame") -> dict:
@@ -20,10 +20,10 @@ def test_a_source_cited_twice_is_listed_once():
 def test_short_timeline_shows_detail_without_summaries():
     facts = [fact(1, "summary"), fact(2), fact(3, "speech")]
 
-    assert fit(facts, limit=5) == [fact(2), fact(3, "speech")]
+    assert fit_timeline(facts, limit=5) == [fact(2), fact(3, "speech")]
 
 
 def test_long_timeline_shows_summaries_instead():
     facts = [fact(1, "summary"), fact(2), fact(3), fact(4, "summary"), fact(5), fact(6)]
 
-    assert fit(facts, limit=3) == [fact(1, "summary"), fact(4, "summary")]
+    assert fit_timeline(facts, limit=3) == [fact(1, "summary"), fact(4, "summary")]

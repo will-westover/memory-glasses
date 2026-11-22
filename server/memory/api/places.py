@@ -9,7 +9,7 @@ from memory.config import DATA_DIR
 from memory.ingest.poses import load_poses, thin
 from memory.jobs import start_rebuild
 from memory.moment_files import MOMENTS_DIR
-from memory.api.shared import NewName, connection, frame_json, image_url, stored_file
+from memory.api.shared import NewName, connection, frame_json, image_url, redirect_to_stored
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ def list_places(
     lat: float | None = None, lon: float | None = None, conn: psycopg.Connection = Depends(connection)
 ) -> list[dict]:
     """List places near a location (or all of them), most recently updated first."""
-    return places.nearby(conn, lat, lon)
+    return places.places_near(conn, lat, lon)
 
 
 @router.get("/world")
@@ -56,12 +56,12 @@ def place_scene(place_id: int, conn: psycopg.Connection = Depends(connection)) -
         if not (db.moment_place(conn, moment_id) or {}).get("in_map"):
             continue
 
-        started_at, _, _ = db.moment_info(conn, moment_id)
+        started_at, _, _ = db.moment_start_and_location(conn, moment_id)
         moments.append(
             {
                 "id": moment_id,
                 "started_at": started_at,
-                "path": thin(load_poses(poses_file), 300) if storage.local(poses_file) else [],
+                "path": thin(load_poses(poses_file), 300) if storage.local_copy(poses_file) else [],
                 "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
             }
         )
@@ -81,7 +81,7 @@ def place_map_file(place_id: int, conn: psycopg.Connection = Depends(connection)
     if file is None:
         raise HTTPException(404, "no map for this place")
 
-    return stored_file(file, "application/octet-stream")
+    return redirect_to_stored(file, "application/octet-stream")
 
 
 @router.put("/places/{place_id}")

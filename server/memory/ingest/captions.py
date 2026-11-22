@@ -72,7 +72,7 @@ def small_jpeg(path: Path) -> bytes:
 
 def image_link(path: Path) -> str:
     """Return how the model gets the image: a short-lived R2 link when R2 holds it, else the bytes inline."""
-    if storage.size(path) is not None:
+    if storage.stored_size(path) is not None:
         return storage.download_url(path, "image/jpeg", seconds=3600)
 
     return f"data:image/jpeg;base64,{base64.b64encode(small_jpeg(path)).decode()}"
@@ -167,7 +167,7 @@ def main() -> int:
     args = parse_arguments()
     moment_dir = DATA_DIR / "moments" / args.moment_id
 
-    if storage.local(moment_dir / "manifest.json") is None:
+    if storage.local_copy(moment_dir / "manifest.json") is None:
         print(f"error: no moment at {moment_dir}", file=sys.stderr)
         return 1
 

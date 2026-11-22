@@ -13,18 +13,18 @@ from pydantic import BaseModel, Field
 
 from memory import db, llm
 from memory.citations import partial_string, renumber, shown_so_far
-from memory.config import AGENT_MODEL, clock
+from memory.config import AGENT_MODEL, minutes_seconds
 from memory.gps import place_for
 from memory.search import search
 
-MAX_ROUNDS = 5
+MAX_TOOL_ROUNDS = 5
 
 SEARCH_RESULTS = 8
 PLAIN_RESULTS = 10
 
-TIMELINE_LIMIT = 60
+TIMELINE_MAX_FACTS = 60
 
-RECENT_MOMENTS = 20
+MOMENTS_IN_PROMPT = 20
 
 INSTRUCTIONS = """\
 You answer questions for someone who wears camera glasses. The glasses record what the wearer sees and hears,
@@ -121,7 +121,7 @@ TOOLS = [
     },
 ]
 
-NEARBY_METRES = 1.5
+NEARBY_DEFAULT_METRES = 1.5
 
 
 class NextStep(BaseModel):
@@ -157,10 +157,10 @@ NO_ANSWER = Answer(
 def instructions(conn, notes: str, moments: list[str] | None = None) -> str:
     """Return the instructions with the current time and the newest recordings filled in."""
     places = db.gps_places(conn)
-    listed = [row for row in db.list_moments(conn) if moments is None or row[0] in moments]
+    moment_rows = [row for row in db.list_moments(conn) if moments is None or row[0] in moments]
     lines = []
 
-    for _, _, started_at, duration, _, _, lat, lon, _ in listed[:RECENT_MOMENTS]:
+    for _id, _source, started_at, duration, _frames, _has_sound, lat, lon, _title in moment_rows[:MOMENTS_IN_PROMPT]:
         place = place_for(lat, lon, places)
 
         start = started_at.astimezone()
@@ -183,7 +183,7 @@ def parse_time(text: str | None) -> datetime | None:
     return at if at.tzinfo else at.astimezone()
 
 
-def fit(facts: list[dict], limit: int = TIMELINE_LIMIT) -> list[dict]:
+def fit_timeline(facts: list[dict], limit: int = TIMELINE_MAX_FACTS) -> list[dict]:
     """Return the frames and speech if they fit in `limit`, otherwise the summaries of that stretch."""
     detail = [fact for fact in facts if fact["kind"] != "summary"]
 
@@ -217,7 +217,7 @@ def fact_lines(facts: list[dict]) -> str:
 def find_facts(conn, name: str, arguments: dict, moments: list[str] | None = None) -> list[dict]:
     """Return the facts one tool call asks for, from only the given moments when some are named."""
     if name == "nearby":
-        near = db.nearby_facts(conn, arguments["fact_id"], arguments.get("metres") or NEARBY_METRES)
+        near = db.nearby_facts(conn, arguments["fact_id"], arguments.get("metres") or NEARBY_DEFAULT_METRES)
 
         return [fact for fact in near if moments is None or fact["moment_id"] in moments]
 
@@ -230,7 +230,7 @@ def find_facts(conn, name: str, arguments: dict, moments: list[str] | None = Non
     if not start or not end:
         raise ValueError("timeline needs a start and an end")
 
-    return fit(db.timeline(conn, start, end, moments))
+    return fit_timeline(db.timeline(conn, start, end, moments))
 
 
 def run_tool(conn, name: str, arguments: dict, seen: dict, moments: list[str] | None = None) -> tuple[str, list[dict]]:
@@ -271,7 +271,7 @@ def check_sources(cited: list[int], seen: dict) -> list[dict]:
     return [seen[fact_id] for fact_id in dict.fromkeys(cited) if fact_id in seen]
 
 
-def conversation(history: list[tuple[str, str]], question: str) -> list[dict]:
+def model_input(history: list[tuple[str, str]], question: str) -> list[dict]:
     """Return earlier questions and answers, then the new question, as model input."""
     messages = []
 
@@ -301,7 +301,7 @@ def step_text(name: str, arguments: dict) -> str:
     return "Looking at what was nearby"
 
 
-def step(kind: str, text: str, facts: list[dict] = ()) -> tuple[str, dict]:
+def step_event(kind: str, text: str, facts: list[dict] = ()) -> tuple[str, dict]:
     """Return a step event with up to four of the photos its facts came from."""
     images = list(dict.fromkeys(fact["image_path"] for fact in facts if fact["image_path"]))[:4]
 
@@ -327,19 +327,19 @@ def answer_events(
     usd = 0.0
 
     asked = f"{question}\n\nThe question is about this frame:\n{fact_line(frame)}" if frame else question
-    send = conversation(list(history), asked)
+    send = model_input(list(history), asked)
     previous_id = None
     tools = TOOLS if use_nearby else [tool for tool in TOOLS if tool["name"] != "nearby"]
     messages = []
 
-    for round_number in range(MAX_ROUNDS + 1):
+    for round_number in range(MAX_TOOL_ROUNDS + 1):
         request = {
             "model": model,
             "instructions": prompt,
             "input": send,
             "previous_response_id": previous_id,
             "tools": tools,
-            "tool_choice": "auto" if round_number < MAX_ROUNDS else "none",
+            "tool_choice": "auto" if round_number < MAX_TOOL_ROUNDS else "none",
         }
 
         buffer, shown = "", ""
@@ -350,7 +350,7 @@ def answer_events(
                     continue
 
                 if not buffer:
-                    yield step("answer", "Writing the answer")
+                    yield step_event("answer", "Writing the answer")
 
                 buffer += event.delta
                 text = shown_so_far(partial_string(buffer, "answer"), seen)
@@ -363,7 +363,7 @@ def answer_events(
 
         received = response.model_dump(mode="json")
 
-        with llm.collect() as call_ids:
+        with llm.collect_call_ids() as call_ids:
             usd += llm.log_cost(conn, "agent", model, response.usage, request=request, response=received)
 
         messages.append(
@@ -381,12 +381,12 @@ def answer_events(
         for call in requests:
             arguments = json.loads(call.arguments)
             calls.append((call.name, arguments))
-            yield step(call.name, step_text(call.name, arguments))
+            yield step_event(call.name, step_text(call.name, arguments))
 
-            with llm.collect() as call_ids:
+            with llm.collect_call_ids() as call_ids:
                 output, facts = run_tool(conn, call.name, arguments, seen, moments)
 
-            yield step(call.name, step_text(call.name, arguments), facts)
+            yield step_event(call.name, step_text(call.name, arguments), facts)
 
             send.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
             messages.append(
@@ -407,7 +407,7 @@ def answer_events(
     parsed = response.output_parsed or NO_ANSWER
     messages[-1]["content"]["answer"] = parsed.model_dump()
 
-    yield "result", {**finish(parsed, seen, calls, usd, round_number + 1, started), "messages": messages}
+    yield "result", {**answer_result(parsed, seen, calls, usd, round_number + 1, started), "messages": messages}
 
 
 def ask_agent(
@@ -441,10 +441,10 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL, moments: list[str] 
     response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})
     usd = llm.log_cost(conn, "rag", model, response.usage, request=request, response=response.model_dump(mode="json"))
 
-    return finish(response.output_parsed, seen, [], usd, 1, started)
+    return answer_result(response.output_parsed, seen, [], usd, 1, started)
 
 
-def finish(answer: Answer | None, seen: dict, calls: list, usd: float, model_calls: int, started: float) -> dict:
+def answer_result(answer: Answer | None, seen: dict, calls: list, usd: float, model_calls: int, started: float) -> dict:
     """Bundle an answer with its checked sources and what it took to get."""
     answer = answer or NO_ANSWER
     text, kept = renumber(answer.answer, answer.sources, seen)
@@ -472,7 +472,7 @@ def print_sources(sources: list[dict]) -> None:
 
     for fact in sources:
         print(
-            f"  [{fact['id']}] {fact['at'].astimezone():%a %d %b %H:%M:%S}, {clock(fact['offset_seconds'])} into"
+            f"  [{fact['id']}] {fact['at'].astimezone():%a %d %b %H:%M:%S}, {minutes_seconds(fact['offset_seconds'])} into"
             f" {fact['moment_id']}\n      {fact['text']}"
         )
 

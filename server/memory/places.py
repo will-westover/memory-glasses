@@ -23,8 +23,8 @@ from memory.gps import distance_m
 
 MAPS_DIR = DATA_DIR / "places"
 MOMENTS_DIR = DATA_DIR / "moments"
-NEARBY_METRES = 150
-SAME_PLACE = 0.75
+PLACE_SEARCH_METRES = 150
+SAME_PLACE_SIMILARITY = 0.75
 TRAVEL_METRES = 30
 NEIGHBOUR_METRES = 1.5
 
@@ -134,12 +134,14 @@ def moment_vector(conn, moment_id: str) -> np.ndarray | None:
     return unit(np.mean([parse_vector(vector) for vector in llm.embed(conn, summaries, "place")], axis=0))
 
 
-def nearby(conn, lat, lon) -> list[dict]:
+def places_near(conn, lat, lon) -> list[dict]:
     """Return the places near a location, most recently updated first; all of them when the location is unknown."""
     return [
         place
         for place in db.list_places(conn)
-        if lat is None or place["lat"] is None or distance_m(lat, lon, place["lat"], place["lon"]) <= NEARBY_METRES
+        if lat is None
+        or place["lat"] is None
+        or distance_m(lat, lon, place["lat"], place["lon"]) <= PLACE_SEARCH_METRES
     ]
 
 
@@ -150,7 +152,7 @@ def matching_place(conn, moment_id: str, lat, lon) -> int | None:
     if vector is None:
         return None
 
-    close = {place["id"] for place in nearby(conn, lat, lon)}
+    close = {place["id"] for place in places_near(conn, lat, lon)}
     scores = {
         place_id: float(unit(parse_vector(text)) @ vector)
         for place_id, text in db.place_vectors(conn).items()
@@ -159,7 +161,7 @@ def matching_place(conn, moment_id: str, lat, lon) -> int | None:
 
     best = max(scores, key=scores.get, default=None)
 
-    return best if best is not None and scores[best] >= SAME_PLACE else None
+    return best if best is not None and scores[best] >= SAME_PLACE_SIMILARITY else None
 
 
 def keep_map(place_id: int, world_map: Path) -> str:
@@ -171,13 +173,13 @@ def keep_map(place_id: int, world_map: Path) -> str:
     return f"places/{place_id}.map"
 
 
-def file_moment(conn, moment_id: str, moment_dir: Path, recognised: int | None) -> int | None:
+def assign_place(conn, moment_id: str, moment_dir: Path, recognised: int | None) -> int | None:
     """Put a moment at a place: the one the phone recognised, one that looks the same, or a new one."""
     storage.fetch_folder(moment_dir)
     world_map = moment_dir / "world.map"
     poses_file = moment_dir / "poses.json"
     has_map = world_map.is_file() and not (poses_file.is_file() and travelled(load_poses(poses_file)))
-    _, lat, lon = db.moment_info(conn, moment_id)
+    _, lat, lon = db.moment_start_and_location(conn, moment_id)
 
     if recognised is not None and has_map:
         db.save_place(conn, recognised, keep_map(recognised, world_map), lat, lon)
@@ -281,7 +283,7 @@ def label_rooms(conn, moment_id: str) -> dict[str, int]:
     chosen = smooth(own, others)
 
     db.set_frame_rooms(conn, moment_id, chosen)
-    db.drop_empty(conn)
+    db.drop_unused_rooms_and_places(conn)
 
     names = {room_id: name for name, room_id in rooms.items()}
 
@@ -294,7 +296,7 @@ def rebuild(conn) -> None:
     conn.commit()
 
     for moment_id in db.moment_ids_oldest_first(conn):
-        place_id = file_moment(conn, moment_id, MOMENTS_DIR / moment_id, None)
+        place_id = assign_place(conn, moment_id, MOMENTS_DIR / moment_id, None)
         counts = label_rooms(conn, moment_id)
         build_facts(conn, moment_id)
         conn.commit()

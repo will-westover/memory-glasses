@@ -12,7 +12,7 @@ def manifest_of(moment_id: str) -> dict:
     """Return a moment's manifest, or an empty one if it can't be read."""
     path = (MOMENTS_DIR / moment_id / "manifest.json").resolve()
 
-    if not path.is_relative_to(MOMENTS_DIR) or storage.local(path) is None:
+    if not path.is_relative_to(MOMENTS_DIR) or storage.local_copy(path) is None:
         return {}
 
     return json.loads(path.read_text())
@@ -31,7 +31,7 @@ def video_path(moment_id: str, download: bool = True):
     if not download:
         return path if storage.exists(path) else None
 
-    return storage.local(path)
+    return storage.local_copy(path)
 
 
 def has_video(moment_id: str) -> bool:
@@ -45,5 +45,5 @@ def current_extras(moment_id: str) -> dict:
     return {
         name: folder / name
         for name in manifest_of(moment_id).get("extras", [])
-        if storage.local(folder / name) is not None
+        if storage.local_copy(folder / name) is not None
     }

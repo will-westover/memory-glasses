@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import psycopg
 
-from memory.config import STRETCH_SECONDS
+from memory.config import SUMMARY_STRETCH_SECONDS
 
 
 def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], vectors: list[str]) -> None:
@@ -22,7 +22,7 @@ def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], v
         )
 
 
-FACT_COLUMNS = (
+FACT_SELECT = (
     "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds, fact.text,"
     "       coalesce(frame.image_path, best.image_path, closest.image_path), frame.x, frame.z, room.name,"
     "       fact.frame_id"
@@ -69,7 +69,7 @@ def nearby_facts(conn: psycopg.Connection, fact_id: int, metres: float, limit: i
             "    select frame.x, frame.z, frame.moment_id, fs.place_id, fs.in_place_map from fact"
             "      join frame on frame.id = fact.frame_id left join frame_segment fs on fs.frame_id = frame.id"
             "     where fact.id = %(id)s and frame.x is not null)"
-            f" {FACT_COLUMNS} left join frame_segment fs on fs.frame_id = frame.id, origin"
+            f" {FACT_SELECT} left join frame_segment fs on fs.frame_id = frame.id, origin"
             " where frame.x is not null and fact.id <> %(id)s and fact.kind in ('frame', 'object', 'text', 'person')"
             "   and (frame.moment_id = origin.moment_id"
             "        or (fs.place_id = origin.place_id and fs.in_place_map and origin.in_place_map))"
@@ -82,14 +82,14 @@ def nearby_facts(conn: psycopg.Connection, fact_id: int, metres: float, limit: i
 
 def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
     """Return the facts with these ids."""
-    return fact_rows(conn.execute(f"{FACT_COLUMNS} where fact.id = any(%s)", (fact_ids,)))
+    return fact_rows(conn.execute(f"{FACT_SELECT} where fact.id = any(%s)", (fact_ids,)))
 
 
 def timeline(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:
     """Return the frames, speech and summaries between two times, in order, from only the given moments if named."""
     return fact_rows(
         conn.execute(
-            f"{FACT_COLUMNS} where fact.at <= %(end)s"
+            f"{FACT_SELECT} where fact.at <= %(end)s"
             " and (%(moments)s::text[] is null or fact.moment_id = any(%(moments)s::text[])) and ("
             "    (fact.kind in ('frame', 'speech') and fact.at >= %(start)s)"
             " or (fact.kind = 'summary' and fact.at > %(summary_start)s))"
@@ -97,7 +97,7 @@ def timeline(conn: psycopg.Connection, start, end, moments: list[str] | None = N
             {
                 "start": start,
                 "end": end,
-                "summary_start": start - timedelta(seconds=STRETCH_SECONDS),
+                "summary_start": start - timedelta(seconds=SUMMARY_STRETCH_SECONDS),
                 "moments": moments,
             },
         )
@@ -142,7 +142,7 @@ def summaries(conn: psycopg.Connection, moment_id: str) -> list[dict]:
     """Return a moment's summary facts, in order."""
     return fact_rows(
         conn.execute(
-            f"{FACT_COLUMNS} where fact.moment_id = %s and fact.kind = 'summary' order by fact.at", (moment_id,)
+            f"{FACT_SELECT} where fact.moment_id = %s and fact.kind = 'summary' order by fact.at", (moment_id,)
         )
     )
 
@@ -150,7 +150,7 @@ def summaries(conn: psycopg.Connection, moment_id: str) -> list[dict]:
 def frame_fact(conn: psycopg.Connection, frame_id: int) -> dict | None:
     """Return the fact that describes a frame as a whole."""
     found = fact_rows(
-        conn.execute(f"{FACT_COLUMNS} where fact.frame_id = %s and fact.kind = 'frame' limit 1", (frame_id,))
+        conn.execute(f"{FACT_SELECT} where fact.frame_id = %s and fact.kind = 'frame' limit 1", (frame_id,))
     )
 
     return found[0] if found else None
@@ -192,7 +192,7 @@ def recent_facts(conn: psycopg.Connection, limit: int = 40) -> list[dict]:
     """Return the newest summaries, speech, text and people facts, newest first."""
     return fact_rows(
         conn.execute(
-            f"{FACT_COLUMNS} where fact.kind in ('summary', 'said', 'text', 'person') order by fact.at desc limit %s",
+            f"{FACT_SELECT} where fact.kind in ('summary', 'said', 'text', 'person') order by fact.at desc limit %s",
             (limit,),
         )
     )

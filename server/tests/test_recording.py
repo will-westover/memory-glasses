@@ -76,10 +76,12 @@ def test_a_frame_already_kept_inside_a_slot_is_reused():
 
     from memory.ingest.recording import slot_picks
 
-    reuse = [{"offset_seconds": 0.5, "path": Path("/old/00000500.jpg"), "fingerprint": "00000000000000ff", "blur": 0.3}]
+    reusable_frames = [
+        {"offset_seconds": 0.5, "path": Path("/old/00000500.jpg"), "fingerprint": "00000000000000ff", "blur": 0.3}
+    ]
     candidates = [Path(f"/new/{index:06d}.jpg") for index in range(8)]
 
-    picks = slot_picks([1, 6], list(range(8)), [0.3] * 8, 1.0, candidates, reuse)
+    picks = slot_picks([1, 6], list(range(8)), [0.3] * 8, 1.0, candidates, reusable_frames)
 
     assert [pick["offset"] for pick in picks] == [0.5, 1.5]
     assert picks[0]["source"] == Path("/old/00000500.jpg")

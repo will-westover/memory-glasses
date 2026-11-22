@@ -23,7 +23,7 @@ def costs(conn: psycopg.Connection) -> list[dict]:
     ]
 
 
-def caption_cost(conn: psycopg.Connection) -> float:
+def average_caption_cost(conn: psycopg.Connection) -> float:
     """Return the average cost of describing one frame so far."""
     (average,) = conn.execute("select coalesce(avg(usd), 0.006) from model_call where step = 'caption'").fetchone()
 

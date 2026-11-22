@@ -14,7 +14,7 @@ from memory.config import EMBED_MODEL, SERVER_DIR
 
 PRICES_FILE = SERVER_DIR / "prices.json"
 PRICES = json.loads(PRICES_FILE.read_text())["usd_per_million_tokens"]
-COLLECTED: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar("collected", default=None)
+COLLECTED_CALL_IDS: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar("collected", default=None)
 
 
 def require_price(model: str) -> None:
@@ -25,7 +25,7 @@ def require_price(model: str) -> None:
 
 @functools.cache
 def client() -> OpenAI:
-    config.require("OPENAI_API_KEY")
+    config.require_env("OPENAI_API_KEY")
 
     return OpenAI()
 
@@ -78,22 +78,22 @@ def log_cost(
 
     call_id = saved[0]
 
-    if (collected := COLLECTED.get()) is not None:
+    if (collected := COLLECTED_CALL_IDS.get()) is not None:
         collected.append(call_id)
 
     return usd
 
 
 @contextlib.contextmanager
-def collect():
+def collect_call_ids():
     """Gather the ids of the model calls logged inside the block, in order."""
     ids: list[int] = []
-    token = COLLECTED.set(ids)
+    token = COLLECTED_CALL_IDS.set(ids)
 
     try:
         yield ids
     finally:
-        COLLECTED.reset(token)
+        COLLECTED_CALL_IDS.reset(token)
 
 
 def embed(conn: psycopg.Connection, texts: list[str], step: str) -> list[str]:

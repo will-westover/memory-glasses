@@ -81,7 +81,7 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
     }
 
 
-FIRST_LOCATION = (
+FIRST_LOCATION_JOIN = (
     " left join lateral (select lat, lon from location where location.moment_id = s.id order by at limit 1) l on true"
 )
 
@@ -91,15 +91,15 @@ def list_moments(conn: psycopg.Connection) -> list[tuple]:
     return conn.execute(
         "select s.id, s.source, s.started_at, s.duration_seconds, count(f.id), s.audio_path is not null,"
         "       l.lat, l.lon, s.title"
-        f" from moment s left join frame f on f.moment_id = s.id{FIRST_LOCATION}"
+        f" from moment s left join frame f on f.moment_id = s.id{FIRST_LOCATION_JOIN}"
         " group by s.id, l.lat, l.lon order by s.started_at desc"
     ).fetchall()
 
 
-def moment_info(conn: psycopg.Connection, moment_id: str) -> tuple:
+def moment_start_and_location(conn: psycopg.Connection, moment_id: str) -> tuple:
     """Return (started_at, lat, lon) for a moment, with where it started if known."""
     return conn.execute(
-        f"select s.started_at, l.lat, l.lon from moment s{FIRST_LOCATION} where s.id = %s", (moment_id,)
+        f"select s.started_at, l.lat, l.lon from moment s{FIRST_LOCATION_JOIN} where s.id = %s", (moment_id,)
     ).fetchone()
 
 

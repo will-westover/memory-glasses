@@ -20,7 +20,7 @@ from memory.api.shared import (
     fact_json,
     frame_json,
     image_url,
-    stored_file,
+    redirect_to_stored,
     video_type,
 )
 
@@ -52,7 +52,7 @@ def moments(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
 @router.get("/moments/{moment_id}")
 def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Return one moment's frames, transcript and summaries for the timeline."""
-    if not db.moment_info(conn, moment_id):
+    if not db.moment_start_and_location(conn, moment_id):
         raise HTTPException(404, "no such moment")
 
     title, overview = db.moment_overview(conn, moment_id)
@@ -112,7 +112,7 @@ def audio(moment_id: str, start: float, end: float) -> Response:
 
     file = (MOMENTS_DIR / moment_id / "audio.wav").resolve()
 
-    if not file.is_relative_to(MOMENTS_DIR) or storage.local(file) is None:
+    if not file.is_relative_to(MOMENTS_DIR) or storage.local_copy(file) is None:
         raise HTTPException(404, "no sound for this moment")
 
     return Response(audio_clip(file, start, end), media_type="audio/wav")
@@ -123,7 +123,7 @@ def moment_path(moment_id: str) -> dict:
     """Return where the phone went during a moment: [seconds, x, y, z, yaw] in metres and radians."""
     poses_file = (MOMENTS_DIR / moment_id / "poses.json").resolve()
 
-    if not poses_file.is_relative_to(MOMENTS_DIR) or storage.local(poses_file) is None:
+    if not poses_file.is_relative_to(MOMENTS_DIR) or storage.local_copy(poses_file) is None:
         return {"points": []}
 
     return {"points": thin(load_poses(poses_file))}
@@ -137,7 +137,7 @@ def moment_mesh(moment_id: str) -> Response:
     if not mesh.is_relative_to(MOMENTS_DIR):
         raise HTTPException(404, "no mesh for this moment")
 
-    return stored_file(mesh, "model/obj")
+    return redirect_to_stored(mesh, "model/obj")
 
 
 def check_higher(moment_id: str, frames_per_minute: float) -> None:
@@ -168,7 +168,7 @@ def reprocess_estimate(
         "frames": slots,
         "new_frames": slots - kept,
         "kept_captions": kept,
-        "usd": round((slots - kept) * db.caption_cost(conn), 4),
+        "usd": round((slots - kept) * db.average_caption_cost(conn), 4),
     }
 
 
@@ -182,7 +182,7 @@ def reprocess(moment_id: str, body: Rate, conn: psycopg.Connection = Depends(con
     task = {"kind": "reprocess", "moment_id": moment_id, "frames_per_minute": body.frames_per_minute}
     job_id = db.new_job(conn, body.frames_per_minute, task)
     db.update_job(conn, job_id, moment_id=moment_id, step="Waiting")
-    jobs.start(conn, job_id)
+    jobs.start_job(conn, job_id)
 
     return {"id": job_id, "status": "processing"}
 
@@ -195,7 +195,7 @@ def moment_video(moment_id: str) -> Response:
     if path is None:
         raise HTTPException(404, "no video for this moment")
 
-    return stored_file(path, video_type(path))
+    return redirect_to_stored(path, video_type(path))
 
 
 @router.get("/moments/{moment_id}/video/link")
@@ -217,4 +217,4 @@ def image(path: str) -> Response:
     if not file.is_relative_to(MOMENTS_DIR) or file.suffix != ".jpg":
         raise HTTPException(404, "no such image")
 
-    return stored_file(file, "image/jpeg")
+    return redirect_to_stored(file, "image/jpeg")

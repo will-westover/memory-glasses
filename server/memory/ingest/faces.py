@@ -13,24 +13,24 @@ from memory import db, storage
 from memory.config import DATA_DIR, SERVER_DIR
 
 MODELS_DIR = SERVER_DIR / "models"
-DETECTOR = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
-RECOGNIZER = MODELS_DIR / "face_recognition_sface_2021dec.onnx"
+DETECTOR_MODEL = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
+RECOGNIZER_MODEL = MODELS_DIR / "face_recognition_sface_2021dec.onnx"
 
-MIN_SCORE = 0.85
+MIN_DETECTION_SCORE = 0.85
 MIN_FACE_PIXELS = 40
-SAME_PERSON = 0.363
+SAME_PERSON_SIMILARITY = 0.363
 MIN_EYE_SPAN = 0.3
 MAX_NOSE_OFFSET = 0.5
 
 
 def load_models():
     """Return the face detector and the face recognizer."""
-    for path in (DETECTOR, RECOGNIZER):
+    for path in (DETECTOR_MODEL, RECOGNIZER_MODEL):
         if not path.exists():
             raise SystemExit(f"error: missing {path}. Download it from github.com/opencv/opencv_zoo")
 
-    detector = cv2.FaceDetectorYN.create(str(DETECTOR), "", (320, 320), MIN_SCORE)
-    recognizer = cv2.FaceRecognizerSF.create(str(RECOGNIZER), "")
+    detector = cv2.FaceDetectorYN.create(str(DETECTOR_MODEL), "", (320, 320), MIN_DETECTION_SCORE)
+    recognizer = cv2.FaceRecognizerSF.create(str(RECOGNIZER_MODEL), "")
 
     return detector, recognizer
 
@@ -66,7 +66,9 @@ def faces_in(image, detector, recognizer) -> list[tuple]:
     return found
 
 
-def best_match(embedding: np.ndarray, people: dict[int, np.ndarray], threshold: float = SAME_PERSON) -> int | None:
+def best_match(
+    embedding: np.ndarray, people: dict[int, np.ndarray], threshold: float = SAME_PERSON_SIMILARITY
+) -> int | None:
     """Return the person whose average face is most similar, if similar enough to be the same person."""
     best, best_score = None, threshold
 
@@ -100,7 +102,7 @@ def find_faces(conn, moment_id: str) -> dict[str, int]:
     frames = db.frame_images(conn, moment_id)
 
     db.clear_faces(conn, moment_id)
-    people = db.person_centres(conn)
+    people = db.person_embedding_sums(conn)
     counts = {"frames": len(frames), "faces": 0, "new_people": 0, "skipped": 0}
 
     found = [(frame_id, face) for frame_id, image in images(frames) for face in faces_in(image, detector, recognizer)]

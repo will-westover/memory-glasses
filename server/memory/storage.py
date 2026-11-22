@@ -10,9 +10,9 @@ import sys
 from functools import cache
 from pathlib import Path
 
-from memory.config import DATA_DIR, require
+from memory.config import DATA_DIR, require_env
 
-SYNCED = ("moments", "places", "glasses", "uploads", "evals")
+SYNCED_FOLDERS = ("moments", "places", "glasses", "uploads", "evals")
 
 
 @cache
@@ -22,26 +22,26 @@ def bucket():
 
     s3 = boto3.resource(
         "s3",
-        endpoint_url=f"https://{require('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
-        aws_access_key_id=require("R2_ACCESS_KEY_ID"),
-        aws_secret_access_key=require("R2_SECRET_ACCESS_KEY"),
+        endpoint_url=f"https://{require_env('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
+        aws_access_key_id=require_env("R2_ACCESS_KEY_ID"),
+        aws_secret_access_key=require_env("R2_SECRET_ACCESS_KEY"),
         region_name="auto",
     )
 
-    return s3.Bucket(require("R2_BUCKET"))
+    return s3.Bucket(require_env("R2_BUCKET"))
 
 
-def key(path: Path) -> str:
+def bucket_key(path: Path) -> str:
     """Return the bucket key for a path inside the data folder."""
     return Path(os.path.abspath(path)).relative_to(Path(os.path.abspath(DATA_DIR))).as_posix()
 
 
-def path_of(name: str) -> Path:
+def local_path(name: str) -> Path:
     """Return the local path for a bucket key."""
     return DATA_DIR / name
 
 
-def listing(prefix: str) -> dict[str, dict]:
+def list_keys(prefix: str) -> dict[str, dict]:
     """Return every key under a prefix with its size and when it was last written (seconds since 1970)."""
     return {
         item.key: {"size": item.size, "modified": item.last_modified.timestamp()}
@@ -56,22 +56,22 @@ def download(name: str, target: Path) -> None:
     partial.replace(target)
 
 
-def local(path: Path) -> Path | None:
+def local_copy(path: Path) -> Path | None:
     """Return the path once the file is present locally, downloading it from R2 if needed, or None if it isn't kept."""
     if path.is_file():
         return path
 
     try:
-        download(key(path), path)
+        download(bucket_key(path), path)
     except Exception as error:
-        if missing(error):
+        if is_not_found(error):
             return None
         raise
 
     return path
 
 
-def missing(error: Exception) -> bool:
+def is_not_found(error: Exception) -> bool:
     return getattr(error, "response", {}).get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound")
 
 
@@ -81,9 +81,9 @@ def exists(path: Path) -> bool:
         return True
 
     try:
-        bucket().Object(key(path)).load()
+        bucket().Object(bucket_key(path)).load()
     except Exception as error:
-        if missing(error):
+        if is_not_found(error):
             return False
         raise
 
@@ -92,10 +92,10 @@ def exists(path: Path) -> bool:
 
 def fetch_folder(folder: Path, videos: bool = False) -> None:
     """Download every file of a folder that isn't present locally, leaving out its video unless asked."""
-    prefix = key(folder) + "/"
+    prefix = bucket_key(folder) + "/"
 
-    for name in listing(prefix):
-        target = path_of(name)
+    for name in list_keys(prefix):
+        target = local_path(name)
 
         if target.is_file() or (not videos and target.stem == "video"):
             continue
@@ -106,14 +106,14 @@ def fetch_folder(folder: Path, videos: bool = False) -> None:
 def save(path: Path) -> None:
     """Upload a file to R2."""
     if path.is_file():
-        bucket().upload_file(str(path), key(path))
+        bucket().upload_file(str(path), bucket_key(path))
 
 
 def mirror(folder: Path) -> None:
     """Make R2 hold exactly the folder's files: upload new or changed ones and delete ones no longer there."""
-    prefix = key(folder) + "/"
-    remote = listing(prefix)
-    files = {key(path): path for path in folder.rglob("*") if path.is_file()}
+    prefix = bucket_key(folder) + "/"
+    remote = list_keys(prefix)
+    files = {bucket_key(path): path for path in folder.rglob("*") if path.is_file()}
 
     for name, path in files.items():
         if remote.get(name, {}).get("size") != path.stat().st_size:
@@ -128,7 +128,7 @@ def mirror(folder: Path) -> None:
 def copy(source: Path, target: Path) -> None:
     """Copy a file R2 already holds to another key inside R2, so it needn't be sent again."""
     try:
-        source_key, target_key = key(source), key(target)
+        source_key, target_key = bucket_key(source), bucket_key(target)
     except ValueError:
         return
 
@@ -138,28 +138,28 @@ def copy(source: Path, target: Path) -> None:
     try:
         bucket().Object(target_key).copy_from(CopySource={"Bucket": bucket().name, "Key": source_key})
     except Exception as error:
-        if not missing(error):
+        if not is_not_found(error):
             raise
 
 
-def size(path: Path) -> int | None:
+def stored_size(path: Path) -> int | None:
     """Return a file's size in R2, or None if R2 doesn't hold it."""
     try:
-        return bucket().Object(key(path)).content_length
+        return bucket().Object(bucket_key(path)).content_length
     except Exception as error:
-        if missing(error):
+        if is_not_found(error):
             return None
         raise
 
 
-def delete(path: Path) -> None:
+def delete_file(path: Path) -> None:
     """Delete one file from R2."""
-    bucket().Object(key(path)).delete()
+    bucket().Object(bucket_key(path)).delete()
 
 
 def download_url(path: Path, media_type: str | None = None, seconds: int = 900) -> str:
     """Return a short-lived link that reads a file straight from R2."""
-    params = {"Bucket": bucket().name, "Key": key(path)}
+    params = {"Bucket": bucket().name, "Key": bucket_key(path)}
 
     if media_type:
         params["ResponseContentType"] = media_type
@@ -170,33 +170,33 @@ def download_url(path: Path, media_type: str | None = None, seconds: int = 900) 
 def upload_url(path: Path, seconds: int = 3600) -> str:
     """Return a short-lived link that writes a file straight into R2 with PUT."""
     return bucket().meta.client.generate_presigned_url(
-        "put_object", Params={"Bucket": bucket().name, "Key": key(path)}, ExpiresIn=seconds
+        "put_object", Params={"Bucket": bucket().name, "Key": bucket_key(path)}, ExpiresIn=seconds
     )
 
 
-def remove(folder: Path) -> None:
+def delete_folder(folder: Path) -> None:
     """Delete a folder's files from R2."""
-    bucket().objects.filter(Prefix=key(folder) + "/").delete()
+    bucket().objects.filter(Prefix=bucket_key(folder) + "/").delete()
 
 
 def local_files() -> dict[str, int]:
     """Return every synced local file's key and size."""
     files = {}
 
-    for top in SYNCED:
+    for top in SYNCED_FOLDERS:
         for path in (DATA_DIR / top).rglob("*"):
             if (
                 path.is_file()
                 and not path.name.endswith(".part")
                 and not any(".building" in part for part in path.parts)
             ):
-                files[key(path)] = path.stat().st_size
+                files[bucket_key(path)] = path.stat().st_size
 
     return files
 
 
 def remote_files() -> dict[str, int]:
-    return {name: item["size"] for top in SYNCED for name, item in listing(top + "/").items()}
+    return {name: item["size"] for top in SYNCED_FOLDERS for name, item in list_keys(top + "/").items()}
 
 
 def sync() -> None:
@@ -204,7 +204,7 @@ def sync() -> None:
     unsent = [name for name, size in files.items() if remote.get(name) != size]
 
     for number, name in enumerate(unsent, 1):
-        bucket().upload_file(str(path_of(name)), name)
+        bucket().upload_file(str(local_path(name)), name)
 
         if number % 100 == 0:
             print(f"  {number} of {len(unsent)}…")

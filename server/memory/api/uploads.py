@@ -40,7 +40,7 @@ def finish_upload(job_id: UUID, conn: psycopg.Connection = Depends(connection)) 
         raise HTTPException(409, "the video hasn't arrived yet")
 
     db.update_job(conn, job_id, status="processing", step=None)
-    jobs.start(conn, job_id)
+    jobs.start_job(conn, job_id)
 
     return {"id": job_id, "status": "processing"}
 

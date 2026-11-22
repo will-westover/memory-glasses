@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from memory import db, storage
-from memory.config import FRAMES_PER_MINUTE, STRETCH_SECONDS
+from memory.config import FRAMES_PER_MINUTE, SUMMARY_STRETCH_SECONDS
 from memory.ingest.facts import first_sentence
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 
@@ -21,7 +21,7 @@ MAX_CLIP_SECONDS = 120
 EXTRA_FILES = {"poses": "poses.json", "mesh": "mesh.obj", "world_map": "world.map"}
 
 
-RECORDING_ID = re.compile(r"^[A-Za-z0-9-]{1,40}$")
+RECORDING_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 
 
 MAX_FRAME_BYTES = 2_000_000
@@ -30,7 +30,7 @@ MAX_FRAME_BYTES = 2_000_000
 MIN_DISPLAY_SCALE = 0.3
 
 
-SENDING_SECONDS = 20
+STILL_SENDING_SECONDS = 20
 
 
 class ChatQuestion(BaseModel):
@@ -119,7 +119,7 @@ def fact_json(fact: dict, details: dict | None = None) -> dict:
     end = details.get("end_seconds") if speech else None
 
     if fact["kind"] == "summary":
-        end = fact["offset_seconds"] + STRETCH_SECONDS
+        end = fact["offset_seconds"] + SUMMARY_STRETCH_SECONDS
 
     return {
         "id": fact["id"],
@@ -162,7 +162,7 @@ def frame_json(frame: dict) -> dict:
     }
 
 
-def stored_file(file, media_type: str | None) -> Response:
+def redirect_to_stored(file, media_type: str | None) -> Response:
     """Send a kept file as a redirect to a short-lived R2 link."""
     return RedirectResponse(storage.download_url(file, media_type), status_code=307)
 

@@ -2,7 +2,7 @@
 
 import psycopg
 
-from memory.db.moments import FIRST_LOCATION
+from memory.db.moments import FIRST_LOCATION_JOIN
 
 
 def gps_places(conn: psycopg.Connection) -> list[tuple]:
@@ -43,7 +43,7 @@ def located_moments(conn: psycopg.Connection) -> list[dict]:
     """Return every moment that has a location, newest first, with where it started and its place if known."""
     rows = conn.execute(
         "select s.id, s.source, s.started_at, s.duration_seconds, l.lat, l.lon, p.id, p.name"
-        f"  from moment s{FIRST_LOCATION}"
+        f"  from moment s{FIRST_LOCATION_JOIN}"
         "  left join lateral (select place_id from segment where segment.moment_id = s.id order by start_at limit 1) g"
         "    on true"
         "  left join place p on p.id = g.place_id"
@@ -215,7 +215,7 @@ def mapped_frames(conn: psycopg.Connection, place_id: int, moment_id: str) -> li
     ).fetchall()
 
 
-def drop_empty(conn: psycopg.Connection) -> None:
+def drop_unused_rooms_and_places(conn: psycopg.Connection) -> None:
     """Delete rooms no frame is in and places nothing happened at, unless the user named them."""
     conn.execute("delete from room r where not r.named and not exists (select 1 from frame f where f.room_id = r.id)")
     conn.execute(

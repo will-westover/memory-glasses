@@ -13,7 +13,7 @@ from memory.api.shared import Merge, PersonName, connection
 router = APIRouter()
 
 
-FACE_MARGIN = 0.35
+FACE_CROP_MARGIN = 0.35
 
 
 def person_json(person: dict) -> dict:
@@ -73,7 +73,7 @@ def forget_person(person_id: int, conn: psycopg.Connection = Depends(connection)
 def face(face_id: int, conn: psycopg.Connection = Depends(connection)) -> Response:
     """Return one face, cropped from its photo with a little margin, as JPEG."""
     found = db.face_crop(conn, face_id)
-    photo = storage.local(DATA_DIR / found[0]) if found else None
+    photo = storage.local_copy(DATA_DIR / found[0]) if found else None
     image = cv2.imread(str(photo)) if photo else None
 
     if image is None:
@@ -81,8 +81,8 @@ def face(face_id: int, conn: psycopg.Connection = Depends(connection)) -> Respon
 
     _, x, y, w, h = found
     height, width = image.shape[:2]
-    left, top = max(0, int((x - w * FACE_MARGIN) * width)), max(0, int((y - h * FACE_MARGIN) * height))
-    right, bottom = int((x + w * (1 + FACE_MARGIN)) * width), int((y + h * (1 + FACE_MARGIN)) * height)
+    left, top = max(0, int((x - w * FACE_CROP_MARGIN) * width)), max(0, int((y - h * FACE_CROP_MARGIN) * height))
+    right, bottom = int((x + w * (1 + FACE_CROP_MARGIN)) * width), int((y + h * (1 + FACE_CROP_MARGIN)) * height)
 
     _, jpeg = cv2.imencode(".jpg", image[top:bottom, left:right])
 

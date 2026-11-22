@@ -5,29 +5,29 @@ import sys
 from datetime import datetime
 
 from memory import db, llm
-from memory.config import clock
+from memory.config import minutes_seconds
 
-CANDIDATES = 20
+CANDIDATES_PER_RANKING = 20
 
 FUSION_K = 60
 
-IN_RANGE = """
+IN_RANGE_SQL = """
     (%(start)s::timestamptz is null or at >= %(start)s::timestamptz)
     and (%(end)s::timestamptz is null or at <= %(end)s::timestamptz)
     and (%(moments)s::text[] is null or moment_id = any(%(moments)s::text[]))
 """
 
-BY_MEANING = f"""
+BY_MEANING_SQL = f"""
     select id from fact
-     where embedding is not null and {IN_RANGE}
+     where embedding is not null and {IN_RANGE_SQL}
      order by embedding <=> %(vector)s::vector
      limit %(limit)s
 """
 
-BY_KEYWORD = f"""
+BY_KEYWORD_SQL = f"""
     with words as (select replace(plainto_tsquery('english', %(text)s)::text, '&', '|')::tsquery as query)
     select id from fact, words
-     where text_search @@ words.query and {IN_RANGE}
+     where text_search @@ words.query and {IN_RANGE_SQL}
      order by ts_rank(text_search, words.query) desc
      limit %(limit)s
 """
@@ -54,13 +54,20 @@ def search(
 ) -> list[dict]:
     """Return the facts that best match a question, best first, from only the given moments when some are named."""
     vector = llm.embed(conn, [question], "embed-question")[0]
-    values = {"vector": vector, "text": question, "limit": CANDIDATES, "start": start, "end": end, "moments": moments}
+    values = {
+        "vector": vector,
+        "text": question,
+        "limit": CANDIDATES_PER_RANKING,
+        "start": start,
+        "end": end,
+        "moments": moments,
+    }
 
     if start or end or moments:
         conn.execute("set local hnsw.iterative_scan = relaxed_order")
 
-    by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING, values)]
-    by_keyword = [fact_id for (fact_id,) in conn.execute(BY_KEYWORD, values)]
+    by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING_SQL, values)]
+    by_keyword = [fact_id for (fact_id,) in conn.execute(BY_KEYWORD_SQL, values)]
 
     ranked = fuse([by_meaning, by_keyword])[:limit]
     details = {fact["id"]: fact for fact in db.facts_by_id(conn, [fact_id for fact_id, _ in ranked])}
@@ -79,7 +86,9 @@ def print_results(results: list[dict]) -> None:
     for position, result in enumerate(results, start=1):
         matched = " + ".join(result["matched"])
 
-        print(f"{position}. {result['kind']:<6} {clock(result['offset_seconds']):>5}  [{matched}]  {result['text']}")
+        print(
+            f"{position}. {result['kind']:<6} {minutes_seconds(result['offset_seconds']):>5}  [{matched}]  {result['text']}"
+        )
 
         if result["image_path"]:
             print(f"   {result['image_path']}")

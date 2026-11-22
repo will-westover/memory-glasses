@@ -1,4 +1,4 @@
-from memory.evals import by_kind, retrieved, summarise
+from memory.evals import by_kind, mentions_evidence, mode_scores
 
 
 def row(verdict, expected="Four.", supported=True, hit=True):
@@ -19,8 +19,8 @@ def row(verdict, expected="Four.", supported=True, hit=True):
 def test_retrieved_ignores_case_and_needs_one_phrase():
     shown = [{"text": "A: In this module we have Four Crew Quarters."}]
 
-    assert retrieved(["four crew quarters", "something else"], shown)
-    assert not retrieved(["telephone box"], shown)
+    assert mentions_evidence(["four crew quarters", "something else"], shown)
+    assert not mentions_evidence(["telephone box"], shown)
 
 
 def test_scores_split_answerable_from_unanswerable():
@@ -31,7 +31,7 @@ def test_scores_split_answerable_from_unanswerable():
         row("correct", expected=None, hit=None),
     ]
 
-    totals = summarise(rows)
+    totals = mode_scores(rows)
 
     assert totals["score"] == 0.625
     assert totals["answerable"] == 0.75

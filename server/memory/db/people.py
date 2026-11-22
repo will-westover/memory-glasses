@@ -15,7 +15,7 @@ def clear_faces(conn: psycopg.Connection, moment_id: str) -> None:
     conn.execute("delete from face where frame_id in (select id from frame where moment_id = %s)", (moment_id,))
 
 
-def person_centres(conn: psycopg.Connection) -> dict:
+def person_embedding_sums(conn: psycopg.Connection) -> dict:
     """Return each person's summed face embedding, keyed by person id."""
     import numpy as np
 

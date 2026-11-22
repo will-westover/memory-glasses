@@ -32,7 +32,7 @@ class IngestError(Exception):
     """The recording could not be turned into a moment."""
 
 
-def run(command: list[str], cwd: Path | None = None) -> bytes:
+def run_command(command: list[str], cwd: Path | None = None) -> bytes:
     """Run a command and return what it printed."""
     result = subprocess.run(command, capture_output=True, cwd=cwd)
 
@@ -44,7 +44,9 @@ def run(command: list[str], cwd: Path | None = None) -> bytes:
 
 def video_info(video: Path) -> dict:
     """Return what ffprobe reports about a video."""
-    return json.loads(run(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(video)]))
+    return json.loads(
+        run_command(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(video)])
+    )
 
 
 def duration(info: dict) -> float:
@@ -101,7 +103,7 @@ def filter_graph(seconds_per_frame: float) -> str:
 def sample_video(video: Path, frames_dir: Path, seconds_per_frame: float) -> tuple[bytes, list[float], list[float]]:
     """Write the candidate JPEGs and return the thumbnails and the two detail measurements."""
     with tempfile.TemporaryDirectory() as scratch:
-        run(
+        run_command(
             [
                 "ffmpeg",
                 "-v",
@@ -158,7 +160,7 @@ def extract_candidates(video: Path, frames_dir: Path, seconds_per_frame: float) 
 
 def extract_audio(video: Path, audio_path: Path) -> None:
     """Write the recording's sound as a mono 16 kHz WAV file."""
-    run(
+    run_command(
         [
             "ffmpeg",
             "-v",
@@ -195,7 +197,7 @@ def keep_video(video: Path, folder: Path) -> str:
         keep_file(video, folder / name)
         return name
 
-    run(
+    run_command(
         [
             "ffmpeg",
             "-v",
@@ -228,7 +230,7 @@ def build_moment(
     max_distance: int,
     max_blur: float,
     extras: dict[str, Path],
-    reuse: list[dict],
+    reusable_frames: list[dict],
     source: str,
 ) -> None:
     """Fill a folder with the moment's video, kept frames, audio, extra files, manifest and page."""
@@ -242,7 +244,7 @@ def build_moment(
     candidates = sorted(frames_dir.glob("*.jpg"))
 
     sampled, usable, picks = choose_frames(
-        fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates, reuse
+        fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates, reusable_frames
     )
     frames = keep_frames(frames_dir, picks, candidates, started)
     poses = load_poses(extras["poses.json"]) if "poses.json" in extras else []
@@ -297,14 +299,14 @@ def slot_picks(
     blur: list,
     seconds_per_frame: float,
     candidates: list[Path],
-    reuse: list[dict],
+    reusable_frames: list[dict],
 ) -> list[dict]:
     """Return one frame per slot: a frame already kept inside the slot if there is one, else the sharpest sample."""
     picks = []
 
     for slot, index in enumerate(slots):
         start, end = slot * seconds_per_frame, (slot + 1) * seconds_per_frame
-        existing = next((frame for frame in reuse if start <= frame["offset_seconds"] < end), None)
+        existing = next((frame for frame in reusable_frames if start <= frame["offset_seconds"] < end), None)
 
         if existing:
             picks.append(
@@ -335,11 +337,11 @@ def choose_frames(
     max_distance: int,
     max_blur: float,
     candidates: list[Path],
-    reuse: list[dict],
+    reusable_frames: list[dict],
 ) -> tuple[int, int, list[dict]]:
     """Return how many slots there were, how many had a usable frame, and the frames to keep."""
     slots = sharpest_per_slot(blur, CANDIDATES_PER_SLOT, max_blur)
-    picks = slot_picks(slots, fingerprints, blur, seconds_per_frame, candidates, reuse)
+    picks = slot_picks(slots, fingerprints, blur, seconds_per_frame, candidates, reusable_frames)
 
     different = indexes_to_keep([pick["fingerprint"] for pick in picks], max_distance)
 
@@ -374,8 +376,8 @@ def keep_frames(frames_dir: Path, picks: list[dict], candidates: list[Path], sta
     return frames
 
 
-def kept_frames(moment_dir: Path) -> list[dict]:
-    """Return a moment's current frames with their file paths, to reuse when it's rebuilt at another rate."""
+def frames_to_reuse(moment_dir: Path) -> list[dict]:
+    """Return a moment's current frames with their file paths, to reusable_frames when it's rebuilt at another rate."""
     manifest = moment_dir / "manifest.json"
 
     if not manifest.is_file():
@@ -391,7 +393,7 @@ def kept_frames(moment_dir: Path) -> list[dict]:
 def planned_frames(
     video: Path,
     frames_per_minute: float,
-    reuse: list[dict] | None = None,
+    reusable_frames: list[dict] | None = None,
     max_distance: int = DEFAULT_MAX_DISTANCE,
     max_blur: float = DEFAULT_MAX_BLUR,
 ) -> list[dict]:
@@ -408,7 +410,7 @@ def planned_frames(
         candidates = sorted(frames_dir.glob("*.jpg"))
 
         _, _, picks = choose_frames(
-            fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates, reuse or []
+            fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates, reusable_frames or []
         )
 
     return [{"name": frame_name(pick["offset"]), "reused": pick["source"].parent != frames_dir} for pick in picks]
@@ -443,7 +445,7 @@ def ingest(
         raise IngestError(f"{moment_dir} already exists. Pass --replace to build it again.")
 
     shutil.rmtree(build_dir, ignore_errors=True)
-    reuse = kept_frames(moment_dir) if reuse_frames else []
+    reusable_frames = frames_to_reuse(moment_dir) if reuse_frames else []
     source = (
         source or json.loads((moment_dir / "manifest.json").read_text()).get("source", "video")
         if (moment_dir / "manifest.json").is_file()
@@ -452,7 +454,16 @@ def ingest(
 
     try:
         build_moment(
-            video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur, extras or {}, reuse, source
+            video,
+            info,
+            build_dir,
+            moment_id,
+            frames_per_minute,
+            max_distance,
+            max_blur,
+            extras or {},
+            reusable_frames,
+            source,
         )
     except Exception:
         shutil.rmtree(build_dir, ignore_errors=True)
@@ -526,7 +537,7 @@ def save_to_database(moment_dir: Path) -> None:
         print("Not saved: the database can't be reached. Check DATABASE_URL in server/.env.")
 
 
-def saved_rate() -> float:
+def saved_frames_per_minute() -> float:
     """Return the frames per minute saved in the database, or the default if it can't be read."""
     try:
         with db.connect() as conn:
@@ -541,7 +552,7 @@ def main() -> int:
     try:
         moment_dir = ingest(
             args.video,
-            frames_per_minute=saved_rate() if args.frames_per_minute is None else args.frames_per_minute,
+            frames_per_minute=saved_frames_per_minute() if args.frames_per_minute is None else args.frames_per_minute,
             max_distance=args.max_distance,
             max_blur=args.max_blur,
             replace=args.replace,

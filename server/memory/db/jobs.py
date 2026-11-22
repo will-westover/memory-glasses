@@ -49,6 +49,6 @@ def recent_jobs(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
     ]
 
 
-def jobs_processing(conn: psycopg.Connection) -> int:
+def count_processing_jobs(conn: psycopg.Connection) -> int:
     """Return how many jobs are being worked on."""
     return conn.execute("select count(*) from job where status = 'processing'").fetchone()[0]
