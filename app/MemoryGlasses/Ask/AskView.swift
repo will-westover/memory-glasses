@@ -36,7 +36,9 @@ struct AskView: View {
 
     @ViewBuilder
     private func chats(_ groups: [ConversationGroup]) -> some View {
-        if groups.isEmpty {
+        if !store.loaded {
+            PlaceholderRows(count: 8, image: false)
+        } else if groups.isEmpty {
             emptyList
         } else {
             List {

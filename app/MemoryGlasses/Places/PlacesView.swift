@@ -9,7 +9,9 @@ struct PlacesView: View {
         Group {
             if let problem {
                 ServerProblem(message: problem, retry: load)
-            } else if loaded && places.isEmpty {
+            } else if !loaded {
+                ProgressView()
+            } else if places.isEmpty {
                 ContentUnavailableView("No places yet", systemImage: "house",
                                        description: Text("Places and their rooms appear here after a recording is processed."))
             } else {

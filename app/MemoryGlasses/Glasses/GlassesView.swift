@@ -8,6 +8,8 @@ struct GlassesView: View {
     @State private var glassesStatus: GlassesStatus?
     @State private var serverMessage = "Checking…"
     @State private var serverReachable = false
+    @State private var settingsLoaded = false
+    @State private var savedRecording: Bool?
     @State private var people: [Person] = []
     @State private var places: [Place] = []
 
@@ -20,6 +22,8 @@ struct GlassesView: View {
                 Section {
                     GlassesStatusCard(activity: activity, detail: activityDetail, photos: photos, lastUpload: link.lastUpload,
                                       canRecord: serverReachable, recording: $settings.recording)
+                        .redacted(reason: settingsLoaded ? [] : .placeholder)
+                        .disabled(!settingsLoaded)
                 }
 
                 Section {
@@ -54,7 +58,8 @@ struct GlassesView: View {
                         }
                         .accessibilityLabel("Pictures a minute")
                     }
-                    .disabled(!serverReachable)
+                    .redacted(reason: settingsLoaded ? [] : .placeholder)
+                    .disabled(!serverReachable || !settingsLoaded)
                 } header: {
                     InfoHeader(title: "Camera", text: "How often the glasses take a picture. More pictures remember more and cost more to describe. Pictures that look the same as the last one are skipped.")
                 }
@@ -63,6 +68,7 @@ struct GlassesView: View {
                     HStack(spacing: 14) {
                         GlassesDisplayPreview(settings: settings, lines: displayLines)
                             .frame(width: 96)
+                            .opacity(settingsLoaded ? 1 : 0.3)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Showing now")
@@ -117,7 +123,9 @@ struct GlassesView: View {
             .task(id: address + token) { await load() }
             .task(id: address + token) { await watchGlasses() }
             .task { await GlassesLink.shared.checkForUpdate() }
-            .onChange(of: settings.recording) { Task { await save() } }
+            .onChange(of: settings.recording) { _, new in
+                if settingsLoaded && new != savedRecording { Task { await save() } }
+            }
         }
     }
 
@@ -184,6 +192,8 @@ struct GlassesView: View {
     private func load() async {
         do {
             settings = try await API.current.get("/settings")
+            savedRecording = settings.recording
+            settingsLoaded = true
             serverReachable = true
             serverMessage = "Connected"
         } catch {
@@ -199,6 +209,7 @@ struct GlassesView: View {
     private func save() async {
         do {
             settings = try await API.current.send("/settings", method: "PUT", body: settings)
+            savedRecording = settings.recording
             link.applySettings(settings)
             serverMessage = "Saved"
         } catch {

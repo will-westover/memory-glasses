@@ -89,6 +89,7 @@ final class ConversationStore {
     private(set) var turns: [UUID: [Turn]] = [:]
     private(set) var frameContexts: [UUID: FrameContext] = [:]
     private(set) var problem: String?
+    private(set) var loaded = false
     private var query = ""
 
     func refresh() async {
@@ -110,6 +111,8 @@ final class ConversationStore {
         } catch {
             problem = error.localizedDescription
         }
+
+        loaded = true
     }
 
     func load(_ id: UUID) async {

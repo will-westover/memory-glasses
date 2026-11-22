@@ -110,8 +110,12 @@ struct GlassesStatusCard: View {
 
                 Spacer()
 
-                Button("Check for updates") { Task { await link.checkForUpdate() } }
-                    .font(.footnote)
+                if link.isCheckingForUpdate {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Button("Check for updates") { Task { await link.checkForUpdate() } }
+                        .font(.footnote)
+                }
             }
         }
     }

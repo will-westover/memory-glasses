@@ -52,6 +52,7 @@ struct FrameImage: View {
     let path: String?
 
     @State private var image: UIImage?
+    @State private var failed = false
 
     private static let cache = NSCache<NSString, UIImage>()
 
@@ -63,6 +64,14 @@ struct FrameImage: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
+                        .transition(.opacity)
+                } else if failed {
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .font(.footnote)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityLabel("Photo didn't load")
+                } else if path != nil {
+                    Shimmer()
                 }
             }
             .clipped()
@@ -77,10 +86,66 @@ struct FrameImage: View {
             return
         }
 
-        guard let data = try? await API.current.download(path), let loaded = UIImage(data: data) else { return }
+        failed = false
+
+        guard let data = try? await API.current.download(path), let loaded = UIImage(data: data) else {
+            if !Task.isCancelled { failed = true }
+            return
+        }
 
         Self.cache.setObject(loaded, forKey: path as NSString)
-        image = loaded
+        withAnimation(.easeOut(duration: 0.2)) { image = loaded }
+    }
+}
+
+struct Shimmer: View {
+    @State private var moving = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { space in
+            LinearGradient(colors: [.clear, Color.primary.opacity(0.06), .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(width: space.size.width * 0.8)
+                .offset(x: moving ? space.size.width : -space.size.width * 0.8)
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+
+            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) { moving = true }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+struct PlaceholderRows: View {
+    var count = 6
+    var image = true
+
+    var body: some View {
+        List(0..<count, id: \.self) { _ in
+            HStack(spacing: 14) {
+                if image {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.tertiarySystemFill))
+                        .frame(width: 56, height: 56)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("A moment from earlier today")
+                        .font(.body.weight(.medium))
+
+                    Text("Home · 2:31 · 40 frames")
+                        .font(.subheadline)
+                }
+            }
+            .padding(.vertical, 4)
+            .redacted(reason: .placeholder)
+            .overlay { Shimmer() }
+            .listRowSeparator(.hidden)
+        }
+        .listStyle(.plain)
+        .scrollDisabled(true)
+        .accessibilityLabel("Loading")
     }
 }
 

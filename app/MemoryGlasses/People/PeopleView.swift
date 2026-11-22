@@ -47,7 +47,9 @@ struct PeopleView: View {
         Group {
             if let problem {
                 ServerProblem(message: problem, retry: load)
-            } else if loaded && people.isEmpty {
+            } else if !loaded {
+                ProgressView()
+            } else if people.isEmpty {
                 ContentUnavailableView("No faces yet", systemImage: "person.crop.circle",
                                        description: Text("Run the faces step on a recording."))
             } else {
@@ -100,6 +102,7 @@ struct PersonView: View {
     @State private var name = ""
     @State private var status: String?
     @State private var confirmingForget = false
+    @State private var working = false
 
     var body: some View {
         Form {
@@ -135,12 +138,23 @@ struct PersonView: View {
                             }
                         }
                         .buttonStyle(.plain)
+                        .disabled(working)
                     }
                 }
             }
 
             Section {
-                Button("Forget this person", role: .destructive) { confirmingForget = true }
+                Button(role: .destructive) { confirmingForget = true } label: {
+                    HStack {
+                        Text("Forget this person")
+
+                        if working {
+                            Spacer()
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                }
+                .disabled(working)
             } footer: {
                 Text("Deletes every face of them. Their photos stay.")
             }
@@ -168,6 +182,9 @@ struct PersonView: View {
     }
 
     private func merge(into other: Person) async {
+        working = true
+        defer { working = false }
+
         do {
             let _: EmptyReply = try await API.current.send("/people/\(person.id)/merge", method: "POST", body: MergeRequest(into: other.id))
             dismiss()
@@ -177,6 +194,9 @@ struct PersonView: View {
     }
 
     private func forget() async {
+        working = true
+        defer { working = false }
+
         do {
             try await API.current.delete("/people/\(person.id)")
             dismiss()

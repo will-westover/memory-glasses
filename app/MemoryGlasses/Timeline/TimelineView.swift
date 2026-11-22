@@ -21,7 +21,9 @@ struct TimelineView: View {
                     ServerProblem(message: problem, retry: load)
                 } else if !query.isEmpty {
                     SearchResults(query: query, results: results, moments: moments, searching: searching)
-                } else if loaded && moments.isEmpty {
+                } else if !loaded {
+                    PlaceholderRows()
+                } else if moments.isEmpty {
                     ContentUnavailableView("Nothing recorded yet", systemImage: "clock")
                 } else {
                     List {
@@ -180,6 +182,8 @@ struct UploadRow: View {
     let upload: UploadStatus
     let retry: () async -> Void
 
+    @State private var retrying = false
+
     var body: some View {
         HStack(spacing: 14) {
             ZStack {
@@ -208,8 +212,17 @@ struct UploadRow: View {
             if upload.status == "failed" {
                 Spacer()
 
-                Button("Try again") { Task { await retry() } }
-                    .buttonStyle(.bordered)
+                Button {
+                    Task {
+                        retrying = true
+                        await retry()
+                        retrying = false
+                    }
+                } label: {
+                    if retrying { ProgressView().controlSize(.small) } else { Text("Try again") }
+                }
+                .buttonStyle(.bordered)
+                .disabled(retrying)
             }
         }
         .padding(.vertical, 4)
