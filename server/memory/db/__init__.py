@@ -10,3 +10,4 @@ from memory.db.costs import *
 from memory.db.jobs import *
 from memory.db.settings import *
 from memory.db.recordings import *
+from memory.db.world import *

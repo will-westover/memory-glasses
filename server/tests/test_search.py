@@ -21,21 +21,20 @@ def test_empty_lists_give_no_results():
     assert fuse([[], []]) == []
 
 
-def test_one_stretch_gives_at_most_two_facts_of_each_kind():
-    def fact(fact_id, kind, offset, moment="m"):
-        return {"id": fact_id, "kind": kind, "offset_seconds": offset, "moment_id": moment}
+def test_one_scene_gives_one_fact_per_thing_and_two_of_each_other_kind():
+    def fact(fact_id, kind, scene, entity=None):
+        return {"id": fact_id, "kind": kind, "moment_id": "m", "episode_id": scene, "entity_id": entity}
 
     facts = [
-        fact(1, "object", 1),
-        fact(2, "object", 2),
-        fact(3, "object", 3),
-        fact(4, "person", 4),
-        fact(5, "object", 70),
+        fact(1, "object", 10, entity=7),
+        fact(2, "object", 10, entity=7),
+        fact(3, "object", 11, entity=7),
+        fact(4, "frame", 10),
+        fact(5, "frame", 10),
+        fact(6, "frame", 10),
     ]
 
-    kept = spread(facts, {"m": [0.0, 60.0]}, limit=10)
-
-    assert [item["id"] for item in kept] == [1, 2, 4, 5]
+    assert [item["id"] for item in spread(facts, limit=10)] == [1, 3, 4, 5]
 
 
 def test_a_window_time_without_an_offset_is_local_and_bad_text_is_none():

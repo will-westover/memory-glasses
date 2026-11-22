@@ -62,6 +62,7 @@ struct StepLine: View {
         case "nearby": "scope"
         case "answer": "text.bubble"
         case "when": "calendar"
+        case "entity": "cube"
         default: "sparkle"
         }
     }

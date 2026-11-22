@@ -10,8 +10,8 @@ def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], v
 
     with conn.cursor() as cursor:
         cursor.executemany(
-            "insert into fact (moment_id, frame_id, kind, at, offset_seconds, end_offset_seconds, text, title, embedding)"
-            " values (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector) returning id",
+            "insert into fact (moment_id, frame_id, kind, at, offset_seconds, end_offset_seconds, text, title, embedding,"
+            " entity_id, episode_id) values (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s) returning id",
             [
                 (
                     moment_id,
@@ -23,6 +23,8 @@ def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], v
                     fact["text"],
                     fact.get("title"),
                     vector,
+                    fact.get("entity_id"),
+                    fact.get("episode_id"),
                 )
                 for fact, vector in zip(facts, vectors)
             ],
@@ -46,7 +48,7 @@ FACT_SELECT = (
     "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds,"
     "       coalesce(fact.end_offset_seconds, fact.offset_seconds), fact.text,"
     "       coalesce(frame.image_path, best.image_path, closest.image_path), frame.x, frame.z, room.name,"
-    "       fact.frame_id"
+    "       fact.frame_id, fact.entity_id, fact.episode_id"
     "  from fact left join frame on frame.id = fact.frame_id"
     "  join moment on moment.id = fact.moment_id left join room on room.id = frame.room_id"
     "  left join lateral ("
@@ -82,8 +84,10 @@ def fact_rows(rows) -> list[dict]:
             "position": [x, z] if x is not None else None,
             "room": room,
             "frame_id": frame_id,
+            "entity_id": entity_id,
+            "episode_id": episode_id,
         }
-        for fact_id, kind, at, moment_id, offset, end, text, image_path, x, z, room, frame_id in rows
+        for fact_id, kind, at, moment_id, offset, end, text, image_path, x, z, room, frame_id, entity_id, episode_id in rows
     ]
 
 
@@ -104,6 +108,17 @@ def nearby_facts(conn: psycopg.Connection, fact_id: int, metres: float, limit: i
             {"id": fact_id, "metres": metres, "limit": limit},
         )
     )
+
+
+def entity_facts(conn: psycopg.Connection, fact_id: int, limit: int = 30) -> list[dict]:
+    """Return the facts about the same thing or person as one fact, across every moment, oldest first."""
+    return fact_rows(
+        conn.execute(
+            f"{FACT_SELECT} where fact.entity_id = (select entity_id from fact where id = %s)"
+            " and fact.kind in ('object', 'person') order by fact.at desc limit %s",
+            (fact_id, limit),
+        )
+    )[::-1]
 
 
 def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:

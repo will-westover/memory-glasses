@@ -58,10 +58,12 @@ Recordings:
 
 AGENT_NOTES = """
 
-You have three tools. search finds facts by what they are about. timeline lists what happened between two times,
-in order: use it for questions about a stretch of time, or about what came before or after something. nearby lists
-what was seen close to where one fact's frame was taken, across every moment recorded in the same mapped place: use
-it for questions about what was near something, or what was in the same spot another time. Facts say which room
+You have four tools. search finds facts by what they are about; when the question names a time, it looks there
+first. timeline lists what happened between two times, in order: use it for questions about a stretch of time, or
+about what came before or after something. entity lists every time the thing or person an object or person fact is
+about was seen: use it for when something was last seen, whether it was there another time, or what changed about
+it. nearby lists what was seen close to where one fact's frame was taken, across every moment recorded in the same
+mapped place: use it for what was near something. Things worn or held by a recognised person say whose. Facts say which room
 they were in when it is known, and facts from phone recordings also say where, in metres. Call them
 until you can answer. If a search finds nothing relevant, try other words before giving up. Earlier messages
 in the conversation can tell you what a follow-up question refers to, but answer only from the facts."""
@@ -118,6 +120,20 @@ TOOLS = [
                 "metres": {"type": ["number", "null"], "description": "How far around to look; 1.5 if null"},
             },
             "required": ["fact_id", "metres"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
+        "name": "entity",
+        "description": "List every time the thing or person an object or person fact is about was seen, across all "
+        "moments, oldest first: use it for when something was last seen, whether it was there another time, or what "
+        "changed about it.",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"fact_id": {"type": "integer", "description": "The number of an object or person fact"}},
+            "required": ["fact_id"],
             "additionalProperties": False,
         },
     },
@@ -224,6 +240,13 @@ def find_facts(
     conn, name: str, arguments: dict, moments: list[str] | None = None, window: tuple = (None, None)
 ) -> list[dict]:
     """Return the facts one tool call asks for; a search with no times of its own looks in the question's window."""
+    if name == "entity":
+        return [
+            fact
+            for fact in db.entity_facts(conn, arguments["fact_id"])
+            if moments is None or fact["moment_id"] in moments
+        ]
+
     if name == "nearby":
         near = db.nearby_facts(conn, arguments["fact_id"], arguments.get("metres") or NEARBY_DEFAULT_METRES)
 
@@ -321,6 +344,9 @@ def step_text(name: str, arguments: dict) -> str:
 
     if name == "timeline":
         return f"Looking at what happened from {spoken_time(arguments.get('start'))} to {spoken_time(arguments.get('end'))}"
+
+    if name == "entity":
+        return "Looking at every time one thing was seen"
 
     return "Looking at what was nearby"
 

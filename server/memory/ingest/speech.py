@@ -78,7 +78,9 @@ def speech_probabilities(samples: np.ndarray) -> np.ndarray:
 
     for index in range(windows):
         window = samples[index * VAD_WINDOW : (index + 1) * VAD_WINDOW][None, :]
-        output, state = model.run(None, {"input": np.concatenate([context, window], axis=1), "state": state, "sr": rate})
+        output, state = model.run(
+            None, {"input": np.concatenate([context, window], axis=1), "state": state, "sr": rate}
+        )
         context = window[:, -VAD_CONTEXT:]
         probabilities[index] = output[0, 0]
 
@@ -167,6 +169,7 @@ def clip(samples: np.ndarray, start: float, end: float) -> np.ndarray:
 @functools.cache
 def mel_filters() -> np.ndarray:
     """Return Kaldi-style triangular mel filters over the FFT bins."""
+
     def mel(hz):
         return 1127 * np.log(1 + np.asarray(hz) / 700)
 

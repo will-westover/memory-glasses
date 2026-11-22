@@ -4,13 +4,13 @@ import argparse
 import json
 import sys
 from bisect import bisect_right
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from pydantic import BaseModel, Field
 
 from memory import db, llm
-from memory.config import SUMMARY_MODEL, minutes_seconds
+from memory.config import DATA_DIR, SUMMARY_MODEL, minutes_seconds
+from memory.ingest.captions import image_link
 from memory.overview import write_overview
 from memory.gps import place_for
 
@@ -24,18 +24,25 @@ STRETCH_SIMILARITY = 0.6
 
 KINDS = ("frame", "person", "object", "text", "speech", "said", "summary")
 
+SCENE_PHOTOS = 6
+
 SUMMARY_INSTRUCTIONS = """\
-You are given one stretch of what someone's camera glasses recorded: what the wearer saw, as numbered photos with
-a description and the things in each, and what was said, as numbered passages of transcript. Speakers are labelled
-with letters.
+You are given one scene of what someone's camera glasses recorded: numbered photos with a description, the people
+recognised and the things listed in each, some of the photos themselves, what was said as numbered passages of
+transcript (speakers are labelled with letters), and the things already seen earlier in this recording, each with a
+label. "Me" is the wearer.
 
 Write, using only what is given:
-- title: two to five words on what this stretch was about, so someone scanning a list can tell stretches apart.
+- title: two to five words on what this scene was about, so someone scanning a list can tell scenes apart.
 - happened: two or three sentences on what took place, combining what was seen and said.
 - things: everything seen, each thing once. The same thing is often described in different words in different
-  photos; merge those into one. Give each the most specific name the photos give, where it was in the scene, the
-  details that tell it apart (keep the colours, materials and writing the photos list), and the numbers of the photos
-  it is in. Say where it was in plain words, never by photo number.
+  photos ("edamame pod", "green bean pods", "bowl of edamame"); that is one thing, not several. Check the
+  descriptions against the photos you can see. Give each the most specific name the photos and the speech give,
+  where it was in the scene, the details that tell it apart (keep the colours, materials and writing), and the
+  numbers of the photos it is in. Say where it was in plain words, never by photo number. People recognised by name
+  are recorded already: do not list them as things, but do list what they wear or hold, saying whose (e.g. "worn by
+  Me"). Before listing a thing as new, check the things seen earlier in this recording; when it is one of them, give
+  its label in same_as. Mark things only seen on a screen or in a picture.
 - said: for each passage, its number and one or two plain sentences stating what was said and by which speaker.
   Leave out filler words. Keep names, numbers and other specifics."""
 
@@ -52,6 +59,8 @@ class Thing(BaseModel):
         description="What tells it apart: colour, material, pattern, writing; keep the photos' details"
     )
     photos: list[int] = Field(description="The numbers of the photos it is in")
+    same_as: str | None = Field(description="The label of the same thing seen earlier in this recording, or null")
+    on_screen: bool = Field(description="True if it was only seen on a screen or in a picture")
 
 
 class Stretch(BaseModel):
@@ -131,6 +140,9 @@ def group_frames(frames: list[dict], vectors: list) -> list[tuple[list[int], str
     for index in range(len(frames)):
         reason = stretch_break(frames, vectors, groups[-1][0], index) if groups else None
 
+        if reason == "looks different" and index + 1 < len(frames):
+            reason = reason if stretch_break(frames, vectors, groups[-1][0], index + 1) else None
+
         if groups and reason is None:
             groups[-1][0].append(index)
             continue
@@ -209,26 +221,56 @@ def speech_fact(passage: list[dict], place: str | None, kind: str, text: str) ->
 
 
 def describe_photo(number: int, frame: dict) -> str:
-    """Return one photo as the line the stretch call reads."""
+    """Return one photo as the line the scene call reads."""
     things = "; ".join(
         f"{item['name']} ({item['location']}{'; ' + item['details'] if item.get('details') else ''})"
         for item in frame["objects"]
     )
+    names = sorted({person["name"] for person in frame.get("people", []) if person["name"]})
+    people = f" People: {', '.join(names)}." if names else ""
 
-    return f"{number}. {int(frame['offset_seconds'])} s: {frame['summary']} Things: {things or 'none listed'}"
+    return f"{number}. {int(frame['offset_seconds'])} s: {frame['summary']}{people} Things: {things or 'none listed'}"
 
 
-def summarise_stretch(frames: list[dict], passages: list[list[dict]]):
-    """Ask the model for one stretch's title, what happened, the things seen and what each passage said."""
+def chosen_photos(frames: list[dict], count: int = SCENE_PHOTOS) -> list[int]:
+    """Return the numbers of up to `count` photos spread evenly through a scene."""
+    if len(frames) <= count:
+        return list(range(1, len(frames) + 1))
+
+    return sorted({round(1 + index * (len(frames) - 1) / (count - 1)) for index in range(count)})
+
+
+def known_lines(known: list[dict]) -> str:
+    """Return the things seen earlier in this recording as labelled lines."""
+    return "\n".join(f"{item['label']}: {item['name']} ({item['details'] or 'no details'})" for item in known)
+
+
+def summarise_stretch(frames: list[dict], passages: list[list[dict]], known: list[dict] = ()):
+    """Ask the model for one scene's title, what happened, the things seen and what each passage said."""
     seen = "\n".join(describe_photo(number, frame) for number, frame in enumerate(frames, start=1))
     heard = "\n".join(f"{number}. {spoken(passage)}" for number, passage in enumerate(passages, start=1))
+    text = (
+        f"Seen:\n{seen or 'Nothing.'}\n\nSaid:\n{heard or 'Nothing.'}"
+        f"\n\nSeen earlier in this recording:\n{known_lines(known) or 'Nothing yet.'}"
+    )
+    content = [{"type": "input_text", "text": text}]
+
+    for number in chosen_photos(frames):
+        content.append({"type": "input_text", "text": f"Photo {number}:"})
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": image_link(DATA_DIR / frames[number - 1]["image_path"]),
+                "detail": "low",
+            }
+        )
 
     response = llm.client().responses.parse(
         model=SUMMARY_MODEL,
         instructions=SUMMARY_INSTRUCTIONS,
-        input=f"Seen:\n{seen or 'Nothing.'}\n\nSaid:\n{heard or 'Nothing.'}",
+        input=[{"role": "user", "content": content}],
         text_format=Stretch,
-        reasoning={"effort": "low"},
+        reasoning={"effort": "medium"},
     )
 
     return response.output_parsed, response.usage
@@ -240,7 +282,14 @@ def things_by_name(frames: list[dict]) -> list[Thing]:
 
     for number, frame in enumerate(frames, start=1):
         for item in frame["objects"]:
-            thing = Thing(name=item["name"], where=item["location"], details=item.get("details") or "", photos=[])
+            thing = Thing(
+                name=item["name"],
+                where=item["location"],
+                details=item.get("details") or "",
+                photos=[],
+                same_as=None,
+                on_screen=False,
+            )
             found.setdefault(item["name"].lower(), thing).photos.append(number)
 
     return list(found.values())
@@ -287,8 +336,33 @@ def summary_fact(frames: list[dict], passages: list[list[dict]], text: str, titl
     }
 
 
-def stretch_facts(frames: list[dict], passages: list[list[dict]], place: str | None, stretch) -> list[dict]:
-    """Return one stretch's summary, things, people, text and said facts."""
+def matching_box(frame: dict, name: str) -> list | None:
+    """Return the box of the object in a frame whose name matches, if any."""
+    for item in frame["objects"]:
+        if item.get("box") and (item["name"].lower() in name.lower() or name.lower() in item["name"].lower()):
+            return [float(value) for value in item["box"]]
+
+    return None
+
+
+def remember(known: list[dict], thing: Thing, shown: list[dict], scene: int) -> dict:
+    """Add a thing's sightings to the one it is the same as, or to a new one, and return that one."""
+    item = next((entry for entry in known if thing.same_as and entry["label"] == thing.same_as), None)
+
+    if item is None:
+        item = {"label": f"K{len(known) + 1}", "name": thing.name, "details": thing.details, "sightings": []}
+        known.append(item)
+
+    source = "screen" if thing.on_screen else "seen"
+    item["sightings"] += [(frame, thing.where, thing.details, source, scene) for frame in shown]
+
+    return item
+
+
+def stretch_facts(
+    frames: list[dict], passages: list[list[dict]], place: str | None, stretch, known: list[dict], scene: int
+) -> list[dict]:
+    """Return one scene's summary, things, people, text and said facts, adding what it saw to `known`."""
     where = at_place(place, frames[0].get("room") if frames else None)
     context = first_sentence(stretch.happened) if stretch else first_sentence(frames[0]["summary"]) if frames else ""
     facts = []
@@ -301,11 +375,23 @@ def stretch_facts(frames: list[dict], passages: list[list[dict]], place: str | N
         shown = [frames[number - 1] for number in sorted(set(thing.photos)) if 0 < number <= len(frames)]
 
         if shown:
+            item = remember(known, thing, shown, scene)
             details = f" {thing.details.rstrip('.')}." if thing.details else ""
-            facts.append(covering("object", f"{thing.name}: {thing.where}.{details}{where} {context}", shown))
+            screen = " Seen on a screen." if thing.on_screen else ""
+            fact = covering("object", f"{thing.name}: {thing.where}.{details}{screen}{where} {context}", shown)
+            facts.append({**fact, "thing": item["label"]})
 
-    people = grouped_by(frames, lambda frame: sorted({p["name"] for p in frame.get("people", []) if p["name"]}))
-    facts += [covering("person", f"{name} was there.{where} {context}", shown) for name, shown in people.items()]
+    people = grouped_by(
+        frames, lambda frame: sorted({(p["id"], p["name"]) for p in frame.get("people", []) if p["name"]})
+    )
+    facts += [
+        {
+            **covering("person", f"{name} was there.{where} {context}", shown),
+            "person_id": person_id,
+            "person_name": name,
+        }
+        for (person_id, name), shown in people.items()
+    ]
 
     texts = grouped_by(frames, lambda frame: list(dict.fromkeys(frame["texts"])))
     facts += [
@@ -313,21 +399,67 @@ def stretch_facts(frames: list[dict], passages: list[list[dict]], place: str | N
         for (text, surface), shown in texts.items()
     ]
 
-    return facts
+    return [{**fact, "scene": scene} for fact in facts]
 
 
-def all_stretch_facts(conn, groups: list[tuple[list, list]], place: str | None) -> list[dict]:
-    """Ask about every stretch at once and return all their facts."""
-    with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
-        results = list(pool.map(lambda group: summarise_stretch(*group), groups))
-
+def all_stretch_facts(conn, groups: list[tuple[list, list]], place: str | None, known: list[dict]) -> list[dict]:
+    """Ask about each scene in order, so each knows what earlier scenes saw, and return all their facts."""
     facts = []
 
-    for (frames, passages), (stretch, usage) in zip(groups, results):
+    for scene, (frames, passages) in enumerate(groups):
+        stretch, usage = summarise_stretch(frames, passages, known)
         llm.log_cost(conn, "summary", SUMMARY_MODEL, usage)
-        facts += stretch_facts(frames, passages, place, stretch)
+        facts += stretch_facts(frames, passages, place, stretch, known, scene)
 
     return facts
+
+
+def save_world(conn, moment_id: str, facts: list[dict], known: list[dict]) -> None:
+    """Store the moment's scenes, things and sightings, and point each fact at its scene and thing or person."""
+    db.forget_world(conn, moment_id)
+
+    scenes = {fact["scene"]: db.save_scene(conn, moment_id, fact) for fact in facts if fact["kind"] == "summary"}
+    things = {
+        item["label"]: db.new_thing(
+            conn,
+            item["name"],
+            item["details"],
+            item["sightings"][0][0]["id"],
+            matching_box(item["sightings"][0][0], item["name"]),
+        )
+        for item in known
+    }
+    people = {
+        fact["person_id"]: db.person_entity(conn, fact["person_id"], fact["person_name"])
+        for fact in facts
+        if fact.get("person_id")
+    }
+
+    rows = [
+        (
+            things[item["label"]],
+            frame["id"],
+            scenes.get(scene),
+            frame["at"],
+            place,
+            details,
+            matching_box(frame, item["name"]),
+            source,
+        )
+        for item in known
+        for frame, place, details, source, scene in item["sightings"]
+    ]
+    rows += [
+        (people[fact["person_id"]], frame_id, scenes.get(fact["scene"]), fact["at"], None, None, None, "seen")
+        for fact in facts
+        if fact.get("person_id")
+        for frame_id in fact["frame_ids"]
+    ]
+    db.save_sightings(conn, rows)
+
+    for fact in facts:
+        fact["episode_id"] = scenes.get(fact.get("scene"))
+        fact["entity_id"] = things.get(fact.get("thing")) or people.get(fact.get("person_id"))
 
 
 def count_kinds(facts: list[dict]) -> dict[str, int]:
@@ -361,13 +493,25 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     place, frames, frame_list, frame_vectors, passages = moment_stretches(conn, moment_id)
     groups = stretches(frames, [vector(text) for text in frame_vectors], passages)
 
-    rest = [speech_fact(passage, place, "speech", spoken(passage)) for passage in passages]
-    rest += all_stretch_facts(conn, groups, place)
+    scene_of_frame = {frame["id"]: scene for scene, (members, _) in enumerate(groups) for frame in members}
+    scene_of_passage = {id(passage): scene for scene, (_, heard) in enumerate(groups) for passage in heard}
+
+    for fact in frame_list:
+        fact["scene"] = scene_of_frame.get(fact["frame_id"])
+
+    known: list[dict] = []
+    rest = [
+        {**speech_fact(passage, place, "speech", spoken(passage)), "scene": scene_of_passage.get(id(passage))}
+        for passage in passages
+    ]
+    rest += all_stretch_facts(conn, groups, place, known)
     rest_vectors = llm.embed(conn, [fact["text"] for fact in rest], "embed") if rest else []
 
     facts = frame_list + rest
 
     with conn.transaction():
+        db.lock_moment(conn, moment_id)
+        save_world(conn, moment_id, facts, known)
         db.replace_facts(conn, moment_id, facts, frame_vectors + rest_vectors)
 
     write_overview(conn, moment_id)

@@ -40,9 +40,11 @@ Inside `server/memory/`, the same word means the same thing at every layer:
    [jobs.py](server/memory/jobs.py).
 6. The pipeline keeps the sharp frames, captions them, finds faces and rooms, and writes facts with embeddings:
    [pipeline.py](server/memory/pipeline.py). The result is a moment.
-7. Facts are written per stretch: frames are grouped where the room changes, the photos stop looking alike, there is
-   a gap or two minutes pass, and each stretch gets one summary and one fact per thing, person and text seen:
-   [ingest/facts.py](server/memory/ingest/facts.py).
+7. Frames are grouped into scenes where the room changes, the photos stop looking alike, there is a gap or two
+   minutes pass. One call per scene sees its photos, captions, people and speech, and records each thing seen as a
+   sighting of a thing already known in the recording or a new one; people come from faces. Facts, the search
+   index, are rebuilt from the scenes, things, people, text and speech: [ingest/facts.py](server/memory/ingest/facts.py),
+   [db/world.py](server/memory/db/world.py).
 8. The audio becomes timed lines, each with a voiceprint: [ingest/transcript.py](server/memory/ingest/transcript.py).
    With `TRANSCRIBE_MODEL=gpt-transcribe`, Silero VAD finds the runs of speech, each run is transcribed on its own
    (with `gpt-live-transcribe` when that hears nothing), and WeSpeaker gives each line a voiceprint:
@@ -58,9 +60,10 @@ A recording made in the app skips steps 1 to 5: it uploads the video straight to
 1. You type it in the app: [ChatView.swift](app/MemoryGlasses/Ask/ChatView.swift).
 2. The app posts it and reads the answer as it streams: [ConversationStore.swift](app/MemoryGlasses/Ask/ConversationStore.swift)
    to `POST /conversations/{id}/ask/stream` in [api/chats.py](server/memory/api/chats.py).
-3. The agent decides what to look up, with three tools (search, timeline, nearby): [agent.py](server/memory/agent.py).
-4. Search finds facts by meaning and by keyword, merges the two, and keeps at most two of each kind from one
-   stretch: [search.py](server/memory/search.py).
+3. The agent decides what to look up, with four tools (search, timeline, entity, nearby): [agent.py](server/memory/agent.py).
+4. Search works out which time the question is about and looks there first, finds facts by meaning and by
+   keyword, merges the two, and keeps one fact per thing per scene: [search.py](server/memory/search.py),
+   [when.py](server/memory/when.py).
 5. The agent writes the answer with `[1]` markers for its sources; the raw messages and the cost of every model call
    are saved: [db/chats.py](server/memory/db/chats.py).
 6. Tapping a source opens the Timeline at that photo: [MomentView.swift](app/MemoryGlasses/Timeline/MomentView.swift).

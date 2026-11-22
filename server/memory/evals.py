@@ -8,6 +8,7 @@ from datetime import datetime
 from functools import partial
 from typing import Literal
 
+import psycopg
 from pydantic import BaseModel, Field
 
 from memory import db, llm, storage
@@ -246,13 +247,18 @@ def save_run(rows: list[dict], model: str, judge_usd: float) -> None:
     print(f"Saved to {path}")
 
 
-def answer_and_grade(question: dict, mode: str, model: str, run: int) -> dict:
-    """Answer and grade one question on its own database connection, so many can run at once."""
-    with db.connect() as conn:
-        row = {**run_question(conn, question, mode, model), "run": run, "set": question["set"]}
-        conn.commit()
+def answer_and_grade(question: dict, mode: str, model: str, run: int, tries: int = 3) -> dict:
+    """Answer and grade one question on its own database connection, trying again if the connection drops."""
+    for attempt in range(tries):
+        try:
+            with db.connect() as conn:
+                row = {**run_question(conn, question, mode, model), "run": run, "set": question["set"]}
+                conn.commit()
 
-    return row
+            return row
+        except psycopg.OperationalError:
+            if attempt == tries - 1:
+                raise
 
 
 def main() -> int:

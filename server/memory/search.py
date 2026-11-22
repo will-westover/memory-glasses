@@ -2,7 +2,6 @@
 
 import argparse
 import sys
-from bisect import bisect_right
 from datetime import datetime
 
 from memory import db, llm
@@ -12,7 +11,7 @@ CANDIDATES_PER_RANKING = 20
 
 FUSION_K = 60
 
-PER_STRETCH_AND_KIND = 2
+PER_SCENE_AND_KIND = 2
 
 IN_RANGE_SQL = """
     (%(start)s::timestamptz is null
@@ -48,32 +47,17 @@ def fuse(rankings: list[list], k: int = FUSION_K) -> list[tuple]:
     return sorted(scores.items(), key=lambda pair: pair[1], reverse=True)
 
 
-def stretch_starts(conn, moment_ids: list[str]) -> dict[str, list[float]]:
-    """Return where each moment's stretches start, from its summaries, in order."""
-    starts: dict[str, list[float]] = {moment_id: [] for moment_id in moment_ids}
-    rows = conn.execute(
-        "select moment_id, offset_seconds from fact where kind = 'summary' and moment_id = any(%s)"
-        " order by offset_seconds",
-        (moment_ids,),
-    )
-
-    for moment_id, offset in rows:
-        starts[moment_id].append(float(offset))
-
-    return starts
-
-
-def spread(
-    facts: list[dict], starts: dict[str, list[float]], limit: int, per_group: int = PER_STRETCH_AND_KIND
-) -> list[dict]:
-    """Keep the facts in order, but at most `per_group` of each kind from any one stretch, up to `limit`."""
+def spread(facts: list[dict], limit: int, per_group: int = PER_SCENE_AND_KIND) -> list[dict]:
+    """Keep the facts in order, but one per thing or person in a scene, and at most `per_group` of each kind."""
     kept, counts = [], {}
 
     for fact in facts:
-        stretch = bisect_right(starts.get(fact["moment_id"], []), fact["offset_seconds"] + 0.01)
-        group = (fact["moment_id"], stretch, fact["kind"])
+        if fact.get("entity_id"):
+            group, most = ("entity", fact["entity_id"], fact.get("episode_id")), 1
+        else:
+            group, most = (fact["moment_id"], fact.get("episode_id"), fact["kind"]), per_group
 
-        if counts.get(group, 0) < per_group:
+        if counts.get(group, 0) < most:
             counts[group] = counts.get(group, 0) + 1
             kept.append(fact)
 
@@ -120,7 +104,7 @@ def search(
         if fact_id in fact_by_id
     ]
 
-    return spread(found, stretch_starts(conn, list({fact["moment_id"] for fact in found})), limit)
+    return spread(found, limit)
 
 
 def search_within(conn, question: str, limit: int, window: tuple, moments: list[str] | None = None) -> list[dict]:
