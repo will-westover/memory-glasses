@@ -241,3 +241,22 @@ def latest_moment_id(conn: psycopg.Connection) -> str | None:
 def moment_ids_oldest_first(conn: psycopg.Connection) -> list[str]:
     """Return every moment's id in the order they were recorded."""
     return [row[0] for row in conn.execute("select id from moment order by started_at")]
+
+
+def delete_moment(conn: psycopg.Connection, moment_id: str) -> list[str]:
+    """Delete a moment, its jobs and glasses recordings, and unnamed people left with no faces; return the recordings."""
+    recordings = [
+        name
+        for (name,) in conn.execute(
+            "select r.name from recording r join job j on j.id = r.job_id where j.moment_id = %s", (moment_id,)
+        )
+    ]
+
+    conn.execute("delete from recording where name = any(%s)", (recordings,))
+    conn.execute("delete from job where moment_id = %s", (moment_id,))
+    conn.execute("delete from moment where id = %s", (moment_id,))
+    conn.execute(
+        "delete from person p where p.name is null and not exists (select 1 from face f where f.person_id = p.id)"
+    )
+
+    return recordings
