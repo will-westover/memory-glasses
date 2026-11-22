@@ -86,23 +86,23 @@ def frame_facts(frames: list[dict], place: str | None) -> list[dict]:
     return facts
 
 
-def passages(lines: list[dict]) -> list[list[dict]]:
+def group_passages(lines: list[dict]) -> list[list[dict]]:
     """Group transcript lines into passages, split at PASSAGE_WORDS words or a long pause."""
-    groups: list[list[dict]] = []
+    passages: list[list[dict]] = []
     words = 0
 
     for line in lines:
         line_words = len(line["text"].split())
-        long_pause = bool(groups) and line["start"] - groups[-1][-1]["end"] > PASSAGE_GAP_SECONDS
+        long_pause = bool(passages) and line["start"] - passages[-1][-1]["end"] > PASSAGE_GAP_SECONDS
 
-        if not groups or words + line_words > PASSAGE_WORDS or long_pause:
-            groups.append([])
+        if not passages or words + line_words > PASSAGE_WORDS or long_pause:
+            passages.append([])
             words = 0
 
-        groups[-1].append(line)
+        passages[-1].append(line)
         words += line_words
 
-    return groups
+    return passages
 
 
 def spoken(passage: list[dict]) -> str:
@@ -123,23 +123,23 @@ def speech_fact(passage: list[dict], place: str | None, kind: str, text: str) ->
     }
 
 
-def stretches(frames: list[dict], groups: list[list[dict]]) -> list[tuple[list, list]]:
+def stretches(frames: list[dict], passages: list[list[dict]]) -> list[tuple[list, list]]:
     """Split frames and passages into consecutive stretches of SUMMARY_STRETCH_SECONDS."""
     slots: dict[int, tuple[list, list]] = {}
 
     for frame in frames:
         slots.setdefault(int(frame["offset_seconds"] // SUMMARY_STRETCH_SECONDS), ([], []))[0].append(frame)
 
-    for passage in groups:
+    for passage in passages:
         slots.setdefault(int(passage[0]["start"] // SUMMARY_STRETCH_SECONDS), ([], []))[1].append(passage)
 
     return [slots[slot] for slot in sorted(slots)]
 
 
-def summarise_stretch(frames: list[dict], groups: list[list[dict]]):
+def summarise_stretch(frames: list[dict], passages: list[list[dict]]):
     """Ask the model what happened in one stretch and what each passage said. Return (Stretch, usage)."""
     seen = "\n".join(f"{int(frame['offset_seconds'])} s: {frame['summary']}" for frame in frames)
-    heard = "\n".join(f"{number}. {spoken(passage)}" for number, passage in enumerate(groups, start=1))
+    heard = "\n".join(f"{number}. {spoken(passage)}" for number, passage in enumerate(passages, start=1))
 
     response = llm.client().responses.parse(
         model=SUMMARY_MODEL,
@@ -152,10 +152,10 @@ def summarise_stretch(frames: list[dict], groups: list[list[dict]]):
     return response.output_parsed, response.usage
 
 
-def summary_fact(frames: list[dict], groups: list[list[dict]], place: str | None, happened: str) -> dict:
+def summary_fact(frames: list[dict], passages: list[list[dict]], place: str | None, happened: str) -> dict:
     """Return a summary fact placed at the earliest frame or passage of a stretch."""
     starts = [(frame["offset_seconds"], frame["at"]) for frame in frames]
-    starts += [(passage[0]["start"], passage[0]["at"]) for passage in groups]
+    starts += [(passage[0]["start"], passage[0]["at"]) for passage in passages]
     offset, at = min(starts)
 
     return {
@@ -167,31 +167,31 @@ def summary_fact(frames: list[dict], groups: list[list[dict]], place: str | None
     }
 
 
-def said_facts(groups: list[list[dict]], said: list[Said], place: str | None) -> list[dict]:
+def said_facts(passages: list[list[dict]], said: list[Said], place: str | None) -> list[dict]:
     """Return a 'said' fact for each passage the model summarised, matched by passage number."""
     by_number = {item.passage: item.text for item in reversed(said)}
 
     return [
         speech_fact(passage, place, "said", by_number[number])
-        for number, passage in enumerate(groups, start=1)
+        for number, passage in enumerate(passages, start=1)
         if number in by_number
     ]
 
 
-def summary_facts(conn, frames: list[dict], groups: list[list[dict]], place: str | None) -> list[dict]:
+def summary_facts(conn, frames: list[dict], passages: list[list[dict]], place: str | None) -> list[dict]:
     """Return a summary fact for each stretch and a 'said' fact for each passage in it."""
-    parts = stretches(frames, groups)
+    stretch_list = stretches(frames, passages)
     facts = []
 
     with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
-        results = list(pool.map(lambda part: summarise_stretch(*part), parts))
+        results = list(pool.map(lambda stretch: summarise_stretch(*stretch), stretch_list))
 
-    for (stretch_frames, stretch_groups), (stretch, usage) in zip(parts, results):
+    for (stretch_frames, stretch_passages), (stretch, usage) in zip(stretch_list, results):
         llm.log_cost(conn, "summary", SUMMARY_MODEL, usage)
 
         if stretch:
-            facts.append(summary_fact(stretch_frames, stretch_groups, place, stretch.happened))
-            facts += said_facts(stretch_groups, stretch.said, place)
+            facts.append(summary_fact(stretch_frames, stretch_passages, place, stretch.happened))
+            facts += said_facts(stretch_passages, stretch.said, place)
 
     return facts
 
@@ -214,11 +214,11 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     place = place_for(lat, lon, db.gps_places(conn))
 
     frames = db.captioned_frames(conn, moment_id)
-    groups = passages(db.transcript_lines(conn, moment_id))
+    passages = group_passages(db.transcript_lines(conn, moment_id))
 
     facts = frame_facts(frames, place)
-    facts += [speech_fact(passage, place, "speech", spoken(passage)) for passage in groups]
-    facts += summary_facts(conn, frames, groups, place)
+    facts += [speech_fact(passage, place, "speech", spoken(passage)) for passage in passages]
+    facts += summary_facts(conn, frames, passages, place)
 
     vectors = llm.embed(conn, [fact["text"] for fact in facts], "embed") if facts else []
 

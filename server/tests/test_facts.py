@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from memory.ingest.facts import Said, frame_facts, passages, said_facts, stretches
+from memory.ingest.facts import Said, frame_facts, group_passages, said_facts, stretches
 
 ZONE = timezone(timedelta(hours=-7))
 EVENING = datetime(2026, 11, 10, 19, 54, tzinfo=ZONE)
@@ -24,13 +24,13 @@ def frame(frame_id, offset, objects=(), texts=()):
 def test_short_lines_are_joined_into_one_passage():
     lines = [line(0, 2, "And um"), line(2, 5, "this is where I sleep"), line(5, 7, "it's comfortable")]
 
-    assert passages(lines) == [lines]
+    assert group_passages(lines) == [lines]
 
 
 def test_a_long_pause_starts_a_new_passage():
     lines = [line(0, 2, "first thought"), line(30, 32, "much later")]
 
-    assert passages(lines) == [[lines[0]], [lines[1]]]
+    assert group_passages(lines) == [[lines[0]], [lines[1]]]
 
 
 def test_each_object_becomes_its_own_fact_with_context():
@@ -59,7 +59,7 @@ def test_a_passage_stops_before_it_gets_too_long():
     forty_words = " ".join(["word"] * 40)
     lines = [line(0, 10, forty_words), line(10, 20, forty_words), line(20, 21, "short")]
 
-    assert passages(lines) == [[lines[0]], [lines[1], lines[2]]]
+    assert group_passages(lines) == [[lines[0]], [lines[1], lines[2]]]
 
 
 def test_frames_and_speech_are_split_into_minutes():

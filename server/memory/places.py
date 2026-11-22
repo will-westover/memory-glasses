@@ -82,12 +82,12 @@ def travelled(poses: list[list[float]]) -> bool:
     return max(math.hypot(x - x0, z - z0) for _, x, _, z, *_ in poses) > TRAVEL_METRES
 
 
-def smooth(own: list[tuple], others: list[tuple], metres: float = NEIGHBOUR_METRES) -> dict:
+def smooth(frame_rooms: list[tuple], mapped_rooms: list[tuple], metres: float = NEIGHBOUR_METRES) -> dict:
     """Give each placed frame the most common room among frames within `metres` of it, keeping ties as they were."""
-    placed = [(x, z, room) for _, x, z, room in own if x is not None] + list(others)
+    placed = [(x, z, room) for _, x, z, room in frame_rooms if x is not None] + list(mapped_rooms)
     smoothed = {}
 
-    for frame_id, x, z, room in own:
+    for frame_id, x, z, room in frame_rooms:
         if x is None:
             smoothed[frame_id] = room
             continue
@@ -173,7 +173,7 @@ def keep_map(place_id: int, world_map: Path) -> str:
     return f"places/{place_id}.map"
 
 
-def assign_place(conn, moment_id: str, moment_dir: Path, recognised: int | None) -> int | None:
+def assign_place(conn, moment_id: str, moment_dir: Path, recognised_place_id: int | None) -> int | None:
     """Put a moment at a place: the one the phone recognised, one that looks the same, or a new one."""
     storage.fetch_folder(moment_dir)
     world_map = moment_dir / "world.map"
@@ -181,10 +181,10 @@ def assign_place(conn, moment_id: str, moment_dir: Path, recognised: int | None)
     has_map = world_map.is_file() and not (poses_file.is_file() and travelled(load_poses(poses_file)))
     _, lat, lon = db.moment_start_and_location(conn, moment_id)
 
-    if recognised is not None and has_map:
-        db.save_place(conn, recognised, keep_map(recognised, world_map), lat, lon)
-        db.set_moment_place(conn, moment_id, recognised, True)
-        return recognised
+    if recognised_place_id is not None and has_map:
+        db.save_place(conn, recognised_place_id, keep_map(recognised_place_id, world_map), lat, lon)
+        db.set_moment_place(conn, moment_id, recognised_place_id, True)
+        return recognised_place_id
 
     place_id = matching_place(conn, moment_id, lat, lon)
 
@@ -194,12 +194,12 @@ def assign_place(conn, moment_id: str, moment_dir: Path, recognised: int | None)
     if place_id is None:
         place_id = db.save_place(conn, None, None, lat, lon)
 
-    first_map = has_map and db.place_map(conn, place_id) is None
+    map_is_new = has_map and db.place_map(conn, place_id) is None
 
-    if first_map:
+    if map_is_new:
         db.save_place(conn, place_id, keep_map(place_id, world_map), lat, lon)
 
-    db.set_moment_place(conn, moment_id, place_id, first_map)
+    db.set_moment_place(conn, moment_id, place_id, map_is_new)
 
     return place_id
 
@@ -222,14 +222,14 @@ def describe_frames(frames: list[dict]) -> str:
 def ask_for_labels(conn, moment_id: str, frames: list[dict], known: list[dict]) -> Labels | None:
     """Ask a model which room every frame was taken in."""
     said = "\n".join(f"{line['start']:.0f} s: {line['text']}" for line in db.transcript_lines(conn, moment_id))
-    rooms = "\n".join(
+    known_rooms = "\n".join(
         f"- {room['name']}: {room['description'] or ''} Seen there: " + " | ".join(db.room_examples(conn, room["id"]))
         for room in known
     )
     scan = scan_note(MOMENTS_DIR / moment_id)
 
     prompt = (
-        f"Known rooms of this place:\n{rooms or '(none yet)'}\n\n"
+        f"Known rooms of this place:\n{known_rooms or '(none yet)'}\n\n"
         f"Scan: {scan or 'no lidar scan'}\n\n"
         f"What was said:\n{said or '(nothing)'}\n\n"
         f"Frames:\n{describe_frames(frames)}"
@@ -266,28 +266,30 @@ def label_rooms(conn, moment_id: str) -> dict[str, int]:
         db.name_place(conn, place["id"], capitalised(labels.place), by_user=False)
 
     descriptions = {room.name.strip().lower(): room.description for room in labels.rooms}
-    picked = {item.frame: capitalised(item.room) for item in labels.frames if 0 <= item.frame < len(frames)}
-    rooms = {
+    room_by_frame_number = {
+        item.frame: capitalised(item.room) for item in labels.frames if 0 <= item.frame < len(frames)
+    }
+    room_ids = {
         name.lower(): db.save_room(conn, place["id"], name, descriptions.get(name.lower()))
-        for name in set(picked.values())
+        for name in set(room_by_frame_number.values())
     }
 
-    own = []
+    labelled_frames = []
 
     for number, frame in enumerate(frames):
-        if number in picked:
+        if number in room_by_frame_number:
             x, z = (frame["position"][0], frame["position"][2]) if frame["position"] else (None, None)
-            own.append((frame["id"], x, z, rooms[picked[number].lower()]))
+            labelled_frames.append((frame["id"], x, z, room_ids[room_by_frame_number[number].lower()]))
 
-    others = db.mapped_frames(conn, place["id"], moment_id) if place["in_map"] else []
-    chosen = smooth(own, others)
+    mapped_rooms = db.mapped_frames(conn, place["id"], moment_id) if place["in_map"] else []
+    room_by_frame = smooth(labelled_frames, mapped_rooms)
 
-    db.set_frame_rooms(conn, moment_id, chosen)
+    db.set_frame_rooms(conn, moment_id, room_by_frame)
     db.drop_unused_rooms_and_places(conn)
 
-    names = {room_id: name for name, room_id in rooms.items()}
+    room_names = {room_id: name for name, room_id in room_ids.items()}
 
-    return dict(Counter(names.get(room_id, "other") for room_id in chosen.values()))
+    return dict(Counter(room_names.get(room_id, "other") for room_id in room_by_frame.values()))
 
 
 def rebuild(conn) -> None:
