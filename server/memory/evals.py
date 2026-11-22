@@ -3,12 +3,12 @@
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import partial
 from typing import Literal
 
 from pydantic import BaseModel, Field
-
-from functools import partial
 
 from memory import db, llm, storage
 
@@ -21,6 +21,8 @@ RUNS_DIR = DATA_DIR / "evals" / "runs"
 MODES = {"agent": ask_agent, "plain": ask_plain, "no-nearby": partial(ask_agent, use_nearby=False)}
 DEFAULT_MODES = ("agent", "plain")
 VERDICT_POINTS = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
+SETS = ("dev", "test", "all")
+DEFAULT_PARALLEL = 16
 NOT_RECORDED = "NOT RECORDED"
 
 JUDGE_INSTRUCTIONS = f"""\
@@ -57,7 +59,7 @@ def load_questions() -> list[dict]:
         listed = loaded if isinstance(loaded, list) else loaded["questions"]
         moments = None if isinstance(loaded, list) else loaded.get("moments")
 
-        questions += [{"kind": "other", "moments": moments, **question} for question in listed]
+        questions += [{"kind": "other", "set": "dev", "moments": moments, **question} for question in listed]
 
     return questions
 
@@ -67,6 +69,17 @@ def mentions_evidence(evidence: list[str], shown: list[dict]) -> bool:
     texts = [fact["text"].lower() for fact in shown]
 
     return any(phrase.lower() in text for phrase in evidence for text in texts)
+
+
+def found_photo(conn, photos: list[str], shown: list[dict]) -> bool:
+    """Return whether any fact the model was shown is, or covers, one of the expected photos."""
+    paths = {fact["image_path"] for fact in shown}
+    covered = conn.execute(
+        "select f.image_path from fact_frame ff join frame f on f.id = ff.frame_id where ff.fact_id = any(%s)",
+        ([fact["id"] for fact in shown],),
+    )
+
+    return bool(set(photos) & (paths | {path for (path,) in covered}))
 
 
 def grade(conn, question: dict, result: dict) -> Grade:
@@ -92,6 +105,7 @@ def run_question(conn, question: dict, mode: str, model: str) -> dict:
     result = MODES[mode](conn, question["question"], model, moments=question["moments"])
     graded = grade(conn, question, result)
     evidence = question.get("evidence")
+    photos = question.get("photos")
 
     return {
         "question": question["question"],
@@ -105,6 +119,7 @@ def run_question(conn, question: dict, mode: str, model: str) -> dict:
         "reason": graded.reason,
         "retrieved": mentions_evidence(evidence, result["shown"]) if evidence else None,
         "cited": mentions_evidence(evidence, result["sources"]) if evidence else None,
+        "photo_found": found_photo(conn, photos, result["shown"]) if photos else None,
         "found_right": result["found"] == bool(question["expected"]),
         "model_calls": result["model_calls"],
         "seconds": result["seconds"],
@@ -115,6 +130,11 @@ def run_question(conn, question: dict, mode: str, model: str) -> dict:
 def average(values: list) -> float:
     """Return the mean of the values, or 0 if there are none."""
     return sum(values) / len(values) if values else 0.0
+
+
+def percent(value: float | None) -> str:
+    """Return a share as a whole percentage, or a dash when nothing was measured."""
+    return "-" if value is None else f"{value:.0%}"
 
 
 def mode_scores(rows: list[dict]) -> dict:
@@ -130,6 +150,9 @@ def mode_scores(rows: list[dict]) -> dict:
         "supported": average([row["supported"] for row in rows]),
         "retrieved": average([row["retrieved"] for row in rows if row["retrieved"] is not None]),
         "cited": average([row["cited"] for row in rows if row["cited"] is not None]),
+        "photo_found": average(photos)
+        if (photos := [row["photo_found"] for row in rows if row.get("photo_found") is not None])
+        else None,
         "found_right": average([row["found_right"] for row in rows]),
         "model_calls": average([row["model_calls"] for row in rows]),
         "seconds": average([row["seconds"] for row in rows]),
@@ -166,7 +189,7 @@ def print_report(rows: list[dict], judge_usd: float) -> None:
 
     print(
         f"\n{'mode':<10} {'score':>6} {'answerable':>11} {'no answer':>10} {'supported':>10} {'retrieved':>10}"
-        f" {'cited':>6} {'found ok':>9} {'calls':>6} {'seconds':>8} {'$ each':>9}"
+        f" {'cited':>6} {'photo':>6} {'found ok':>9} {'calls':>6} {'seconds':>8} {'$ each':>9}"
     )
 
     for mode in MODES:
@@ -178,7 +201,7 @@ def print_report(rows: list[dict], judge_usd: float) -> None:
 
         print(
             f"{mode:<10} {totals['score']:>6.0%} {totals['answerable']:>11.0%} {totals['unanswerable']:>10.0%}"
-            f" {totals['supported']:>10.0%} {totals['retrieved']:>10.0%} {totals['cited']:>6.0%}"
+            f" {totals['supported']:>10.0%} {totals['retrieved']:>10.0%} {totals['cited']:>6.0%} {percent(totals['photo_found']):>6}"
             f" {totals['found_right']:>9.0%} {totals['model_calls']:>6.1f} {totals['seconds']:>8.1f}"
             f" {totals['usd']:>9.5f}"
         )
@@ -223,6 +246,15 @@ def save_run(rows: list[dict], model: str, judge_usd: float) -> None:
     print(f"Saved to {path}")
 
 
+def answer_and_grade(question: dict, mode: str, model: str, run: int) -> dict:
+    """Answer and grade one question on its own database connection, so many can run at once."""
+    with db.connect() as conn:
+        row = {**run_question(conn, question, mode, model), "run": run, "set": question["set"]}
+        conn.commit()
+
+    return row
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Grade the agent and the plain baseline on the test questions.")
     parser.add_argument("--limit", type=int, help="ask only the first few questions")
@@ -234,24 +266,36 @@ def main() -> int:
     )
     parser.add_argument("--model", default=AGENT_MODEL, help="the model that answers")
     parser.add_argument("--repeat", type=int, default=1, help="ask every question this many times, to see the spread")
+    parser.add_argument("--set", choices=SETS, default="dev", help="dev while working; test only before a decision")
+    parser.add_argument("--kind", action="append", help="ask only questions of these kinds")
+    parser.add_argument("--parallel", type=int, default=DEFAULT_PARALLEL, help="how many questions to ask at once")
     args = parser.parse_args()
 
     llm.require_price(JUDGE_MODEL)
-    questions = load_questions()[: args.limit]
+    questions = [
+        question
+        for question in load_questions()
+        if (args.set == "all" or question["set"] == args.set) and (not args.kind or question["kind"] in args.kind)
+    ][: args.limit]
     modes = args.mode or list(DEFAULT_MODES)
-    rows = []
+    jobs = [(question, mode, run) for run in range(args.repeat) for question in questions for mode in modes]
 
     with db.connect() as conn:
         judge_before = db.step_cost(conn, "judge")
 
-        for run in range(args.repeat):
-            for number, question in enumerate(questions, start=1):
-                for mode in modes:
-                    rows.append({**run_question(conn, question, mode, args.model), "run": run})
-                    conn.commit()
+    rows = []
 
-                print(f"  {number}/{len(questions)} {question['question']}", file=sys.stderr)
+    with ThreadPoolExecutor(max(1, args.parallel)) as pool:
+        futures = [pool.submit(answer_and_grade, question, mode, args.model, run) for question, mode, run in jobs]
 
+        for done, future in enumerate(as_completed(futures), start=1):
+            rows.append(future.result())
+            print(f"  {done}/{len(jobs)} {rows[-1]['question']}", file=sys.stderr)
+
+    position = {question["question"]: number for number, question in enumerate(questions)}
+    rows.sort(key=lambda row: (row["run"], position[row["question"]], modes.index(row["mode"])))
+
+    with db.connect() as conn:
         judge_usd = db.step_cost(conn, "judge") - judge_before
 
     print_report(rows, judge_usd)

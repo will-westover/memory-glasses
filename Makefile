@@ -5,7 +5,7 @@ test: ## Run the server tests
 	cd server && uv run pytest -q
 
 evals: ## Ask every test question and grade the answers
-	cd server && uv run python -m memory.evals --mode agent --mode plain
+	cd server && uv run python -m memory.evals --mode agent --mode plain $(ARGS)
 
 moments: ## List the recorded moments
 	cd server && uv run python -m memory.db list

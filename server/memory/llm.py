@@ -23,11 +23,14 @@ def require_price(model: str) -> None:
         raise SystemExit(f"error: no price for {model}. Add it to {PRICES_FILE}")
 
 
+MAX_RETRIES = 6
+
+
 @functools.cache
 def client() -> OpenAI:
     config.require_env("OPENAI_API_KEY")
 
-    return OpenAI()
+    return OpenAI(max_retries=MAX_RETRIES)
 
 
 def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
