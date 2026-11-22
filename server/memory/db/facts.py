@@ -8,7 +8,8 @@ from memory.config import SUMMARY_STRETCH_SECONDS
 
 
 def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], vectors: list[str]) -> None:
-    """Store a moment's facts, replacing any earlier ones."""
+    """Store a moment's facts, replacing any earlier ones; two rebuilds of one moment wait for each other."""
+    conn.execute("select pg_advisory_xact_lock(hashtext('facts:' || %s))", (moment_id,))
     conn.execute("delete from fact where moment_id = %s", (moment_id,))
 
     with conn.cursor() as cursor:
