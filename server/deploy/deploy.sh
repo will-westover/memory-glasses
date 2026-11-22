@@ -5,15 +5,15 @@ PROJECT=${PROJECT:-memory-glasses-2611}
 REGION=${REGION:-us-west1}
 R2_ACCOUNT_ID=${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID}
 R2_BUCKET=${R2_BUCKET:-memory-glasses}
-SERVICE=memory-server
-JOB=memory-worker
+SERVER_SERVICE=memory-server
+WORKER_JOB_NAME=memory-worker
 REPO=memory
-IDENTITY="memory-server@${PROJECT}.iam.gserviceaccount.com"
+SERVICE_ACCOUNT="memory-server@${PROJECT}.iam.gserviceaccount.com"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/server:latest"
 SECRETS=(OPENAI_API_KEY API_TOKEN DATABASE_URL R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY)
 SECRET_FLAGS=$(for NAME in "${SECRETS[@]}"; do printf '%s=%s:latest,' "$NAME" "$NAME"; done)
 SECRET_FLAGS=${SECRET_FLAGS%,}
-SETTINGS="R2_ACCOUNT_ID=${R2_ACCOUNT_ID},R2_BUCKET=${R2_BUCKET}"
+ENV_VARS="R2_ACCOUNT_ID=${R2_ACCOUNT_ID},R2_BUCKET=${R2_BUCKET}"
 
 cd "$(dirname "$0")/.."
 
@@ -22,12 +22,12 @@ gcloud services enable run.googleapis.com artifactregistry.googleapis.com clouds
   secretmanager.googleapis.com iam.googleapis.com --project "$PROJECT" >/dev/null
 
 echo "Server identity and secret access"
-if ! gcloud iam service-accounts describe "$IDENTITY" --project "$PROJECT" >/dev/null 2>&1; then
+if ! gcloud iam service-accounts describe "$SERVICE_ACCOUNT" --project "$PROJECT" >/dev/null 2>&1; then
   gcloud iam service-accounts create memory-server --display-name "Memory Glasses server" --project "$PROJECT" >/dev/null
 fi
 
 for NAME in "${SECRETS[@]}"; do
-  gcloud secrets add-iam-policy-binding "$NAME" --member "serviceAccount:${IDENTITY}" \
+  gcloud secrets add-iam-policy-binding "$NAME" --member "serviceAccount:${SERVICE_ACCOUNT}" \
     --role roles/secretmanager.secretAccessor --project "$PROJECT" >/dev/null
 done
 
@@ -52,31 +52,31 @@ gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet >/dev/null 2>&1
 docker buildx build --platform linux/amd64 -t "$IMAGE" --push .
 
 echo "Worker job"
-gcloud run jobs deploy "$JOB" --image "$IMAGE" --region "$REGION" --project "$PROJECT" \
-  --service-account "$IDENTITY" --command python,-m,memory.worker \
+gcloud run jobs deploy "$WORKER_JOB_NAME" --image "$IMAGE" --region "$REGION" --project "$PROJECT" \
+  --service-account "$SERVICE_ACCOUNT" --command python,-m,memory.worker \
   --cpu 1 --memory 2Gi --task-timeout 3600 --max-retries 0 \
-  --set-env-vars "$SETTINGS" --set-secrets "$SECRET_FLAGS" >/dev/null
+  --set-env-vars "$ENV_VARS" --set-secrets "$SECRET_FLAGS" >/dev/null
 
-gcloud run jobs add-iam-policy-binding "$JOB" --region "$REGION" --project "$PROJECT" \
-  --member "serviceAccount:${IDENTITY}" --role roles/run.developer >/dev/null
+gcloud run jobs add-iam-policy-binding "$WORKER_JOB_NAME" --region "$REGION" --project "$PROJECT" \
+  --member "serviceAccount:${SERVICE_ACCOUNT}" --role roles/run.developer >/dev/null
 
 echo "Server"
-gcloud run deploy "$SERVICE" --image "$IMAGE" --region "$REGION" --project "$PROJECT" \
-  --service-account "$IDENTITY" --allow-unauthenticated \
+gcloud run deploy "$SERVER_SERVICE" --image "$IMAGE" --region "$REGION" --project "$PROJECT" \
+  --service-account "$SERVICE_ACCOUNT" --allow-unauthenticated \
   --cpu 1 --memory 1Gi --min-instances 0 --max-instances 4 --concurrency 20 --timeout 300 \
-  --set-env-vars "${SETTINGS},WORKER_JOB=${JOB},WORKER_REGION=${REGION}" --set-secrets "$SECRET_FLAGS" >/dev/null
+  --set-env-vars "${ENV_VARS},WORKER_JOB=${WORKER_JOB_NAME},WORKER_REGION=${REGION}" --set-secrets "$SECRET_FLAGS" >/dev/null
 
-URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format "value(status.url)")
+URL=$(gcloud run services describe "$SERVER_SERVICE" --region "$REGION" --project "$PROJECT" --format "value(status.url)")
 
 echo "Checking for stopped glasses recordings every minute"
 TOKEN=$(gcloud secrets versions access latest --secret API_TOKEN --project "$PROJECT")
-SCHEDULE=(--location "$REGION" --project "$PROJECT" --schedule "* * * * *" --uri "${URL}/glasses/check"
+SCHEDULER_FLAGS=(--location "$REGION" --project "$PROJECT" --schedule "* * * * *" --uri "${URL}/glasses/check"
           --http-method POST --attempt-deadline 60s)
 
 if gcloud scheduler jobs describe glasses-check --location "$REGION" --project "$PROJECT" >/dev/null 2>&1; then
-  gcloud scheduler jobs update http glasses-check "${SCHEDULE[@]}" --update-headers "Authorization=Bearer ${TOKEN}" >/dev/null
+  gcloud scheduler jobs update http glasses-check "${SCHEDULER_FLAGS[@]}" --update-headers "Authorization=Bearer ${TOKEN}" >/dev/null
 else
-  gcloud scheduler jobs create http glasses-check "${SCHEDULE[@]}" --headers "Authorization=Bearer ${TOKEN}" >/dev/null
+  gcloud scheduler jobs create http glasses-check "${SCHEDULER_FLAGS[@]}" --headers "Authorization=Bearer ${TOKEN}" >/dev/null
 fi
 unset TOKEN
 

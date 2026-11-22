@@ -7,7 +7,7 @@ use esp_idf_svc::sys::camera;
 
 pub const WARM_UP_FRAMES: usize = 3;
 
-pub fn xiao_sense_camera(frame_size: camera::framesize_t) -> camera::camera_config_t {
+pub fn xiao_sense_camera_config(frame_size: camera::framesize_t) -> camera::camera_config_t {
     camera::camera_config_t {
         pin_pwdn: -1,
         pin_reset: -1,
@@ -59,10 +59,10 @@ pub const PHOTO_FRAME_SIZE: camera::framesize_t = camera::framesize_t_FRAMESIZE_
 pub const STREAM_FRAME_SIZE: camera::framesize_t = camera::framesize_t_FRAMESIZE_XGA;
 
 pub fn start_camera(frame_size: camera::framesize_t) -> Result<(), i32> {
-    let started = unsafe { camera::esp_camera_init(&xiao_sense_camera(frame_size)) };
+    let error_code = unsafe { camera::esp_camera_init(&xiao_sense_camera_config(frame_size)) };
 
-    if started != 0 {
-        return Err(started);
+    if error_code != 0 {
+        return Err(error_code);
     }
 
     for _ in 0..WARM_UP_FRAMES {

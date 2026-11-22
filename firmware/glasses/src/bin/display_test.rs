@@ -18,28 +18,28 @@ use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 const DISPLAY_ADDRESSES: [u8; 2] = [0x3C, 0x3D];
 
-fn scan(i2c: &mut I2cDriver) -> Vec<u8> {
+fn scan_i2c_addresses(i2c: &mut I2cDriver) -> Vec<u8> {
     let timeout = TickType::new_millis(20).ticks();
 
     (1..127u8).filter(|&address| i2c.write(address, &[], timeout).is_ok()).collect()
 }
 
-fn level(high: bool) -> &'static str {
+fn level_name(high: bool) -> &'static str {
     if high { "high" } else { "LOW" }
 }
 
-fn connect() -> Option<(I2cDriver<'static>, u8)> {
+fn find_display() -> Option<(I2cDriver<'static>, u8)> {
     {
         let sda = PinDriver::input(unsafe { Gpio5::steal() }, Pull::Up).unwrap();
         let scl = PinDriver::input(unsafe { Gpio6::steal() }, Pull::Up).unwrap();
         thread::sleep(Duration::from_millis(10));
-        println!("Lines at rest (both should be high): SDA {}, SCL {}", level(sda.is_high()), level(scl.is_high()));
+        println!("Lines at rest (both should be high): SDA {}, SCL {}", level_name(sda.is_high()), level_name(scl.is_high()));
     }
 
     let config = I2cConfig::new().baudrate(400.kHz().into());
     let mut i2c = I2cDriver::new(unsafe { I2C0::steal() }, unsafe { Gpio5::steal() }, unsafe { Gpio6::steal() }, &config).unwrap();
 
-    let found = scan(&mut i2c);
+    let found = scan_i2c_addresses(&mut i2c);
     println!("I2C devices on D4 (SDA) and D5 (SCL): {found:02X?}");
 
     found.into_iter().find(|address| DISPLAY_ADDRESSES.contains(address)).map(|address| (i2c, address))
@@ -53,7 +53,7 @@ fn main() {
     let mut led = PinDriver::output(peripherals.pins.gpio21).unwrap();
 
     let (i2c, address) = loop {
-        if let Some(found) = connect() {
+        if let Some(found) = find_display() {
             break found;
         }
 
@@ -63,18 +63,18 @@ fn main() {
     };
 
     let interface = I2CDisplayInterface::new_custom_address(i2c, address);
-    let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0).into_buffered_graphics_mode();
-    display.init().unwrap();
+    let mut screen = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0).into_buffered_graphics_mode();
+    screen.init().unwrap();
     println!("OK: display found at 0x{address:02X}");
 
-    display.clear(BinaryColor::On).unwrap();
-    display.flush().unwrap();
+    screen.clear(BinaryColor::On).unwrap();
+    screen.flush().unwrap();
     thread::sleep(Duration::from_millis(1500));
 
     let border = Rectangle::new(Point::zero(), Size::new(128, 64)).into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1));
-    display.clear(BinaryColor::Off).unwrap();
-    border.draw(&mut display).unwrap();
-    display.flush().unwrap();
+    screen.clear(BinaryColor::Off).unwrap();
+    border.draw(&mut screen).unwrap();
+    screen.flush().unwrap();
     thread::sleep(Duration::from_millis(1500));
 
     let small = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
@@ -84,11 +84,11 @@ fn main() {
     loop {
         let seconds = started.elapsed().as_secs();
 
-        display.clear(BinaryColor::Off).unwrap();
-        Text::new("MEMORY GLASSES", Point::new(4, 12), small).draw(&mut display).unwrap();
-        Text::new("Display OK", Point::new(4, 24), small).draw(&mut display).unwrap();
-        Text::new(&format!("{seconds} s"), Point::new(4, 52), large).draw(&mut display).unwrap();
-        display.flush().unwrap();
+        screen.clear(BinaryColor::Off).unwrap();
+        Text::new("MEMORY GLASSES", Point::new(4, 12), small).draw(&mut screen).unwrap();
+        Text::new("Display OK", Point::new(4, 24), small).draw(&mut screen).unwrap();
+        Text::new(&format!("{seconds} s"), Point::new(4, 52), large).draw(&mut screen).unwrap();
+        screen.flush().unwrap();
 
         println!("Running: {seconds} s");
 
