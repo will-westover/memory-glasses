@@ -42,5 +42,8 @@ def current_extras(moment_id: str) -> dict:
     """Return the extra files kept with a moment, by name."""
     folder = MOMENTS_DIR / moment_id
 
-    return {name: folder / name for name in manifest_of(moment_id).get("extras", [])
-            if storage.local(folder / name) is not None}
+    return {
+        name: folder / name
+        for name in manifest_of(moment_id).get("extras", [])
+        if storage.local(folder / name) is not None
+    }

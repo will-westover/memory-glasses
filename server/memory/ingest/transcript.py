@@ -17,7 +17,8 @@ def small_mp3(path: Path) -> bytes:
     """Return the audio as a mono MP3 small enough to upload."""
     result = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-b:a", f"{UPLOAD_KBPS}k", "-f", "mp3", "-"],
-        capture_output=True, check=True,
+        capture_output=True,
+        check=True,
     )
 
     return result.stdout

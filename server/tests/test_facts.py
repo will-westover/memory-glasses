@@ -11,8 +11,14 @@ def line(start, end, text, speaker="A"):
 
 
 def frame(frame_id, offset, objects=(), texts=()):
-    return {"id": frame_id, "at": EVENING, "offset_seconds": offset, "summary": "Making coffee. Steam rises.",
-            "objects": list(objects), "texts": list(texts)}
+    return {
+        "id": frame_id,
+        "at": EVENING,
+        "offset_seconds": offset,
+        "summary": "Making coffee. Steam rises.",
+        "objects": list(objects),
+        "texts": list(texts),
+    }
 
 
 def test_short_lines_are_joined_into_one_passage():
@@ -38,7 +44,11 @@ def test_each_object_becomes_its_own_fact_with_context():
 
 def test_an_object_that_stays_put_is_not_repeated():
     bottle = ("bottle", "on counter")
-    frames = [frame(1, 0.0, objects=[bottle]), frame(2, 2.0, objects=[bottle]), frame(3, 4.0, objects=[("bottle", "in bag")])]
+    frames = [
+        frame(1, 0.0, objects=[bottle]),
+        frame(2, 2.0, objects=[bottle]),
+        frame(3, 4.0, objects=[("bottle", "in bag")]),
+    ]
 
     object_facts = [fact["text"].split(".")[0] for fact in frame_facts(frames, None) if fact["kind"] == "object"]
 

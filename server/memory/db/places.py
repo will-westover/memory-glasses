@@ -51,8 +51,15 @@ def located_moments(conn: psycopg.Connection) -> list[dict]:
     )
 
     return [
-        {"id": moment_id, "source": source, "started_at": started_at, "duration_seconds": duration, "lat": lat,
-         "lon": lon, "place": {"id": place_id, "name": name} if place_id else None}
+        {
+            "id": moment_id,
+            "source": source,
+            "started_at": started_at,
+            "duration_seconds": duration,
+            "lat": lat,
+            "lon": lon,
+            "place": {"id": place_id, "name": name} if place_id else None,
+        }
         for moment_id, source, started_at, duration, lat, lon, place_id, name in rows
     ]
 
@@ -67,8 +74,16 @@ def list_places(conn: psycopg.Connection) -> list[dict]:
     )
 
     return [
-        {"id": place_id, "name": name, "lat": lat, "lon": lon, "updated_at": updated_at, "has_map": has_map,
-         "moments": moments, "rooms": rooms}
+        {
+            "id": place_id,
+            "name": name,
+            "lat": lat,
+            "lon": lon,
+            "updated_at": updated_at,
+            "has_map": has_map,
+            "moments": moments,
+            "rooms": rooms,
+        }
         for place_id, name, lat, lon, updated_at, has_map, moments, rooms in rows
     ]
 
@@ -83,8 +98,9 @@ def place_map(conn: psycopg.Connection, place_id: int) -> str | None:
 def save_place(conn: psycopg.Connection, place_id: int | None, map_path: str | None, lat, lon) -> int:
     """Create a place, or give an existing one a newer map. Return its id."""
     if place_id is not None:
-        conn.execute("update place set map_path = coalesce(%s, map_path), updated_at = now() where id = %s",
-                     (map_path, place_id))
+        conn.execute(
+            "update place set map_path = coalesce(%s, map_path), updated_at = now() where id = %s", (map_path, place_id)
+        )
         return place_id
 
     (new_id,) = conn.execute(
@@ -109,10 +125,13 @@ def set_moment_place(conn: psycopg.Connection, moment_id: str, place_id: int, in
 
 def name_place(conn: psycopg.Connection, place_id: int, name: str | None, by_user: bool) -> bool:
     """Set a place's name, unless a model is naming one the user already named. Return whether it changed."""
-    return conn.execute(
-        "update place set name = %s, named = named or %s where id = %s and (%s or not named)",
-        (name, by_user, place_id, by_user),
-    ).rowcount > 0
+    return (
+        conn.execute(
+            "update place set name = %s, named = named or %s where id = %s and (%s or not named)",
+            (name, by_user, place_id, by_user),
+        ).rowcount
+        > 0
+    )
 
 
 def place_moments(conn: psycopg.Connection, place_id: int) -> list[str]:
@@ -182,7 +201,9 @@ def set_frame_rooms(conn: psycopg.Connection, moment_id: str, rooms: dict[int, i
     conn.execute("update frame set room_id = null where moment_id = %s", (moment_id,))
 
     with conn.cursor() as cursor:
-        cursor.executemany("update frame set room_id = %s where id = %s", [(room, frame) for frame, room in rooms.items()])
+        cursor.executemany(
+            "update frame set room_id = %s where id = %s", [(room, frame) for frame, room in rooms.items()]
+        )
 
 
 def mapped_frames(conn: psycopg.Connection, place_id: int, moment_id: str) -> list[tuple]:
@@ -197,13 +218,16 @@ def mapped_frames(conn: psycopg.Connection, place_id: int, moment_id: str) -> li
 def drop_empty(conn: psycopg.Connection) -> None:
     """Delete rooms no frame is in and places nothing happened at, unless the user named them."""
     conn.execute("delete from room r where not r.named and not exists (select 1 from frame f where f.room_id = r.id)")
-    conn.execute("delete from place p where not p.named and not exists (select 1 from segment s where s.place_id = p.id)")
+    conn.execute(
+        "delete from place p where not p.named and not exists (select 1 from segment s where s.place_id = p.id)"
+    )
 
 
 def name_room(conn: psycopg.Connection, room_id: int, name: str) -> int | None:
     """Rename a room as the user asked. Return its place's id, or None if there is no such room."""
-    row = conn.execute("update room set name = %s, named = true where id = %s returning place_id",
-                       (name, room_id)).fetchone()
+    row = conn.execute(
+        "update room set name = %s, named = true where id = %s returning place_id", (name, room_id)
+    ).fetchone()
 
     return row[0] if row else None
 

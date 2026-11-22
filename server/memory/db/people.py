@@ -78,8 +78,10 @@ def merge_people(conn: psycopg.Connection, person_id: int, into: int) -> None:
     """Move every face of one person to another, then delete the first."""
     with conn.transaction():
         conn.execute("update face set person_id = %s where person_id = %s", (into, person_id))
-        conn.execute("update person set name = coalesce(name, (select name from person where id = %s)) where id = %s",
-                     (person_id, into))
+        conn.execute(
+            "update person set name = coalesce(name, (select name from person where id = %s)) where id = %s",
+            (person_id, into),
+        )
         conn.execute("delete from person where id = %s", (person_id,))
 
 

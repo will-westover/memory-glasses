@@ -2,8 +2,18 @@ from memory.evals import by_kind, retrieved, summarise
 
 
 def row(verdict, expected="Four.", supported=True, hit=True):
-    return {"verdict": verdict, "expected": expected, "supported": supported, "retrieved": hit,
-            "cited": hit, "found_right": True, "kind": "said", "model_calls": 2, "seconds": 3.0, "usd": 0.001}
+    return {
+        "verdict": verdict,
+        "expected": expected,
+        "supported": supported,
+        "retrieved": hit,
+        "cited": hit,
+        "found_right": True,
+        "kind": "said",
+        "model_calls": 2,
+        "seconds": 3.0,
+        "usd": 0.001,
+    }
 
 
 def test_retrieved_ignores_case_and_needs_one_phrase():
@@ -14,7 +24,12 @@ def test_retrieved_ignores_case_and_needs_one_phrase():
 
 
 def test_scores_split_answerable_from_unanswerable():
-    rows = [row("correct"), row("partial"), row("wrong", expected=None, hit=None), row("correct", expected=None, hit=None)]
+    rows = [
+        row("correct"),
+        row("partial"),
+        row("wrong", expected=None, hit=None),
+        row("correct", expected=None, hit=None),
+    ]
 
     totals = summarise(rows)
 

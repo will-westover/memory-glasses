@@ -18,8 +18,9 @@ router = APIRouter()
 
 
 @router.get("/search")
-def search_memories(q: str = Query(min_length=1), limit: int = Query(40, ge=1, le=100),
-                    conn: psycopg.Connection = Depends(connection)) -> dict:
+def search_memories(
+    q: str = Query(min_length=1), limit: int = Query(40, ge=1, le=100), conn: psycopg.Connection = Depends(connection)
+) -> dict:
     """Return the facts that best match some words, best first, for search inside the Timeline."""
     facts = search(conn, q, limit=limit)
     details = db.source_details(conn, facts)
@@ -49,8 +50,13 @@ def turn_json(turn: dict, details: dict) -> dict:
             "next_steps": turn["next_steps"],
         }
 
-    return {"id": turn["id"], "asked_at": turn["asked_at"], "question": turn["question"], "answer": answer,
-            "problem": turn["problem"]}
+    return {
+        "id": turn["id"],
+        "asked_at": turn["asked_at"],
+        "question": turn["question"],
+        "answer": answer,
+        "problem": turn["problem"],
+    }
 
 
 def turns_json(conn: psycopg.Connection, turns: list[dict]) -> list[dict]:
@@ -106,7 +112,9 @@ def prepare(conn: psycopg.Connection, conversation_id: UUID, body: ChatQuestion)
 
 def failed(error: Exception) -> list[dict]:
     """Return the message stored when an answer fails."""
-    return [{"role": "assistant", "at": datetime.now().astimezone(), "content": {"error": f"The answer failed: {error}"}}]
+    return [
+        {"role": "assistant", "at": datetime.now().astimezone(), "content": {"error": f"The answer failed: {error}"}}
+    ]
 
 
 def saved_turn(conn: psycopg.Connection, conversation_id: UUID, messages: list[dict]) -> dict:
@@ -125,7 +133,9 @@ def give_title(conversation_id: UUID, question: str, answer: str | None) -> None
 
 
 @router.post("/conversations/{conversation_id}/ask")
-def ask_in_conversation(conversation_id: UUID, body: ChatQuestion, conn: psycopg.Connection = Depends(connection)) -> dict:
+def ask_in_conversation(
+    conversation_id: UUID, body: ChatQuestion, conn: psycopg.Connection = Depends(connection)
+) -> dict:
     """Answer a question using the conversation so far, and store both."""
     history, frame, question = prepare(conn, conversation_id, body)
 
@@ -175,13 +185,17 @@ def answer_stream(conversation_id: UUID, body: ChatQuestion, history: list, fram
 
 
 @router.post("/conversations/{conversation_id}/ask/stream")
-def ask_stream(conversation_id: UUID, body: ChatQuestion,
-               conn: psycopg.Connection = Depends(connection)) -> StreamingResponse:
+def ask_stream(
+    conversation_id: UUID, body: ChatQuestion, conn: psycopg.Connection = Depends(connection)
+) -> StreamingResponse:
     """Answer a question as server-sent events: each step, the answer as it is written, then the stored turn."""
     history, frame, question = prepare(conn, conversation_id, body)
 
-    return StreamingResponse(answer_stream(conversation_id, body, history, frame, question),
-                             media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+    return StreamingResponse(
+        answer_stream(conversation_id, body, history, frame, question),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 SUGGESTIONS: dict = {"moment": None, "questions": []}

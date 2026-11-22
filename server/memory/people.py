@@ -1,9 +1,9 @@
 """The people whose faces were found, and their names.
 
-    uv run python -m memory.people list
-    uv run python -m memory.people name <id> "Sam"
-    uv run python -m memory.people merge <id> <into id>
-    uv run python -m memory.people forget <id>
+uv run python -m memory.people list
+uv run python -m memory.people name <id> "Sam"
+uv run python -m memory.people merge <id> <into id>
+uv run python -m memory.people forget <id>
 """
 
 import argparse
@@ -39,8 +39,10 @@ def main() -> int:
             db.forget_person(conn, args.person_id)
 
         for person in db.list_people(conn):
-            print(f"{person['id']:>4}  {person['name'] or '(unnamed)':<20} {person['faces']:>4} faces"
-                  f"  last seen {person['last_seen'].astimezone():%a %d %b %H:%M}")
+            print(
+                f"{person['id']:>4}  {person['name'] or '(unnamed)':<20} {person['faces']:>4} faces"
+                f"  last seen {person['last_seen'].astimezone():%a %d %b %H:%M}"
+            )
 
     print("Rebuild facts for a moment to use new names: uv run python -m memory.ingest.facts <moment id>")
 

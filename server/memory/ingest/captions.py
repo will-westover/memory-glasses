@@ -47,9 +47,24 @@ class Caption(BaseModel):
 def small_jpeg(path: Path) -> bytes:
     """Return the image as JPEG bytes, at most IMAGE_WIDTH pixels wide."""
     result = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-vf", f"scale='min({IMAGE_WIDTH},iw)':-2", "-q:v", "3",
-         "-f", "image2pipe", "-c:v", "mjpeg", "-"],
-        capture_output=True, check=True,
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            f"scale='min({IMAGE_WIDTH},iw)':-2",
+            "-q:v",
+            "3",
+            "-f",
+            "image2pipe",
+            "-c:v",
+            "mjpeg",
+            "-",
+        ],
+        capture_output=True,
+        check=True,
     )
 
     return result.stdout
@@ -70,10 +85,12 @@ def caption_image(path: Path, model: str = CAPTION_MODEL):
     response = llm.client().responses.parse(
         model=model,
         instructions=INSTRUCTIONS,
-        input=[{
-            "role": "user",
-            "content": [{"type": "input_image", "image_url": image_url}],
-        }],
+        input=[
+            {
+                "role": "user",
+                "content": [{"type": "input_image", "image_url": image_url}],
+            }
+        ],
         text_format=Caption,
         reasoning={"effort": "none"},
     )

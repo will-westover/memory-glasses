@@ -1,6 +1,6 @@
 """Run every step on a recording: frames, captions, transcript, faces, rooms and facts.
 
-    uv run python -m memory.pipeline path/to/video.mov --frames-per-minute 30
+uv run python -m memory.pipeline path/to/video.mov --frames-per-minute 30
 """
 
 import argparse
@@ -16,13 +16,26 @@ from memory.ingest import captions, faces, facts, recording, transcript
 STEPS = ("Picking frames", "Describing frames", "Transcribing", "Finding faces", "Finding rooms", "Building facts")
 
 
-def process(video: Path, frames_per_minute: float = FRAMES_PER_MINUTE, extras: dict[str, Path] | None = None,
-            replace: bool = False, reuse_frames: bool = False, place_id: int | None = None, source: str | None = None,
-            on_step: Callable[[str], None] = lambda step: None) -> str:
+def process(
+    video: Path,
+    frames_per_minute: float = FRAMES_PER_MINUTE,
+    extras: dict[str, Path] | None = None,
+    replace: bool = False,
+    reuse_frames: bool = False,
+    place_id: int | None = None,
+    source: str | None = None,
+    on_step: Callable[[str], None] = lambda step: None,
+) -> str:
     """Turn a video into a searchable moment and return its id."""
     on_step(STEPS[0])
-    moment_dir = recording.ingest(video, frames_per_minute=frames_per_minute, replace=replace, extras=extras,
-                                  reuse_frames=reuse_frames, source=source)
+    moment_dir = recording.ingest(
+        video,
+        frames_per_minute=frames_per_minute,
+        replace=replace,
+        extras=extras,
+        reuse_frames=reuse_frames,
+        source=source,
+    )
     moment_id = moment_dir.name
 
     with db.connect() as conn:

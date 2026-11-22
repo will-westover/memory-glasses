@@ -1,4 +1,3 @@
-
 from memory import glasses, storage
 
 
@@ -54,7 +53,9 @@ def test_a_kept_video_is_copied_inside_r2_so_mirroring_sends_nothing(r2, tmp_pat
 
 def test_a_frame_the_glasses_put_in_r2_takes_its_place_in_the_recording(r2, tmp_path, monkeypatch):
     monkeypatch.setattr(glasses, "GLASSES_DIR", tmp_path / "glasses")
-    monkeypatch.setattr(glasses, "place", lambda conn, recording, taken: tmp_path / "glasses" / recording / "000002500.jpg")
+    monkeypatch.setattr(
+        glasses, "place", lambda conn, recording, taken: tmp_path / "glasses" / recording / "000002500.jpg"
+    )
     r2.put_object(Key="glasses/rec1/" + "a" * 32 + ".pending", Body=b"\xff\xd8 first")
 
     path = glasses.arrived(None, "rec1", "a" * 32)

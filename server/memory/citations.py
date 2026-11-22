@@ -39,7 +39,7 @@ def partial_string(buffer: str, key: str) -> str:
     if not match:
         return ""
 
-    raw = buffer[match.end():]
+    raw = buffer[match.end() :]
     end = 0
 
     while end < len(raw):
@@ -52,7 +52,7 @@ def partial_string(buffer: str, key: str) -> str:
 
         end += 1
 
-    piece = raw[:min(end, len(raw))]
+    piece = raw[: min(end, len(raw))]
 
     for cut in range(len(piece), max(len(piece) - 6, -1), -1):
         try:

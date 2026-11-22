@@ -32,8 +32,9 @@ def run_cloud_job(job_id: str) -> None:
     url = f"https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{os.environ['WORKER_JOB']}:run"
     body = json.dumps({"overrides": {"containerOverrides": [{"args": [job_id]}]}}).encode()
 
-    request = urllib.request.Request(url, data=body, method="POST",
-                                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    request = urllib.request.Request(
+        url, data=body, method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    )
 
     with urllib.request.urlopen(request, timeout=20) as response:
         response.read()
@@ -91,8 +92,14 @@ def process_glasses(job_id, task: dict) -> None:
 
 def upload_task(names: dict, frames_per_minute: float, place_id: int | None, source: str) -> dict:
     """Describe the work for an uploaded recording: its files and how to process it."""
-    return {"kind": "upload", "video": names["video"], "extras": [name for field, name in names.items() if field != "video"],
-            "frames_per_minute": frames_per_minute, "place_id": place_id, "source": source}
+    return {
+        "kind": "upload",
+        "video": names["video"],
+        "extras": [name for field, name in names.items() if field != "video"],
+        "frames_per_minute": frames_per_minute,
+        "place_id": place_id,
+        "source": source,
+    }
 
 
 def process_upload(job_id, task: dict) -> None:
@@ -106,14 +113,16 @@ def process_upload(job_id, task: dict) -> None:
 def run_upload(job_id, video, extras: dict, frames_per_minute: float, place_id: int | None, source: str) -> None:
     """Process an uploaded recording, keeping its job's status up to date."""
     with db.connect() as conn:
+
         def step(name: str) -> None:
             db.update_job(conn, job_id, step=name)
             conn.commit()
 
         try:
             storage.fetch_folder(video.parent, videos=True)
-            moment_id = pipeline.process(video, frames_per_minute, extras, place_id=place_id, source=source,
-                                         on_step=step)
+            moment_id = pipeline.process(
+                video, frames_per_minute, extras, place_id=place_id, source=source, on_step=step
+            )
             db.update_job(conn, job_id, status="ready", step=None, moment_id=moment_id)
 
             if video.parent.parent == UPLOADS_DIR:
@@ -127,13 +136,20 @@ def run_upload(job_id, video, extras: dict, frames_per_minute: float, place_id: 
 def run_reprocess(job_id, moment_id: str, frames_per_minute: float) -> None:
     """Rebuild a moment's frames at a new rate from its kept video, then caption only what's new."""
     with db.connect() as conn:
+
         def step(name: str) -> None:
             db.update_job(conn, job_id, step=name)
             conn.commit()
 
         try:
-            pipeline.process(video_path(moment_id), frames_per_minute, current_extras(moment_id), replace=True,
-                             reuse_frames=True, on_step=step)
+            pipeline.process(
+                video_path(moment_id),
+                frames_per_minute,
+                current_extras(moment_id),
+                replace=True,
+                reuse_frames=True,
+                on_step=step,
+            )
             db.update_job(conn, job_id, status="ready", step=None)
         except Exception as error:
             conn.rollback()

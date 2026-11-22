@@ -101,14 +101,38 @@ def filter_graph(seconds_per_frame: float) -> str:
 def sample_video(video: Path, frames_dir: Path, seconds_per_frame: float) -> tuple[bytes, list[float], list[float]]:
     """Write the candidate JPEGs and return the thumbnails and the two detail measurements."""
     with tempfile.TemporaryDirectory() as scratch:
-        run([
-            "ffmpeg", "-v", "error", "-i", str(video.resolve()),
-            "-filter_complex", filter_graph(seconds_per_frame),
-            "-map", "[full]", "-q:v", "3", str(frames_dir.resolve() / "%06d.jpg"),
-            "-map", "[thumb]", "-f", "rawvideo", "thumbs.grey",
-            "-map", "[detail]", "-f", "null", "-",
-            "-map", "[blurred]", "-f", "null", "-",
-        ], cwd=Path(scratch))
+        run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(video.resolve()),
+                "-filter_complex",
+                filter_graph(seconds_per_frame),
+                "-map",
+                "[full]",
+                "-q:v",
+                "3",
+                str(frames_dir.resolve() / "%06d.jpg"),
+                "-map",
+                "[thumb]",
+                "-f",
+                "rawvideo",
+                "thumbs.grey",
+                "-map",
+                "[detail]",
+                "-f",
+                "null",
+                "-",
+                "-map",
+                "[blurred]",
+                "-f",
+                "null",
+                "-",
+            ],
+            cwd=Path(scratch),
+        )
 
         grey = (Path(scratch) / "thumbs.grey").read_bytes()
         detail = read_averages(Path(scratch) / "detail.txt")
@@ -134,10 +158,23 @@ def extract_candidates(video: Path, frames_dir: Path, seconds_per_frame: float) 
 
 def extract_audio(video: Path, audio_path: Path) -> None:
     """Write the recording's sound as a mono 16 kHz WAV file."""
-    run([
-        "ffmpeg", "-v", "error", "-i", str(video),
-        "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(audio_path),
-    ])
+    run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(video),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(audio_path),
+        ]
+    )
 
 
 def keep_file(source: Path, target: Path) -> None:
@@ -158,14 +195,42 @@ def keep_video(video: Path, folder: Path) -> str:
         keep_file(video, folder / name)
         return name
 
-    run(["ffmpeg", "-v", "error", "-i", str(video), "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-         "-c:a", "aac", "-movflags", "+faststart", str(folder / "video.mp4")])
+    run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(video),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(folder / "video.mp4"),
+        ]
+    )
 
     return "video.mp4"
 
 
-def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frames_per_minute: float,
-                 max_distance: int, max_blur: float, extras: dict[str, Path], reuse: list[dict], source: str) -> None:
+def build_moment(
+    video: Path,
+    info: dict,
+    build_dir: Path,
+    moment_id: str,
+    frames_per_minute: float,
+    max_distance: int,
+    max_blur: float,
+    extras: dict[str, Path],
+    reuse: list[dict],
+    source: str,
+) -> None:
     """Fill a folder with the moment's video, kept frames, audio, extra files, manifest and page."""
     started = start_time(info, video)
     place = location(info)
@@ -176,8 +241,9 @@ def build_moment(video: Path, info: dict, build_dir: Path, moment_id: str, frame
     fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame) if frames_per_minute else ([], [])
     candidates = sorted(frames_dir.glob("*.jpg"))
 
-    sampled, usable, picks = choose_frames(fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates,
-                                           reuse)
+    sampled, usable, picks = choose_frames(
+        fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates, reuse
+    )
     frames = keep_frames(frames_dir, picks, candidates, started)
     poses = load_poses(extras["poses.json"]) if "poses.json" in extras else []
 
@@ -225,8 +291,14 @@ def frame_name(offset: float) -> str:
     return f"{round(offset * 1000):08d}.jpg"
 
 
-def slot_picks(slots: list[int | None], fingerprints: list[int], blur: list, seconds_per_frame: float,
-               candidates: list[Path], reuse: list[dict]) -> list[dict]:
+def slot_picks(
+    slots: list[int | None],
+    fingerprints: list[int],
+    blur: list,
+    seconds_per_frame: float,
+    candidates: list[Path],
+    reuse: list[dict],
+) -> list[dict]:
     """Return one frame per slot: a frame already kept inside the slot if there is one, else the sharpest sample."""
     picks = []
 
@@ -235,17 +307,36 @@ def slot_picks(slots: list[int | None], fingerprints: list[int], blur: list, sec
         existing = next((frame for frame in reuse if start <= frame["offset_seconds"] < end), None)
 
         if existing:
-            picks.append({"offset": existing["offset_seconds"], "source": existing["path"],
-                          "fingerprint": int(existing["fingerprint"], 16), "blur": existing.get("blur")})
+            picks.append(
+                {
+                    "offset": existing["offset_seconds"],
+                    "source": existing["path"],
+                    "fingerprint": int(existing["fingerprint"], 16),
+                    "blur": existing.get("blur"),
+                }
+            )
         elif index is not None:
-            picks.append({"offset": frame_offset(index, seconds_per_frame), "source": candidates[index],
-                          "fingerprint": fingerprints[index], "blur": blur[index]})
+            picks.append(
+                {
+                    "offset": frame_offset(index, seconds_per_frame),
+                    "source": candidates[index],
+                    "fingerprint": fingerprints[index],
+                    "blur": blur[index],
+                }
+            )
 
     return picks
 
 
-def choose_frames(fingerprints: list[int], blur: list, seconds_per_frame: float, max_distance: int, max_blur: float,
-                  candidates: list[Path], reuse: list[dict]) -> tuple[int, int, list[dict]]:
+def choose_frames(
+    fingerprints: list[int],
+    blur: list,
+    seconds_per_frame: float,
+    max_distance: int,
+    max_blur: float,
+    candidates: list[Path],
+    reuse: list[dict],
+) -> tuple[int, int, list[dict]]:
     """Return how many slots there were, how many had a usable frame, and the frames to keep."""
     slots = sharpest_per_slot(blur, CANDIDATES_PER_SLOT, max_blur)
     picks = slot_picks(slots, fingerprints, blur, seconds_per_frame, candidates, reuse)
@@ -267,13 +358,15 @@ def keep_frames(frames_dir: Path, picks: list[dict], candidates: list[Path], sta
         else:
             shutil.copy2(pick["source"], target)
 
-        frames.append({
-            "file": f"frames/{target.name}",
-            "offset_seconds": pick["offset"],
-            "captured_at": (started + timedelta(seconds=pick["offset"])).isoformat(),
-            "fingerprint": f"{pick['fingerprint']:016x}",
-            "blur": round(pick["blur"], 3) if pick["blur"] is not None else None,
-        })
+        frames.append(
+            {
+                "file": f"frames/{target.name}",
+                "offset_seconds": pick["offset"],
+                "captured_at": (started + timedelta(seconds=pick["offset"])).isoformat(),
+                "fingerprint": f"{pick['fingerprint']:016x}",
+                "blur": round(pick["blur"], 3) if pick["blur"] is not None else None,
+            }
+        )
 
     for candidate in candidates:
         candidate.unlink(missing_ok=True)
@@ -288,12 +381,20 @@ def kept_frames(moment_dir: Path) -> list[dict]:
     if not manifest.is_file():
         return []
 
-    return [{**frame, "path": moment_dir / frame["file"]} for frame in json.loads(manifest.read_text())["frames"]
-            if (moment_dir / frame["file"]).is_file()]
+    return [
+        {**frame, "path": moment_dir / frame["file"]}
+        for frame in json.loads(manifest.read_text())["frames"]
+        if (moment_dir / frame["file"]).is_file()
+    ]
 
 
-def planned_frames(video: Path, frames_per_minute: float, reuse: list[dict] | None = None,
-                   max_distance: int = DEFAULT_MAX_DISTANCE, max_blur: float = DEFAULT_MAX_BLUR) -> list[dict]:
+def planned_frames(
+    video: Path,
+    frames_per_minute: float,
+    reuse: list[dict] | None = None,
+    max_distance: int = DEFAULT_MAX_DISTANCE,
+    max_blur: float = DEFAULT_MAX_BLUR,
+) -> list[dict]:
     """Return the frames that would be kept at a rate, each saying whether it's reused, without keeping anything."""
     if not frames_per_minute:
         return []
@@ -306,8 +407,9 @@ def planned_frames(video: Path, frames_per_minute: float, reuse: list[dict] | No
         fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame)
         candidates = sorted(frames_dir.glob("*.jpg"))
 
-        _, _, picks = choose_frames(fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates,
-                                    reuse or [])
+        _, _, picks = choose_frames(
+            fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates, reuse or []
+        )
 
     return [{"name": frame_name(pick["offset"]), "reused": pick["source"].parent != frames_dir} for pick in picks]
 
@@ -342,12 +444,16 @@ def ingest(
 
     shutil.rmtree(build_dir, ignore_errors=True)
     reuse = kept_frames(moment_dir) if reuse_frames else []
-    source = source or json.loads((moment_dir / "manifest.json").read_text()).get("source", "video") \
-        if (moment_dir / "manifest.json").is_file() else source or "video"
+    source = (
+        source or json.loads((moment_dir / "manifest.json").read_text()).get("source", "video")
+        if (moment_dir / "manifest.json").is_file()
+        else source or "video"
+    )
 
     try:
-        build_moment(video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur, extras or {},
-                     reuse, source)
+        build_moment(
+            video, info, build_dir, moment_id, frames_per_minute, max_distance, max_blur, extras or {}, reuse, source
+        )
     except Exception:
         shutil.rmtree(build_dir, ignore_errors=True)
         raise
@@ -376,15 +482,20 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Turn a recorded video into a moment folder.")
     parser.add_argument("video", type=Path)
     parser.add_argument(
-        "--frames-per-minute", type=float,
+        "--frames-per-minute",
+        type=float,
         help=f"how many pictures to take each minute, 0 to {MAX_FRAMES_PER_MINUTE}; defaults to the saved setting",
     )
     parser.add_argument(
-        "--max-distance", type=int, default=DEFAULT_MAX_DISTANCE,
+        "--max-distance",
+        type=int,
+        default=DEFAULT_MAX_DISTANCE,
         help="frames differing in this many fingerprint bits or fewer are dropped (0 to 64)",
     )
     parser.add_argument(
-        "--max-blur", type=float, default=DEFAULT_MAX_BLUR,
+        "--max-blur",
+        type=float,
+        default=DEFAULT_MAX_BLUR,
         help="a slot is dropped when its sharpest frame scores above this; raise it to keep more",
     )
     parser.add_argument("--replace", action="store_true", help="rebuild the moment if it already exists")
@@ -395,8 +506,10 @@ def parse_arguments() -> argparse.Namespace:
 def print_report(moment_dir: Path) -> None:
     manifest = json.loads((moment_dir / "manifest.json").read_text())
 
-    print(f"Kept {manifest['frames_kept']} of {manifest['frames_sampled']} frames"
-          f" ({manifest['frames_blurry']} too blurry).")
+    print(
+        f"Kept {manifest['frames_kept']} of {manifest['frames_sampled']} frames"
+        f" ({manifest['frames_blurry']} too blurry)."
+    )
     print(f"Sound: {'audio.wav' if manifest['audio'] else 'none'}")
 
 

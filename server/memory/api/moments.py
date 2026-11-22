@@ -13,7 +13,16 @@ from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.gps import place_for
 from memory.moment_files import MOMENTS_DIR, has_video, manifest_of, video_path
-from memory.api.shared import MAX_CLIP_SECONDS, Rate, connection, fact_json, frame_json, image_url, stored_file, video_type
+from memory.api.shared import (
+    MAX_CLIP_SECONDS,
+    Rate,
+    connection,
+    fact_json,
+    frame_json,
+    image_url,
+    stored_file,
+    video_type,
+)
 
 router = APIRouter()
 
@@ -55,8 +64,16 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "id": moment_id,
         "title": title,
         "overview": overview,
-        "chapters": [{"id": fact["id"], "start": fact["offset_seconds"], "end": end, "title": titles.get(fact["id"]),
-                      "text": fact["text"]} for fact, end in zip(summaries, ends)],
+        "chapters": [
+            {
+                "id": fact["id"],
+                "start": fact["offset_seconds"],
+                "end": end,
+                "title": titles.get(fact["id"]),
+                "text": fact["text"],
+            }
+            for fact, end in zip(summaries, ends)
+        ],
         "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
         "transcript": db.transcript_lines(conn, moment_id),
         "summaries": [fact_json(fact) for fact in db.summaries(conn, moment_id)],
@@ -132,8 +149,9 @@ def check_higher(moment_id: str, frames_per_minute: float) -> None:
 
 
 @router.get("/moments/{moment_id}/reprocess-estimate")
-def reprocess_estimate(moment_id: str, frames_per_minute: float,
-                       conn: psycopg.Connection = Depends(connection)) -> dict:
+def reprocess_estimate(
+    moment_id: str, frames_per_minute: float, conn: psycopg.Connection = Depends(connection)
+) -> dict:
     """Say how many new frames a rate would add and what describing them would cost."""
     path = video_path(moment_id)
 
@@ -146,8 +164,12 @@ def reprocess_estimate(moment_id: str, frames_per_minute: float,
     slots = math.ceil(manifest.get("duration_seconds", 0) * frames_per_minute / 60)
     kept = min(len(manifest.get("frames", [])), slots)
 
-    return {"frames": slots, "new_frames": slots - kept, "kept_captions": kept,
-            "usd": round((slots - kept) * db.caption_cost(conn), 4)}
+    return {
+        "frames": slots,
+        "new_frames": slots - kept,
+        "kept_captions": kept,
+        "usd": round((slots - kept) * db.caption_cost(conn), 4),
+    }
 
 
 @router.post("/moments/{moment_id}/reprocess")

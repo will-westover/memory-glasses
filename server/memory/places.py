@@ -1,8 +1,8 @@
 """Places (an apartment, a lecture hall) and the rooms inside them, for every frame.
 
-    uv run python -m memory.places list
-    uv run python -m memory.places label <moment id>
-    uv run python -m memory.places rebuild
+uv run python -m memory.places list
+uv run python -m memory.places label <moment id>
+uv run python -m memory.places rebuild
 """
 
 import argparse
@@ -116,8 +116,10 @@ def scan_note(moment_dir: Path) -> str | None:
 
         if len(points):
             low, high = np.percentile(points, 2, axis=0), np.percentile(points, 98, axis=0)
-            notes.append(f"The lidar scan spans about {high[0] - low[0]:.0f} by {high[2] - low[2]:.0f} m and is "
-                         f"{high[1] - low[1]:.1f} m tall.")
+            notes.append(
+                f"The lidar scan spans about {high[0] - low[0]:.0f} by {high[2] - low[2]:.0f} m and is "
+                f"{high[1] - low[1]:.1f} m tall."
+            )
 
     return " ".join(notes) or None
 
@@ -134,8 +136,11 @@ def moment_vector(conn, moment_id: str) -> np.ndarray | None:
 
 def nearby(conn, lat, lon) -> list[dict]:
     """Return the places near a location, most recently updated first; all of them when the location is unknown."""
-    return [place for place in db.list_places(conn)
-            if lat is None or place["lat"] is None or distance_m(lat, lon, place["lat"], place["lon"]) <= NEARBY_METRES]
+    return [
+        place
+        for place in db.list_places(conn)
+        if lat is None or place["lat"] is None or distance_m(lat, lon, place["lat"], place["lon"]) <= NEARBY_METRES
+    ]
 
 
 def matching_place(conn, moment_id: str, lat, lon) -> int | None:
@@ -146,8 +151,11 @@ def matching_place(conn, moment_id: str, lat, lon) -> int | None:
         return None
 
     close = {place["id"] for place in nearby(conn, lat, lon)}
-    scores = {place_id: float(unit(parse_vector(text)) @ vector)
-              for place_id, text in db.place_vectors(conn).items() if place_id in close}
+    scores = {
+        place_id: float(unit(parse_vector(text)) @ vector)
+        for place_id, text in db.place_vectors(conn).items()
+        if place_id in close
+    }
 
     best = max(scores, key=scores.get, default=None)
 
@@ -212,14 +220,18 @@ def describe_frames(frames: list[dict]) -> str:
 def ask_for_labels(conn, moment_id: str, frames: list[dict], known: list[dict]) -> Labels | None:
     """Ask a model which room every frame was taken in."""
     said = "\n".join(f"{line['start']:.0f} s: {line['text']}" for line in db.transcript_lines(conn, moment_id))
-    rooms = "\n".join(f"- {room['name']}: {room['description'] or ''} Seen there: "
-                      + " | ".join(db.room_examples(conn, room["id"])) for room in known)
+    rooms = "\n".join(
+        f"- {room['name']}: {room['description'] or ''} Seen there: " + " | ".join(db.room_examples(conn, room["id"]))
+        for room in known
+    )
     scan = scan_note(MOMENTS_DIR / moment_id)
 
-    prompt = (f"Known rooms of this place:\n{rooms or '(none yet)'}\n\n"
-              f"Scan: {scan or 'no lidar scan'}\n\n"
-              f"What was said:\n{said or '(nothing)'}\n\n"
-              f"Frames:\n{describe_frames(frames)}")
+    prompt = (
+        f"Known rooms of this place:\n{rooms or '(none yet)'}\n\n"
+        f"Scan: {scan or 'no lidar scan'}\n\n"
+        f"What was said:\n{said or '(nothing)'}\n\n"
+        f"Frames:\n{describe_frames(frames)}"
+    )
 
     llm.require_price(SUMMARY_MODEL)
     response = llm.client().responses.parse(
@@ -253,8 +265,10 @@ def label_rooms(conn, moment_id: str) -> dict[str, int]:
 
     descriptions = {room.name.strip().lower(): room.description for room in labels.rooms}
     picked = {item.frame: capitalised(item.room) for item in labels.frames if 0 <= item.frame < len(frames)}
-    rooms = {name.lower(): db.save_room(conn, place["id"], name, descriptions.get(name.lower()))
-             for name in set(picked.values())}
+    rooms = {
+        name.lower(): db.save_room(conn, place["id"], name, descriptions.get(name.lower()))
+        for name in set(picked.values())
+    }
 
     own = []
 
@@ -300,8 +314,10 @@ def main() -> int:
     with db.connect() as conn:
         if args.command == "list":
             for place in db.list_places(conn):
-                print(f"{place['id']}: {place['name'] or '(unnamed)'}, {place['moments']} moments, "
-                      f"{'map' if place['has_map'] else 'no map'}: {', '.join(place['rooms'])}")
+                print(
+                    f"{place['id']}: {place['name'] or '(unnamed)'}, {place['moments']} moments, "
+                    f"{'map' if place['has_map'] else 'no map'}: {', '.join(place['rooms'])}"
+                )
         elif args.command == "label":
             print(label_rooms(conn, args.moment_id))
             build_facts(conn, args.moment_id)

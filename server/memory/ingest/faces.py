@@ -1,6 +1,6 @@
 """Find faces in a moment's frames and group them into people.
 
-    uv run python -m memory.ingest.faces <moment id>
+uv run python -m memory.ingest.faces <moment id>
 """
 
 import argparse
@@ -137,8 +137,10 @@ def main() -> int:
     with db.connect() as conn:
         counts = find_faces(conn, args.moment_id)
 
-    print(f"Found {counts['faces']} faces in {counts['frames']} frames; {counts['new_people']} new people;"
-          f" {counts['skipped']} side views matched no one and were left out.")
+    print(
+        f"Found {counts['faces']} faces in {counts['frames']} frames; {counts['new_people']} new people;"
+        f" {counts['skipped']} side views matched no one and were left out."
+    )
     print("Name them with: uv run python -m memory.people list")
 
     return 0

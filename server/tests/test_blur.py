@@ -10,7 +10,7 @@ def test_a_blank_frame_has_no_score():
 
 
 def test_each_slot_gives_its_sharpest_frame():
-    scores = [0.40, 0.31, 0.35, 0.38,   0.33, 0.36, 0.30, 0.41]
+    scores = [0.40, 0.31, 0.35, 0.38, 0.33, 0.36, 0.30, 0.41]
 
     assert sharpest_per_slot(scores, per_slot=4, max_blur=0.44) == [1, 6]
 
@@ -23,7 +23,7 @@ def test_a_slot_is_dropped_only_when_every_frame_in_it_is_blurry():
 
 
 def test_blank_frames_are_never_chosen_and_a_short_last_slot_still_counts():
-    scores = [None, 0.35, 0.33, 0.34,   None]
+    scores = [None, 0.35, 0.33, 0.34, None]
 
     assert sharpest_per_slot(scores, per_slot=4, max_blur=0.44) == [2, None]
 

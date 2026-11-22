@@ -12,10 +12,7 @@ MIN_DETAIL = 0.05
 
 def blur_scores(detail: list[float], detail_after_blur: list[float]) -> list[float | None]:
     """Return each frame's blur score, or None for a blank frame."""
-    return [
-        after / before if before >= MIN_DETAIL else None
-        for before, after in zip(detail, detail_after_blur)
-    ]
+    return [after / before if before >= MIN_DETAIL else None for before, after in zip(detail, detail_after_blur)]
 
 
 def sharpest_per_slot(

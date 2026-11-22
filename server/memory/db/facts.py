@@ -45,28 +45,39 @@ FACT_COLUMNS = (
 
 def fact_rows(rows) -> list[dict]:
     return [
-        {"id": fact_id, "kind": kind, "at": at, "moment_id": moment_id, "offset_seconds": float(offset),
-         "text": text, "image_path": image_path, "position": [x, z] if x is not None else None, "room": room,
-         "frame_id": frame_id}
+        {
+            "id": fact_id,
+            "kind": kind,
+            "at": at,
+            "moment_id": moment_id,
+            "offset_seconds": float(offset),
+            "text": text,
+            "image_path": image_path,
+            "position": [x, z] if x is not None else None,
+            "room": room,
+            "frame_id": frame_id,
+        }
         for fact_id, kind, at, moment_id, offset, text, image_path, x, z, room, frame_id in rows
     ]
 
 
 def nearby_facts(conn: psycopg.Connection, fact_id: int, metres: float, limit: int = 12) -> list[dict]:
     """Return what was seen within `metres` of where a fact's frame was taken, in the same mapped place, newest first."""
-    return fact_rows(conn.execute(
-        "with origin as ("
-        "    select frame.x, frame.z, frame.moment_id, fs.place_id, fs.in_place_map from fact"
-        "      join frame on frame.id = fact.frame_id left join frame_segment fs on fs.frame_id = frame.id"
-        "     where fact.id = %(id)s and frame.x is not null)"
-        f" {FACT_COLUMNS} left join frame_segment fs on fs.frame_id = frame.id, origin"
-        " where frame.x is not null and fact.id <> %(id)s and fact.kind in ('frame', 'object', 'text', 'person')"
-        "   and (frame.moment_id = origin.moment_id"
-        "        or (fs.place_id = origin.place_id and fs.in_place_map and origin.in_place_map))"
-        "   and sqrt(power(frame.x - origin.x, 2) + power(frame.z - origin.z, 2)) <= %(metres)s"
-        " order by fact.at desc limit %(limit)s",
-        {"id": fact_id, "metres": metres, "limit": limit},
-    ))
+    return fact_rows(
+        conn.execute(
+            "with origin as ("
+            "    select frame.x, frame.z, frame.moment_id, fs.place_id, fs.in_place_map from fact"
+            "      join frame on frame.id = fact.frame_id left join frame_segment fs on fs.frame_id = frame.id"
+            "     where fact.id = %(id)s and frame.x is not null)"
+            f" {FACT_COLUMNS} left join frame_segment fs on fs.frame_id = frame.id, origin"
+            " where frame.x is not null and fact.id <> %(id)s and fact.kind in ('frame', 'object', 'text', 'person')"
+            "   and (frame.moment_id = origin.moment_id"
+            "        or (fs.place_id = origin.place_id and fs.in_place_map and origin.in_place_map))"
+            "   and sqrt(power(frame.x - origin.x, 2) + power(frame.z - origin.z, 2)) <= %(metres)s"
+            " order by fact.at desc limit %(limit)s",
+            {"id": fact_id, "metres": metres, "limit": limit},
+        )
+    )
 
 
 def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
@@ -76,15 +87,21 @@ def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
 
 def timeline(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:
     """Return the frames, speech and summaries between two times, in order, from only the given moments if named."""
-    return fact_rows(conn.execute(
-        f"{FACT_COLUMNS} where fact.at <= %(end)s"
-        " and (%(moments)s::text[] is null or fact.moment_id = any(%(moments)s::text[])) and ("
-        "    (fact.kind in ('frame', 'speech') and fact.at >= %(start)s)"
-        " or (fact.kind = 'summary' and fact.at > %(summary_start)s))"
-        " order by fact.at, fact.id",
-        {"start": start, "end": end, "summary_start": start - timedelta(seconds=STRETCH_SECONDS),
-         "moments": moments},
-    ))
+    return fact_rows(
+        conn.execute(
+            f"{FACT_COLUMNS} where fact.at <= %(end)s"
+            " and (%(moments)s::text[] is null or fact.moment_id = any(%(moments)s::text[])) and ("
+            "    (fact.kind in ('frame', 'speech') and fact.at >= %(start)s)"
+            " or (fact.kind = 'summary' and fact.at > %(summary_start)s))"
+            " order by fact.at, fact.id",
+            {
+                "start": start,
+                "end": end,
+                "summary_start": start - timedelta(seconds=STRETCH_SECONDS),
+                "moments": moments,
+            },
+        )
+    )
 
 
 def save_overview(conn: psycopg.Connection, moment_id: str, title: str, overview: str, chapters: dict) -> None:
@@ -92,7 +109,9 @@ def save_overview(conn: psycopg.Connection, moment_id: str, title: str, overview
     conn.execute("update moment set title = %s, overview = %s where id = %s", (title, overview, moment_id))
 
     with conn.cursor() as cursor:
-        cursor.executemany("update fact set title = %s where id = %s", [(name, fact_id) for fact_id, name in chapters.items()])
+        cursor.executemany(
+            "update fact set title = %s where id = %s", [(name, fact_id) for fact_id, name in chapters.items()]
+        )
 
 
 def moments_without_title(conn: psycopg.Connection) -> list[str]:
@@ -121,15 +140,18 @@ def chapter_titles(conn: psycopg.Connection, moment_id: str) -> dict[int, str]:
 
 def summaries(conn: psycopg.Connection, moment_id: str) -> list[dict]:
     """Return a moment's summary facts, in order."""
-    return fact_rows(conn.execute(
-        f"{FACT_COLUMNS} where fact.moment_id = %s and fact.kind = 'summary' order by fact.at", (moment_id,)
-    ))
+    return fact_rows(
+        conn.execute(
+            f"{FACT_COLUMNS} where fact.moment_id = %s and fact.kind = 'summary' order by fact.at", (moment_id,)
+        )
+    )
 
 
 def frame_fact(conn: psycopg.Connection, frame_id: int) -> dict | None:
     """Return the fact that describes a frame as a whole."""
-    found = fact_rows(conn.execute(f"{FACT_COLUMNS} where fact.frame_id = %s and fact.kind = 'frame' limit 1",
-                                   (frame_id,)))
+    found = fact_rows(
+        conn.execute(f"{FACT_COLUMNS} where fact.frame_id = %s and fact.kind = 'frame' limit 1", (frame_id,))
+    )
 
     return found[0] if found else None
 
@@ -156,15 +178,21 @@ def source_details(conn: psycopg.Connection, facts: list[dict]) -> dict:
     )
 
     return {
-        fact_id: {"people": people, "speaker": speaker, "end_seconds": float(end) if end is not None else None,
-                  "place": {"id": place_id, "name": name, "lat": lat, "lon": lon} if place_id else None}
+        fact_id: {
+            "people": people,
+            "speaker": speaker,
+            "end_seconds": float(end) if end is not None else None,
+            "place": {"id": place_id, "name": name, "lat": lat, "lon": lon} if place_id else None,
+        }
         for fact_id, _, place_id, name, lat, lon, people, speaker, end in rows
     }
 
 
 def recent_facts(conn: psycopg.Connection, limit: int = 40) -> list[dict]:
     """Return the newest summaries, speech, text and people facts, newest first."""
-    return fact_rows(conn.execute(
-        f"{FACT_COLUMNS} where fact.kind in ('summary', 'said', 'text', 'person') order by fact.at desc limit %s",
-        (limit,),
-    ))
+    return fact_rows(
+        conn.execute(
+            f"{FACT_COLUMNS} where fact.kind in ('summary', 'said', 'text', 'person') order by fact.at desc limit %s",
+            (limit,),
+        )
+    )

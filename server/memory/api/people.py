@@ -1,6 +1,5 @@
 """People and their faces."""
 
-
 import psycopg
 import cv2
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,8 +28,7 @@ def people(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
 
 
 @router.put("/people/{person_id}")
-def name_person(person_id: int, body: PersonName,
-                conn: psycopg.Connection = Depends(connection)) -> dict:
+def name_person(person_id: int, body: PersonName, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Name or rename a person, then rebuild the facts they appear in."""
     name = body.name.strip() if body.name and body.name.strip() else None
 
@@ -44,8 +42,7 @@ def name_person(person_id: int, body: PersonName,
 
 
 @router.post("/people/{person_id}/merge")
-def merge_person(person_id: int, body: Merge,
-                 conn: psycopg.Connection = Depends(connection)) -> dict:
+def merge_person(person_id: int, body: Merge, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Treat two people as the same person."""
     if person_id == body.into or not db.person_moments(conn, body.into):
         raise HTTPException(422, "merge into a different person who exists")

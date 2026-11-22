@@ -35,7 +35,9 @@ def main() -> int:
     with conn:
         if command == "save" and len(sys.argv) == 3:
             saved = save_moment(conn, Path(sys.argv[2]))
-            print(f"Saved {saved['frames']} frames. {saved['captions_kept']} captions kept, {saved['captions_lost']} lost.")
+            print(
+                f"Saved {saved['frames']} frames. {saved['captions_kept']} captions kept, {saved['captions_lost']} lost."
+            )
         elif command == "list":
             print_moments(list_moments(conn))
         else:

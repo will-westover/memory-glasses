@@ -1,7 +1,7 @@
 """Keep the data folder in a Cloudflare R2 bucket, with the local folder as a working copy.
 
-    uv run python -m memory.storage sync
-    uv run python -m memory.storage check
+uv run python -m memory.storage sync
+uv run python -m memory.storage check
 """
 
 import argparse
@@ -43,8 +43,10 @@ def path_of(name: str) -> Path:
 
 def listing(prefix: str) -> dict[str, dict]:
     """Return every key under a prefix with its size and when it was last written (seconds since 1970)."""
-    return {item.key: {"size": item.size, "modified": item.last_modified.timestamp()}
-            for item in bucket().objects.filter(Prefix=prefix)}
+    return {
+        item.key: {"size": item.size, "modified": item.last_modified.timestamp()}
+        for item in bucket().objects.filter(Prefix=prefix)
+    }
 
 
 def download(name: str, target: Path) -> None:
@@ -120,7 +122,7 @@ def mirror(folder: Path) -> None:
     stale = [{"Key": name} for name in remote if name not in files]
 
     for start in range(0, len(stale), 1000):
-        bucket().delete_objects(Delete={"Objects": stale[start:start + 1000]})
+        bucket().delete_objects(Delete={"Objects": stale[start : start + 1000]})
 
 
 def copy(source: Path, target: Path) -> None:
@@ -167,8 +169,9 @@ def download_url(path: Path, media_type: str | None = None, seconds: int = 900) 
 
 def upload_url(path: Path, seconds: int = 3600) -> str:
     """Return a short-lived link that writes a file straight into R2 with PUT."""
-    return bucket().meta.client.generate_presigned_url("put_object", Params={"Bucket": bucket().name, "Key": key(path)},
-                                                       ExpiresIn=seconds)
+    return bucket().meta.client.generate_presigned_url(
+        "put_object", Params={"Bucket": bucket().name, "Key": key(path)}, ExpiresIn=seconds
+    )
 
 
 def remove(folder: Path) -> None:
@@ -182,7 +185,11 @@ def local_files() -> dict[str, int]:
 
     for top in SYNCED:
         for path in (DATA_DIR / top).rglob("*"):
-            if path.is_file() and not path.name.endswith(".part") and not any(".building" in part for part in path.parts):
+            if (
+                path.is_file()
+                and not path.name.endswith(".part")
+                and not any(".building" in part for part in path.parts)
+            ):
                 files[key(path)] = path.stat().st_size
 
     return files
@@ -211,8 +218,10 @@ def check() -> int:
     unsent = sorted(name for name, size in files.items() if remote.get(name) != size)
     only_remote = sorted(set(remote) - set(files))
 
-    print(f"Local: {len(files)} files, {sum(files.values()) / 1e6:.1f} MB. "
-          f"R2: {len(remote)} files, {sum(remote.values()) / 1e6:.1f} MB.")
+    print(
+        f"Local: {len(files)} files, {sum(files.values()) / 1e6:.1f} MB. "
+        f"R2: {len(remote)} files, {sum(remote.values()) / 1e6:.1f} MB."
+    )
     print(f"Missing or different in R2: {len(unsent)}. Only in R2: {len(only_remote)}.")
 
     for name in unsent[:10]:

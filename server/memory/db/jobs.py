@@ -4,8 +4,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 
-def new_job(conn: psycopg.Connection, frames_per_minute: float, task: dict | None = None,
-            status: str = "processing"):
+def new_job(conn: psycopg.Connection, frames_per_minute: float, task: dict | None = None, status: str = "processing"):
     """Record a new processing job and what it should do, and return its id, or None if that recording has one."""
     row = conn.execute(
         "insert into job (frames_per_minute, task, status) values (%s, %s, %s)"
@@ -38,8 +37,14 @@ def recent_jobs(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
     )
 
     return [
-        {"id": job_id, "received_at": received_at, "status": status, "step": step, "moment_id": moment_id,
-         "error": error}
+        {
+            "id": job_id,
+            "received_at": received_at,
+            "status": status,
+            "step": step,
+            "moment_id": moment_id,
+            "error": error,
+        }
         for job_id, received_at, status, step, moment_id, error in rows
     ]
 

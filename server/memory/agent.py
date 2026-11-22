@@ -130,7 +130,9 @@ class NextStep(BaseModel):
 
 
 class Answer(BaseModel):
-    answer: str = Field(description="The answer in a sentence or two of plain words, with [fact number] after each claim")
+    answer: str = Field(
+        description="The answer in a sentence or two of plain words, with [fact number] after each claim"
+    )
     found: bool = Field(description="True if the facts answer the question, false if they do not")
     sources: list[int] = Field(description="Numbers of the facts the answer rests on, in the order first used")
     highlight: int | None = Field(description="Number of the fact that best shows the answer, or null")
@@ -140,8 +142,16 @@ class Answer(BaseModel):
     next_steps: list[NextStep] = Field(description="Other ways to look when found is false; empty otherwise")
 
 
-NO_ANSWER = Answer(answer="The model gave no answer.", found=False, sources=[], highlight=None, highlight_reason=None,
-                   layout="text", follow_ups=[], next_steps=[])
+NO_ANSWER = Answer(
+    answer="The model gave no answer.",
+    found=False,
+    sources=[],
+    highlight=None,
+    highlight_reason=None,
+    layout="text",
+    follow_ups=[],
+    next_steps=[],
+)
 
 
 def instructions(conn, notes: str, moments: list[str] | None = None) -> str:
@@ -240,9 +250,16 @@ def run_tool(conn, name: str, arguments: dict, seen: dict, moments: list[str] | 
 
 def fact_record(fact: dict) -> dict:
     """Return a fact as JSON a stored message can keep."""
-    return {"id": fact["id"], "kind": fact["kind"], "at": fact["at"].isoformat(), "moment_id": fact["moment_id"],
-            "offset_seconds": fact["offset_seconds"], "text": fact["text"], "image_path": fact["image_path"],
-            "frame_id": fact.get("frame_id")}
+    return {
+        "id": fact["id"],
+        "kind": fact["kind"],
+        "at": fact["at"].isoformat(),
+        "moment_id": fact["moment_id"],
+        "offset_seconds": fact["offset_seconds"],
+        "text": fact["text"],
+        "image_path": fact["image_path"],
+        "frame_id": fact.get("frame_id"),
+    }
 
 
 def now() -> datetime:
@@ -291,8 +308,15 @@ def step(kind: str, text: str, facts: list[dict] = ()) -> tuple[str, dict]:
     return "step", {"kind": kind, "text": text, "image_paths": images}
 
 
-def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = (),
-                  use_nearby: bool = True, frame: dict | None = None, moments: list[str] | None = None):
+def answer_events(
+    conn,
+    question: str,
+    model: str = AGENT_MODEL,
+    history: list[tuple[str, str]] = (),
+    use_nearby: bool = True,
+    frame: dict | None = None,
+    moments: list[str] | None = None,
+):
     """Answer a question by letting the model call the tools, yielding each step and piece of the answer as it comes."""
     llm.require_price(model)
     started = time.monotonic()
@@ -309,8 +333,14 @@ def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[t
     messages = []
 
     for round_number in range(MAX_ROUNDS + 1):
-        request = {"model": model, "instructions": prompt, "input": send, "previous_response_id": previous_id,
-                   "tools": tools, "tool_choice": "auto" if round_number < MAX_ROUNDS else "none"}
+        request = {
+            "model": model,
+            "instructions": prompt,
+            "input": send,
+            "previous_response_id": previous_id,
+            "tools": tools,
+            "tool_choice": "auto" if round_number < MAX_ROUNDS else "none",
+        }
 
         buffer, shown = "", ""
 
@@ -326,7 +356,7 @@ def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[t
                 text = shown_so_far(partial_string(buffer, "answer"), seen)
 
                 if len(text) > len(shown) and text.startswith(shown):
-                    yield "delta", {"text": text[len(shown):]}
+                    yield "delta", {"text": text[len(shown) :]}
                     shown = text
 
             response = stream.get_final_response()
@@ -336,8 +366,9 @@ def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[t
         with llm.collect() as call_ids:
             usd += llm.log_cost(conn, "agent", model, response.usage, request=request, response=received)
 
-        messages.append({"role": "assistant", "at": now(), "content": {"output": received["output"]},
-                         "calls": call_ids})
+        messages.append(
+            {"role": "assistant", "at": now(), "content": {"output": received["output"]}, "calls": call_ids}
+        )
 
         requests = [item for item in response.output if item.type == "function_call"]
 
@@ -358,9 +389,20 @@ def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[t
             yield step(call.name, step_text(call.name, arguments), facts)
 
             send.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
-            messages.append({"role": "tool", "at": now(), "calls": call_ids, "content": {
-                "call_id": call.call_id, "name": call.name, "arguments": arguments, "output": output,
-                "facts": [fact_record(fact) for fact in facts]}})
+            messages.append(
+                {
+                    "role": "tool",
+                    "at": now(),
+                    "calls": call_ids,
+                    "content": {
+                        "call_id": call.call_id,
+                        "name": call.name,
+                        "arguments": arguments,
+                        "output": output,
+                        "facts": [fact_record(fact) for fact in facts],
+                    },
+                }
+            )
 
     parsed = response.output_parsed or NO_ANSWER
     messages[-1]["content"]["answer"] = parsed.model_dump()
@@ -368,8 +410,15 @@ def answer_events(conn, question: str, model: str = AGENT_MODEL, history: list[t
     yield "result", {**finish(parsed, seen, calls, usd, round_number + 1, started), "messages": messages}
 
 
-def ask_agent(conn, question: str, model: str = AGENT_MODEL, history: list[tuple[str, str]] = (),
-              use_nearby: bool = True, frame: dict | None = None, moments: list[str] | None = None) -> dict:
+def ask_agent(
+    conn,
+    question: str,
+    model: str = AGENT_MODEL,
+    history: list[tuple[str, str]] = (),
+    use_nearby: bool = True,
+    frame: dict | None = None,
+    moments: list[str] | None = None,
+) -> dict:
     """Answer a question by letting the model call the tools."""
     for kind, payload in answer_events(conn, question, model, history, use_nearby, frame, moments):
         if kind == "result":
@@ -384,8 +433,11 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL, moments: list[str] 
     facts = search(conn, question, PLAIN_RESULTS, moments=moments)
     seen = {fact["id"]: fact for fact in facts}
 
-    request = {"model": model, "instructions": instructions(conn, PLAIN_NOTES, moments),
-               "input": f"Question: {question}\n\nFacts:\n{fact_lines(facts)}"}
+    request = {
+        "model": model,
+        "instructions": instructions(conn, PLAIN_NOTES, moments),
+        "input": f"Question: {question}\n\nFacts:\n{fact_lines(facts)}",
+    }
     response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})
     usd = llm.log_cost(conn, "rag", model, response.usage, request=request, response=response.model_dump(mode="json"))
 
@@ -419,8 +471,10 @@ def print_sources(sources: list[dict]) -> None:
         print("\nSources:")
 
     for fact in sources:
-        print(f"  [{fact['id']}] {fact['at'].astimezone():%a %d %b %H:%M:%S}, {clock(fact['offset_seconds'])} into"
-              f" {fact['moment_id']}\n      {fact['text']}")
+        print(
+            f"  [{fact['id']}] {fact['at'].astimezone():%a %d %b %H:%M:%S}, {clock(fact['offset_seconds'])} into"
+            f" {fact['moment_id']}\n      {fact['text']}"
+        )
 
         if fact["image_path"]:
             print(f"      {fact['image_path']}")

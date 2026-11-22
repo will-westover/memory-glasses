@@ -58,15 +58,19 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
         with conn.cursor() as cursor:
             cursor.executemany(
                 "update frame set captured_at = %s, x = %s, y = %s, z = %s, yaw = %s where id = %s",
-                [(wanted[key]["captured_at"], *position(wanted[key]), stored[key][0])
-                 for key in wanted.keys() & stored.keys()],
+                [
+                    (wanted[key]["captured_at"], *position(wanted[key]), stored[key][0])
+                    for key in wanted.keys() & stored.keys()
+                ],
             )
 
             cursor.executemany(
                 "insert into frame (moment_id, captured_at, image_path, fingerprint, x, y, z, yaw)"
                 " values (%s, %s, %s, %s, %s, %s, %s, %s)",
-                [(moment_id, wanted[key]["captured_at"], *key, *position(wanted[key]))
-                 for key in wanted.keys() - stored.keys()],
+                [
+                    (moment_id, wanted[key]["captured_at"], *key, *position(wanted[key]))
+                    for key in wanted.keys() - stored.keys()
+                ],
             )
 
     return {
@@ -102,8 +106,7 @@ def moment_info(conn: psycopg.Connection, moment_id: str) -> tuple:
 def frames_without_caption(conn: psycopg.Connection, moment_id: str, limit: int | None = None) -> list[tuple]:
     """Return (frame id, image path) for frames with no caption."""
     return conn.execute(
-        "select id, image_path from frame where moment_id = %s and captioned_at is null"
-        " order by captured_at limit %s",
+        "select id, image_path from frame where moment_id = %s and captioned_at is null order by captured_at limit %s",
         (moment_id, limit),
     ).fetchall()
 
@@ -212,7 +215,9 @@ def transcript_lines(conn: psycopg.Connection, moment_id: str) -> list[dict]:
 
 def covers(conn: psycopg.Connection) -> dict[str, str]:
     """Return the first frame's image path for each moment."""
-    rows = conn.execute("select distinct on (moment_id) moment_id, image_path from frame order by moment_id, captured_at")
+    rows = conn.execute(
+        "select distinct on (moment_id) moment_id, image_path from frame order by moment_id, captured_at"
+    )
 
     return dict(rows.fetchall())
 

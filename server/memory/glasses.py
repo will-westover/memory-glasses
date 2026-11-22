@@ -86,9 +86,27 @@ def build_video(folder: Path, started: datetime) -> Path:
 
     video = folder / "video.mp4"
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(playlist),
-         "-fps_mode", "vfr", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-         "-metadata", f"creation_time={started.astimezone().isoformat()}", str(video)],
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(playlist),
+            "-fps_mode",
+            "vfr",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-metadata",
+            f"creation_time={started.astimezone().isoformat()}",
+            str(video),
+        ],
         check=True,
     )
 

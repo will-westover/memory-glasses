@@ -28,8 +28,11 @@ class Suggestions(BaseModel):
 def make_title(conn, question: str, answer: str) -> str:
     """Ask a model for a conversation's title."""
     llm.require_price(SUMMARY_MODEL)
-    request = {"model": SUMMARY_MODEL, "instructions": TITLE_INSTRUCTIONS,
-               "input": f"Question: {question}\n\nAnswer: {answer}"}
+    request = {
+        "model": SUMMARY_MODEL,
+        "instructions": TITLE_INSTRUCTIONS,
+        "input": f"Question: {question}\n\nAnswer: {answer}",
+    }
 
     response = llm.client().responses.parse(**request, text_format=Title, reasoning={"effort": "low"})
     llm.log_cost(conn, "title", SUMMARY_MODEL, response.usage)
@@ -45,8 +48,11 @@ def suggest(conn) -> list[str]:
         return []
 
     llm.require_price(SUMMARY_MODEL)
-    request = {"model": SUMMARY_MODEL, "instructions": SUGGEST_INSTRUCTIONS,
-               "input": "\n".join(fact_line(fact) for fact in reversed(facts))}
+    request = {
+        "model": SUMMARY_MODEL,
+        "instructions": SUGGEST_INSTRUCTIONS,
+        "input": "\n".join(fact_line(fact) for fact in reversed(facts)),
+    }
 
     response = llm.client().responses.parse(**request, text_format=Suggestions, reasoning={"effort": "low"})
     llm.log_cost(conn, "suggest", SUMMARY_MODEL, response.usage)

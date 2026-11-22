@@ -59,8 +59,14 @@ def turn_from(question: dict, replies: list[dict]) -> dict:
             problem = content["error"]
 
     text, kept = renumber(answer["answer"], answer["sources"], facts) if answer else (None, [])
-    sources = [{**facts[fact_id], "at": datetime.fromisoformat(facts[fact_id]["at"]),
-                "offset_seconds": float(facts[fact_id]["offset_seconds"])} for fact_id in kept]
+    sources = [
+        {
+            **facts[fact_id],
+            "at": datetime.fromisoformat(facts[fact_id]["at"]),
+            "offset_seconds": float(facts[fact_id]["offset_seconds"]),
+        }
+        for fact_id in kept
+    ]
     highlight = answer.get("highlight") if answer else None
 
     return {
@@ -108,11 +114,19 @@ def conversation_turns(conn: psycopg.Connection, conversation_id) -> list[dict] 
         (conversation_id,),
     ).fetchall()
 
-    return turns_from([
-        {"id": message_id, "created_at": created_at, "role": role, "content": content, "model_calls": calls,
-         "usd": float(usd)}
-        for message_id, created_at, role, content, calls, usd in rows
-    ])
+    return turns_from(
+        [
+            {
+                "id": message_id,
+                "created_at": created_at,
+                "role": role,
+                "content": content,
+                "model_calls": calls,
+                "usd": float(usd),
+            }
+            for message_id, created_at, role, content, calls, usd in rows
+        ]
+    )
 
 
 def new_conversation(conn: psycopg.Connection):

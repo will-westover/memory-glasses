@@ -38,8 +38,14 @@ def pool() -> ConnectionPool:
             with connect():
                 pass
 
-            POOL["pool"] = ConnectionPool(require("DATABASE_URL"), min_size=0, max_size=POOL_SIZE, max_idle=IDLE_SECONDS,
-                                          kwargs={"connect_timeout": 10}, check=ConnectionPool.check_connection)
+            POOL["pool"] = ConnectionPool(
+                require("DATABASE_URL"),
+                min_size=0,
+                max_size=POOL_SIZE,
+                max_idle=IDLE_SECONDS,
+                kwargs={"connect_timeout": 10},
+                check=ConnectionPool.check_connection,
+            )
 
     return POOL["pool"]
 

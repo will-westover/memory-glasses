@@ -40,8 +40,15 @@ def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: i
     return dollars / 1_000_000
 
 
-def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: int | None = None,
-             request: dict | None = None, response: dict | None = None) -> float:
+def log_cost(
+    conn: psycopg.Connection,
+    step: str,
+    model: str,
+    usage,
+    frame_id: int | None = None,
+    request: dict | None = None,
+    response: dict | None = None,
+) -> float:
     """Record one model call in model_call and return its cost in dollars."""
     input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", 0)
     details = getattr(usage, "input_tokens_details", None)
@@ -53,8 +60,17 @@ def log_cost(conn: psycopg.Connection, step: str, model: str, usage, frame_id: i
     saved = conn.execute(
         "insert into model_call (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd, request,"
         " response) values (%s, %s, %s, %s, %s, %s, %s, %s, %s) returning id",
-        (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd,
-         Jsonb(request) if request is not None else None, Jsonb(response) if response is not None else None),
+        (
+            step,
+            model,
+            frame_id,
+            input_tokens,
+            cached_tokens,
+            output_tokens,
+            usd,
+            Jsonb(request) if request is not None else None,
+            Jsonb(response) if response is not None else None,
+        ),
     ).fetchone()
 
     if saved is None:

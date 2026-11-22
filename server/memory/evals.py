@@ -78,7 +78,7 @@ def grade(conn, question: dict, result: dict) -> Grade:
         model=JUDGE_MODEL,
         instructions=JUDGE_INSTRUCTIONS,
         input=f"Question: {question['question']}\nReference: {question['expected'] or NOT_RECORDED}\n"
-              f"Answer: {answer}\nCited facts:\n{cited}",
+        f"Answer: {answer}\nCited facts:\n{cited}",
         text_format=Grade,
         reasoning={"effort": "low"},
     )
@@ -141,14 +141,19 @@ def by_kind(rows: list[dict]) -> dict:
     """Return each kind of question's count and score."""
     kinds = dict.fromkeys(row["kind"] for row in rows)
 
-    return {kind: {"questions": len(of_kind), "score": average([POINTS[row["verdict"]] for row in of_kind])}
-            for kind in kinds for of_kind in [[row for row in rows if row["kind"] == kind]]}
+    return {
+        kind: {"questions": len(of_kind), "score": average([POINTS[row["verdict"]] for row in of_kind])}
+        for kind in kinds
+        for of_kind in [[row for row in rows if row["kind"] == kind]]
+    }
 
 
 def spread(rows: list[dict]) -> tuple[float, float]:
     """Return the lowest and highest score among the repeats of a run."""
-    scores = [average([POINTS[row["verdict"]] for row in rows if row["run"] == run])
-              for run in dict.fromkeys(row["run"] for row in rows)]
+    scores = [
+        average([POINTS[row["verdict"]] for row in rows if row["run"] == run])
+        for run in dict.fromkeys(row["run"] for row in rows)
+    ]
 
     return min(scores), max(scores)
 
@@ -159,8 +164,10 @@ def print_report(rows: list[dict], judge_usd: float) -> None:
             flag = row["verdict"] + ("" if row["supported"] else ", unsupported")
             print(f"  [{row['mode']}] {flag}: {row['question']}\n      {row['answer']}\n      judge: {row['reason']}")
 
-    print(f"\n{'mode':<10} {'score':>6} {'answerable':>11} {'no answer':>10} {'supported':>10} {'retrieved':>10}"
-          f" {'cited':>6} {'found ok':>9} {'calls':>6} {'seconds':>8} {'$ each':>9}")
+    print(
+        f"\n{'mode':<10} {'score':>6} {'answerable':>11} {'no answer':>10} {'supported':>10} {'retrieved':>10}"
+        f" {'cited':>6} {'found ok':>9} {'calls':>6} {'seconds':>8} {'$ each':>9}"
+    )
 
     for mode in MODES:
         of_mode = [row for row in rows if row["mode"] == mode]
@@ -169,10 +176,12 @@ def print_report(rows: list[dict], judge_usd: float) -> None:
         if not of_mode:
             continue
 
-        print(f"{mode:<10} {totals['score']:>6.0%} {totals['answerable']:>11.0%} {totals['unanswerable']:>10.0%}"
-              f" {totals['supported']:>10.0%} {totals['retrieved']:>10.0%} {totals['cited']:>6.0%}"
-              f" {totals['found_right']:>9.0%} {totals['model_calls']:>6.1f} {totals['seconds']:>8.1f}"
-              f" {totals['usd']:>9.5f}")
+        print(
+            f"{mode:<10} {totals['score']:>6.0%} {totals['answerable']:>11.0%} {totals['unanswerable']:>10.0%}"
+            f" {totals['supported']:>10.0%} {totals['retrieved']:>10.0%} {totals['cited']:>6.0%}"
+            f" {totals['found_right']:>9.0%} {totals['model_calls']:>6.1f} {totals['seconds']:>8.1f}"
+            f" {totals['usd']:>9.5f}"
+        )
 
         low, high = spread(of_mode)
 
@@ -183,7 +192,9 @@ def print_report(rows: list[dict], judge_usd: float) -> None:
             print(f"{'':<10} {kind:<16} {entry['score']:>5.0%}  ({entry['questions']})")
 
     answers_usd = sum(row["usd"] for row in rows)
-    print(f"\nThis run cost ${answers_usd + judge_usd:.4f}: ${answers_usd:.4f} for answers, ${judge_usd:.4f} for the judge.")
+    print(
+        f"\nThis run cost ${answers_usd + judge_usd:.4f}: ${answers_usd:.4f} for answers, ${judge_usd:.4f} for the judge."
+    )
 
 
 def save_run(rows: list[dict], model: str, judge_usd: float) -> None:
@@ -194,8 +205,19 @@ def save_run(rows: list[dict], model: str, judge_usd: float) -> None:
     ran = dict.fromkeys(row["mode"] for row in rows)
     scores = {mode: summarise([row for row in rows if row["mode"] == mode]) for mode in ran}
     kinds = {mode: by_kind([row for row in rows if row["mode"] == mode]) for mode in ran}
-    path.write_text(json.dumps({"model": model, "judge": JUDGE_MODEL, "judge_usd": judge_usd, "scores": scores,
-                                "kinds": kinds, "rows": rows}, indent=2))
+    path.write_text(
+        json.dumps(
+            {
+                "model": model,
+                "judge": JUDGE_MODEL,
+                "judge_usd": judge_usd,
+                "scores": scores,
+                "kinds": kinds,
+                "rows": rows,
+            },
+            indent=2,
+        )
+    )
     storage.save(path)
 
     print(f"Saved to {path}")
@@ -204,8 +226,12 @@ def save_run(rows: list[dict], model: str, judge_usd: float) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Grade the agent and the plain baseline on the test questions.")
     parser.add_argument("--limit", type=int, help="ask only the first few questions")
-    parser.add_argument("--mode", choices=list(MODES), action="append",
-                        help="modes to run (default: agent and plain); no-nearby is the agent without the nearby tool")
+    parser.add_argument(
+        "--mode",
+        choices=list(MODES),
+        action="append",
+        help="modes to run (default: agent and plain); no-nearby is the agent without the nearby tool",
+    )
     parser.add_argument("--model", default=AGENT_MODEL, help="the model that answers")
     parser.add_argument("--repeat", type=int, default=1, help="ask every question this many times, to see the spread")
     args = parser.parse_args()

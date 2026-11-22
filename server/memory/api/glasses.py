@@ -20,9 +20,13 @@ def glasses_check() -> dict:
 
 
 @router.post("/glasses/frames")
-async def glasses_frame(request: Request, x_recording: str = Header(...), x_uploaded: str | None = Header(default=None),
-                        x_taken: float | None = Header(default=None),
-                        conn: psycopg.Connection = Depends(connection)) -> dict:
+async def glasses_frame(
+    request: Request,
+    x_recording: str = Header(...),
+    x_uploaded: str | None = Header(default=None),
+    x_taken: float | None = Header(default=None),
+    conn: psycopg.Connection = Depends(connection),
+) -> dict:
     """Take one frame from the glasses, sent here or put in R2 first, and reply with the settings and the next link."""
     if not RECORDING_ID.match(x_recording):
         raise HTTPException(422, "X-Recording must be letters, digits and dashes")
@@ -43,8 +47,12 @@ async def glasses_frame(request: Request, x_recording: str = Header(...), x_uplo
 
         path = glasses.save_frame(conn, x_recording, jpeg, taken=x_taken)
 
-    return {"recording": x_recording, "frame": path.name, **current_settings(conn).model_dump(),
-            **glasses.upload_slot(x_recording)}
+    return {
+        "recording": x_recording,
+        "frame": path.name,
+        **current_settings(conn).model_dump(),
+        **glasses.upload_slot(x_recording),
+    }
 
 
 FIRMWARE_DIR = DATA_DIR / "firmware"

@@ -1,6 +1,5 @@
 """Places, the rooms inside them, and the world map."""
 
-
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -16,8 +15,9 @@ router = APIRouter()
 
 
 @router.get("/places")
-def list_places(lat: float | None = None, lon: float | None = None,
-                conn: psycopg.Connection = Depends(connection)) -> list[dict]:
+def list_places(
+    lat: float | None = None, lon: float | None = None, conn: psycopg.Connection = Depends(connection)
+) -> list[dict]:
     """List places near a location (or all of them), most recently updated first."""
     return places.nearby(conn, lat, lon)
 
@@ -57,12 +57,14 @@ def place_scene(place_id: int, conn: psycopg.Connection = Depends(connection)) -
             continue
 
         started_at, _, _ = db.moment_info(conn, moment_id)
-        moments.append({
-            "id": moment_id,
-            "started_at": started_at,
-            "path": thin(load_poses(poses_file), 300) if storage.local(poses_file) else [],
-            "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
-        })
+        moments.append(
+            {
+                "id": moment_id,
+                "started_at": started_at,
+                "path": thin(load_poses(poses_file), 300) if storage.local(poses_file) else [],
+                "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
+            }
+        )
 
         if mesh_moment is None and storage.exists(MOMENTS_DIR / moment_id / "mesh.obj"):
             mesh_moment = moment_id
@@ -94,8 +96,7 @@ def rename_place(place_id: int, body: NewName, conn: psycopg.Connection = Depend
 
 
 @router.put("/rooms/{room_id}")
-def rename_room(room_id: int, body: NewName,
-                conn: psycopg.Connection = Depends(connection)) -> dict:
+def rename_room(room_id: int, body: NewName, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Rename a room, and rebuild the facts that mention it."""
     name = body.name.strip() if body.name and body.name.strip() else None
 

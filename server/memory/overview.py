@@ -49,8 +49,11 @@ def write_overview(conn, moment_id: str) -> Overview | None:
     llm.log_cost(conn, "overview", SUMMARY_MODEL, response.usage)
 
     written = response.output_parsed
-    titles = {summaries[chapter.number - 1]["id"]: chapter.title
-              for chapter in written.chapters if 0 < chapter.number <= len(summaries)}
+    titles = {
+        summaries[chapter.number - 1]["id"]: chapter.title
+        for chapter in written.chapters
+        if 0 < chapter.number <= len(summaries)
+    }
 
     db.save_overview(conn, moment_id, written.title, written.overview, titles)
     conn.commit()

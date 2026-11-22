@@ -39,7 +39,9 @@ def stats(conn: psycopg.Connection = Depends(connection)) -> dict:
 
 
 @router.get("/settings")
-def get_settings(x_recording: str | None = Header(default=None), conn: psycopg.Connection = Depends(connection)) -> dict:
+def get_settings(
+    x_recording: str | None = Header(default=None), conn: psycopg.Connection = Depends(connection)
+) -> dict:
     """Return the glasses settings, with a link for the first frame when the glasses say which recording is next."""
     slot = glasses.upload_slot(x_recording) if x_recording and RECORDING_ID.match(x_recording) else {}
 

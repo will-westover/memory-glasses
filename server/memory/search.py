@@ -54,8 +54,7 @@ def search(
 ) -> list[dict]:
     """Return the facts that best match a question, best first, from only the given moments when some are named."""
     vector = llm.embed(conn, [question], "embed-question")[0]
-    values = {"vector": vector, "text": question, "limit": CANDIDATES, "start": start, "end": end,
-              "moments": moments}
+    values = {"vector": vector, "text": question, "limit": CANDIDATES, "start": start, "end": end, "moments": moments}
 
     if start or end or moments:
         conn.execute("set local hnsw.iterative_scan = relaxed_order")

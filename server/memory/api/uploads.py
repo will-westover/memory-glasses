@@ -15,8 +15,9 @@ router = APIRouter()
 @router.post("/uploads")
 def start_upload(body: DirectUpload, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Start an upload straight to storage: return a link to PUT each file to, valid for an hour."""
-    names = {"video": f"video{body.video_suffix}"} | {field: EXTRA_FILES[field] for field in body.extras
-                                                      if field in EXTRA_FILES}
+    names = {"video": f"video{body.video_suffix}"} | {
+        field: EXTRA_FILES[field] for field in body.extras if field in EXTRA_FILES
+    }
     task = upload_task(names, body.frames_per_minute, body.place_id, body.source)
     job_id = db.new_job(conn, body.frames_per_minute, task, status="uploading")
     db.update_job(conn, job_id, step="Uploading")
