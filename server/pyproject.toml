@@ -23,13 +23,3 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-
-[tool.ruff]
-line-length = 120
-
-[tool.ruff.lint]
-select = ["F", "E7", "E9", "B"]
-ignore = ["B008", "B904", "B905"]
-
-[tool.ruff.lint.per-file-ignores]
-"memory/db/__init__.py" = ["F403"]

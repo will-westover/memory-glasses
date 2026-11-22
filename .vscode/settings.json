@@ -3,5 +3,10 @@
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
   "python.testing.cwd": "${workspaceFolder}/server",
-  "python.testing.pytestArgs": ["tests"]
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+  "cursorpyright.analysis.extraPaths": [
+    "server"
+  ]
 }
