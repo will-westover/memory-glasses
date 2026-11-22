@@ -93,9 +93,7 @@ struct PlaceDetail: View {
                         }
                     }
                 } header: {
-                    Text("Rooms")
-                } footer: {
-                    Text("Every frame is placed in a room from what was seen, said and where the phone was.")
+                    InfoHeader(title: "Rooms", text: "Every frame is placed in a room from what was seen, said and where the phone was.")
                 }
             }
         }

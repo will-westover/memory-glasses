@@ -8,132 +8,109 @@ struct GlassesView: View {
     @State private var glassesStatus: GlassesStatus?
     @State private var serverMessage = "Checking…"
     @State private var serverReachable = false
+    @State private var people: [Person] = []
+    @State private var places: [Place] = []
+    @State private var captionCost: Double?
 
     private let link = GlassesLink.shared
+    private static let presets: [(name: String, rate: Double)] = [("Light", 10), ("Normal", 30), ("Detailed", 60)]
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Toggle(isOn: $settings.recording) {
-                        Label("Recording", systemImage: settings.recording ? "record.circle.fill" : "pause.circle")
-                    }
-                    .disabled(!serverReachable)
-
-                    Label(glassesLabel, systemImage: glassesStatus?.sending == true ? "dot.radiowaves.up.forward" : "eyeglasses")
-                        .foregroundStyle(glassesStatus?.sending == true ? .green : .secondary)
-                } header: {
-                    Text("Glasses")
-                } footer: {
-                    Text("While this is off, the glasses take no pictures. Turning it back on starts a new moment.")
+                    GlassesStatusCard(activity: activity, detail: activityDetail, photos: photos, lastUpload: link.lastUpload,
+                                      canRecord: serverReachable, recording: $settings.recording)
                 }
 
                 Section {
-                    Label(link.state.label, systemImage: link.state == .connected ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
-                        .foregroundStyle(link.state == .connected ? .green : .secondary)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text(rateLabel)
+                                .font(.headline)
 
-                    if link.state == .connected || link.photosSent > 0 {
-                        LabeledContent("Photos sent this recording", value: "\(link.photosSent)")
+                            Spacer()
 
-                        if let last = link.lastUpload {
-                            LabeledContent("Last upload", value: last.formatted(date: .omitted, time: .standard))
+                            if let hourlyCost {
+                                Text(hourlyCost)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
 
-                        if !link.glassesDisplayText.isEmpty {
-                            LabeledContent("On the glasses", value: link.glassesDisplayText)
+                        HStack(spacing: 8) {
+                            ForEach(Self.presets, id: \.name) { preset in
+                                Button(preset.name) {
+                                    settings.framesPerMinute = preset.rate
+                                    Task { await save() }
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(settings.framesPerMinute == preset.rate ? .accentColor : .secondary)
+                            }
                         }
-                    }
-
-                    if let version = link.glassesVersion {
-                        LabeledContent("Firmware", value: version)
-                    }
-
-                    if let update = link.availableUpdate, link.updateProgress == nil {
-                        Button("Update glasses to \(update.version)") { Task { await link.startUpdate() } }
-                            .disabled(!link.canUpdate)
-                    } else if link.glassesVersion != nil, link.updateProgress == nil {
-                        Button("Check for updates") { Task { await link.checkForUpdate() } }
-                    }
-
-                    if let progress = link.updateProgress, progress < 1 {
-                        ProgressView(value: progress) {
-                            Text(link.updateMessage ?? "Updating…")
-                        } currentValueLabel: {
-                            Text("\(Int(progress * 100))%")
-                        }
-
-                        Button("Cancel update", role: .destructive) { link.cancelUpdate() }
-                    } else if let stage = link.updateMessage {
-                        Text(stage)
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("Bluetooth")
-                } footer: {
-                    Text(link.availableUpdate.map { "Update available (\($0.version)). Keep the glasses close to the phone while it installs." }
-                         ?? "The glasses send each photo to this phone over Bluetooth, and the phone uploads it. No hotspot needed. New firmware installs by itself.")
-                }
-
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(rateLabel)
-                            .font(.headline)
 
                         Slider(value: $settings.framesPerMinute, in: 0...60, step: 1) { editing in
                             if !editing { Task { await save() } }
                         }
-                        .disabled(!serverReachable)
                         .accessibilityLabel("Pictures a minute")
                     }
+                    .disabled(!serverReachable)
                 } header: {
-                    Text("Camera")
-                } footer: {
-                    Text("How often the glasses take a picture. More pictures remember more and cost more.")
+                    InfoHeader(title: "Camera", text: "How often the glasses take a picture. More pictures remember more and cost more to describe. The cost shown is the most an hour of recording would cost; pictures that look the same as the last one are skipped.")
                 }
 
                 Section {
+                    HStack(spacing: 14) {
+                        GlassesDisplayPreview(settings: settings, lines: displayLines)
+                            .frame(width: 96)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Showing now")
+                                .font(.subheadline.weight(.medium))
+
+                            Text(link.state == .connected ? displayLines.joined(separator: " · ") : "Changes apply when the glasses connect")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     NavigationLink {
                         DisplaySetup(settings: $settings, save: save)
                     } label: {
-                        Label("Display", systemImage: "eyeglasses")
+                        Label("Display settings", systemImage: "slider.horizontal.3")
                     }
                     .disabled(!serverReachable)
-                } footer: {
-                    Text("Focus pattern, size, position, text size, brightness and which way round the picture is.")
+                } header: {
+                    InfoHeader(title: "Display", text: "The small screen inside the glasses. Set its focus pattern, size, position, text size, brightness and which way round the picture is.")
                 }
 
                 Section {
                     NavigationLink {
                         PeopleView()
                     } label: {
-                        Label("People", systemImage: "person.2")
+                        LabeledContent { Text(peopleCount) } label: { Label("People", systemImage: "person.2") }
                     }
 
                     NavigationLink {
                         PlacesView()
                     } label: {
-                        Label("Places and rooms", systemImage: "house")
+                        LabeledContent { Text(placesCount) } label: { Label("Places and rooms", systemImage: "house") }
                     }
-                } footer: {
-                    Text("Name the people, places and rooms the glasses have seen, so answers can say who was there and where.")
+                } header: {
+                    InfoHeader(title: "People and places", text: "Name the people, places and rooms the glasses have seen, so answers can say who was there and where.")
                 }
 
                 Section {
-                    TextField("Address", text: $address)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-
-                    SecureField("Token (if the server needs one)", text: $token)
-
-                    Label(serverMessage, systemImage: serverReachable ? "checkmark.circle.fill" : "xmark.circle")
-                        .foregroundStyle(serverReachable ? .green : .secondary)
-
-                    Button("Check connection") { Task { await load() } }
-                } header: {
-                    Text("Server")
-                } footer: {
-                    Text("The address and token of your Memory Glasses server.")
+                    NavigationLink {
+                        ServerSetup(address: $address, token: $token, message: serverMessage, reachable: serverReachable) { await load() }
+                    } label: {
+                        LabeledContent {
+                            Text(serverReachable ? "Connected" : "Not reachable")
+                                .foregroundStyle(serverReachable ? .green : .red)
+                        } label: {
+                            Label("Server", systemImage: "server.rack")
+                        }
+                    }
                 }
             }
             .navigationTitle("Glasses")
@@ -144,22 +121,63 @@ struct GlassesView: View {
         }
     }
 
-    private var rateLabel: String {
-        settings.framesPerMinute == 0 ? "Sound only, no pictures" : "\(Int(settings.framesPerMinute)) pictures a minute"
+    private var activity: GlassesActivity {
+        if let progress = link.updateProgress, progress < 1 { return .updating }
+        if link.state != .connected && glassesStatus?.sending != true { return .disconnected }
+        if !settings.recording { return .paused }
+
+        return glassesStatus?.sending == true ? .recording : .waiting
     }
 
-    private var glassesLabel: String {
-        guard let glassesStatus else { return "Checking the glasses…" }
+    private var activityDetail: String {
+        switch activity {
+        case .updating:
+            return "Keep the glasses close to the phone."
+        case .recording:
+            return "\(Int(settings.framesPerMinute)) pictures a minute"
+        case .waiting:
+            return "Connected. Waiting for the first photo."
+        case .paused:
+            return "Turn recording on to start a new moment."
+        case .disconnected:
+            if let processing = glassesStatus?.processing, processing > 0 {
+                return processing == 1 ? "Processing a moment" : "Processing \(processing) moments"
+            }
 
-        if glassesStatus.sending {
-            return "Sending, \(glassesStatus.photos) pictures in this moment"
+            return link.state.label
         }
+    }
 
-        if glassesStatus.processing > 0 {
-            return glassesStatus.processing == 1 ? "Processing a moment" : "Processing \(glassesStatus.processing) moments"
-        }
+    private var photos: Int {
+        glassesStatus?.sending == true ? glassesStatus?.photos ?? 0 : link.photosSent
+    }
 
-        return settings.recording ? "Not sending. Keep the glasses on and near this phone." : "Paused"
+    private var displayLines: [String] {
+        if settings.displayPattern { return ["Aa 0123"] }
+
+        let text = link.glassesDisplayText.isEmpty ? (settings.recording ? "Rec \(photos)" : "Paused") : link.glassesDisplayText
+
+        return ["BT", text]
+    }
+
+    private var rateLabel: String {
+        settings.framesPerMinute == 0 ? "No pictures" : "\(Int(settings.framesPerMinute)) pictures a minute"
+    }
+
+    private var hourlyCost: String? {
+        guard let captionCost, settings.framesPerMinute > 0 else { return nil }
+
+        return "up to \(dollars(captionCost * settings.framesPerMinute * 60)) an hour"
+    }
+
+    private var peopleCount: String {
+        let named = people.filter { $0.name != nil }.count
+
+        return people.isEmpty ? "" : "\(named) of \(people.count) named"
+    }
+
+    private var placesCount: String {
+        places.isEmpty ? "" : "\(places.count)"
     }
 
     private func watchGlasses() async {
@@ -177,6 +195,15 @@ struct GlassesView: View {
         } catch {
             serverReachable = false
             serverMessage = error.localizedDescription
+            return
+        }
+
+        people = (try? await API.current.get("/people")) ?? []
+        places = (try? await API.current.get("/places")) ?? []
+
+        if let stats: Stats = try? await API.current.get("/stats"),
+           let caption = stats.costs.first(where: { $0.step == "caption" }), caption.calls > 0 {
+            captionCost = caption.usd / Double(caption.calls)
         }
     }
 
@@ -191,6 +218,38 @@ struct GlassesView: View {
     }
 }
 
+struct ServerSetup: View {
+    @Binding var address: String
+    @Binding var token: String
+    let message: String
+    let reachable: Bool
+    let check: () async -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Address", text: $address)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                SecureField("Token", text: $token)
+            } header: {
+                InfoHeader(title: "Server", text: "The address and token of your Memory Glasses server. The app comes with these built in; change them only if the server moves.")
+            }
+
+            Section {
+                Label(message, systemImage: reachable ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundStyle(reachable ? .green : .secondary)
+
+                Button("Check connection") { Task { await check() } }
+            }
+        }
+        .navigationTitle("Server")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 struct DisplaySetup: View {
     @Binding var settings: GlassesSettings
     let save: () async -> Void
@@ -198,9 +257,16 @@ struct DisplaySetup: View {
     var body: some View {
         Form {
             Section {
+                GlassesDisplayPreview(settings: settings, lines: settings.displayPattern ? ["Aa 0123"] : ["BT", "Rec 12"])
+                    .frame(maxWidth: 220)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+            }
+
+            Section {
                 Toggle("Show focus pattern", isOn: $settings.displayPattern)
-            } footer: {
-                Text("Shows fine lines and sample text on the glasses. With your eye where it sits when you wear them, swap the focus spacers until the lines look sharpest.")
+            } header: {
+                InfoHeader(title: "Focus", text: "Shows fine lines and sample text on the glasses. With your eye where it sits when you wear them, swap the focus spacers until the lines look sharpest.")
             }
 
             Section {
@@ -211,9 +277,7 @@ struct DisplaySetup: View {
                 slider("Up and down", value: $settings.displayY, in: -1...1, step: 0.1,
                        shown: offset(settings.displayY, negative: "up", positive: "down"))
             } header: {
-                Text("Size and position")
-            } footer: {
-                Text("Shrink the box until you can see all four edges, then move it to where the lens shows it clearest. The glasses outline the box for a few seconds after each change.")
+                InfoHeader(title: "Size and position", text: "Shrink the box until you can see all four edges, then move it to where the lens shows it clearest. The glasses outline the box for a few seconds after each change.")
             }
 
             Section {
@@ -221,18 +285,14 @@ struct DisplaySetup: View {
                 slider("Brightness", value: $settings.displayBrightness, in: 0.05...1, step: 0.05,
                        shown: percent(settings.displayBrightness))
             } header: {
-                Text("Text")
-            } footer: {
-                Text("Large text fits fewer words but is easier to read through the lens.")
+                InfoHeader(title: "Text", text: "Large text fits fewer words but is easier to read through the lens.")
             }
 
             Section {
                 Toggle("Mirror left to right", isOn: $settings.displayMirror)
                 Toggle("Flip upside down", isOn: $settings.displayFlip)
             } header: {
-                Text("Which way round")
-            } footer: {
-                Text("Turn on mirroring if the display is seen in a mirror or beam-splitter cube, so text reads the right way round.")
+                InfoHeader(title: "Which way round", text: "Turn on mirroring if the display is seen in a mirror or beam-splitter cube, so text reads the right way round.")
             }
         }
         .navigationTitle("Display")
