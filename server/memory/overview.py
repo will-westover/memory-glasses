@@ -1,4 +1,4 @@
-"""Give a moment a title and a short overview, and each of its minute summaries a chapter title."""
+"""Give a moment a title and a short overview from the summaries of its stretches."""
 
 import argparse
 import sys
@@ -9,28 +9,20 @@ from memory import db, llm
 from memory.config import SUMMARY_MODEL
 
 INSTRUCTIONS = """\
-You are given the minute-by-minute summaries of one recording from someone's camera glasses, numbered in order.
+You are given the summaries of one recording from someone's camera glasses, one per stretch of it, in order.
 
 Write, using only what is given and in your own words:
 - title: a few words naming the recording as a whole, the way a person would label it.
-- overview: one or two plain sentences on what the recording was about.
-- chapters: for each numbered summary, a title of two to five words saying what that minute was about,
-  so someone scanning the list can tell the minutes apart."""
-
-
-class Chapter(BaseModel):
-    number: int = Field(description="The number of the summary this title is for")
-    title: str = Field(description="Two to five words on what that minute was about")
+- overview: one or two plain sentences on what the recording was about."""
 
 
 class Overview(BaseModel):
     title: str = Field(description="A few words naming the whole recording")
     overview: str = Field(description="One or two sentences on what the recording was about")
-    chapters: list[Chapter] = Field(description="One title per numbered summary")
 
 
 def write_overview(conn, moment_id: str) -> Overview | None:
-    """Write and store a moment's title, overview and chapter titles from its minute summaries."""
+    """Write and store a moment's title and overview from its stretch summaries."""
     summaries = db.summaries(conn, moment_id)
 
     if not summaries:
@@ -49,20 +41,14 @@ def write_overview(conn, moment_id: str) -> Overview | None:
     llm.log_cost(conn, "overview", SUMMARY_MODEL, response.usage)
 
     written = response.output_parsed
-    titles = {
-        summaries[chapter.number - 1]["id"]: chapter.title
-        for chapter in written.chapters
-        if 0 < chapter.number <= len(summaries)
-    }
-
-    db.save_overview(conn, moment_id, written.title, written.overview, titles)
+    db.save_overview(conn, moment_id, written.title, written.overview)
     conn.commit()
 
     return written
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Write the title, overview and chapter titles of moments.")
+    parser = argparse.ArgumentParser(description="Write the title and overview of moments.")
     parser.add_argument("moment_ids", nargs="*", help="moments to write (default: every moment without a title)")
     args = parser.parse_args()
 

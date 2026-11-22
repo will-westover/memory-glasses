@@ -38,12 +38,13 @@ another room seen through a doorway or a close-up of a screen, a page or a hand;
 the positions, the speech and the scan, not only from that one description. Frames taken close together in place
 and time are usually in the same room.
 
-Name each room in a few plain words, the way the person would say it. When a room matches one of the known rooms of
+Name each room in one to three words, the way the person would say it, such as "Kitchen" or "Desk";
+name the room itself, never what was happening in it. When a room matches one of the known rooms of
 this place, use that name exactly. A place can be a single room. Also name the whole place in a few words."""
 
 
 class RoomInfo(BaseModel):
-    name: str = Field(description="The room's name in a few plain words")
+    name: str = Field(description="The room's name in one to three words, such as Kitchen")
     description: str = Field(description="One sentence on what makes this room recognisable")
 
 

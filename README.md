@@ -40,6 +40,9 @@ Inside `server/memory/`, the same word means the same thing at every layer:
    [jobs.py](server/memory/jobs.py).
 6. The pipeline keeps the sharp frames, captions them, finds faces and rooms, and writes facts with embeddings:
    [pipeline.py](server/memory/pipeline.py). The result is a moment.
+7. Facts are written per stretch: frames are grouped where the room changes, the photos stop looking alike, there is
+   a gap or two minutes pass, and each stretch gets one summary and one fact per thing, person and text seen:
+   [ingest/facts.py](server/memory/ingest/facts.py).
 
 A recording made in the app skips steps 1 to 5: it uploads the video straight to storage
 ([MomentUpload.swift](app/MemoryGlasses/Record/MomentUpload.swift)) and the pipeline runs on it.
@@ -50,7 +53,8 @@ A recording made in the app skips steps 1 to 5: it uploads the video straight to
 2. The app posts it and reads the answer as it streams: [ConversationStore.swift](app/MemoryGlasses/Ask/ConversationStore.swift)
    to `POST /conversations/{id}/ask/stream` in [api/chats.py](server/memory/api/chats.py).
 3. The agent decides what to look up, with three tools (search, timeline, nearby): [agent.py](server/memory/agent.py).
-4. Search finds facts by meaning and by keyword and merges the two: [search.py](server/memory/search.py).
+4. Search finds facts by meaning and by keyword, merges the two, and keeps at most two of each kind from one
+   stretch: [search.py](server/memory/search.py).
 5. The agent writes the answer with `[1]` markers for its sources; the raw messages and the cost of every model call
    are saved: [db/chats.py](server/memory/db/chats.py).
 6. Tapping a source opens the Timeline at that photo: [MomentView.swift](app/MemoryGlasses/Timeline/MomentView.swift).

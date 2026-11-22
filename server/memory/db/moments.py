@@ -238,11 +238,6 @@ def latest_moment_id(conn: psycopg.Connection) -> str | None:
     return row[0] if row else None
 
 
-def moment_duration(conn: psycopg.Connection, moment_id: str) -> float:
-    """Return how long a moment lasts, in seconds."""
-    return float(conn.execute("select duration_seconds from moment where id = %s", (moment_id,)).fetchone()[0])
-
-
 def moment_ids_oldest_first(conn: psycopg.Connection) -> list[str]:
     """Return every moment's id in the order they were recorded."""
     return [row[0] for row in conn.execute("select id from moment order by started_at")]

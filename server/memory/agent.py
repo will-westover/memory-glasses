@@ -30,7 +30,8 @@ INSTRUCTIONS = """\
 You answer questions for someone who wears camera glasses. The glasses record what the wearer sees and hears,
 and that record is kept as facts: frames (what was happening in each photo), objects and where each one was, text that was
 readable, speech, summaries of what happened and what was said, and which people the wearer has named
-were in view. Each fact starts with its number in [brackets] and the time it was recorded. "I" and "me"
+were in view. Summaries, objects, text and people each cover a stretch of time, one fact per stretch, not one per
+photo. Each fact starts with its number in [brackets] and the time it was recorded, or the times it covers. "I" and "me"
 in a question mean the wearer. Speakers are labelled with letters, not names.
 
 Answer only from the facts. Do not guess or add outside knowledge. A search always returns its closest matches,
@@ -203,7 +204,11 @@ def fact_line(fact: dict) -> str:
         x, z = fact["position"]
         where = f"  ({fact.get('room') or 'room'}, at {x:.1f} m, {z:.1f} m)"
 
-    return f"[{fact['id']}] {fact['at'].astimezone():%a %d %b %Y %H:%M:%S}  {fact['kind']}: {fact['text']}{where}"
+    start = fact["at"].astimezone()
+    seconds = fact.get("end_offset_seconds", fact["offset_seconds"]) - fact["offset_seconds"]
+    until = f" to {start + timedelta(seconds=seconds):%H:%M:%S}" if seconds >= 1 else ""
+
+    return f"[{fact['id']}] {start:%a %d %b %Y %H:%M:%S}{until}  {fact['kind']}: {fact['text']}{where}"
 
 
 def fact_lines(facts: list[dict]) -> str:
@@ -256,6 +261,7 @@ def fact_record(fact: dict) -> dict:
         "at": fact["at"].isoformat(),
         "moment_id": fact["moment_id"],
         "offset_seconds": fact["offset_seconds"],
+        "end_offset_seconds": fact.get("end_offset_seconds"),
         "text": fact["text"],
         "image_path": fact["image_path"],
         "frame_id": fact.get("frame_id"),

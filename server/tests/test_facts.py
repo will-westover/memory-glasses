@@ -1,6 +1,18 @@
 from datetime import datetime, timedelta, timezone
 
-from memory.ingest.facts import Said, frame_facts, group_passages, said_facts, stretches
+import numpy as np
+
+from memory.ingest.facts import (
+    Said,
+    Stretch,
+    Thing,
+    frame_fact,
+    group_frames,
+    group_passages,
+    said_facts,
+    stretch_facts,
+    stretches,
+)
 
 ZONE = timezone(timedelta(hours=-7))
 EVENING = datetime(2026, 11, 10, 19, 54, tzinfo=ZONE)
@@ -10,7 +22,7 @@ def line(start, end, text, speaker="A"):
     return {"at": EVENING, "start": start, "end": end, "speaker": speaker, "text": text}
 
 
-def frame(frame_id, offset, objects=(), texts=()):
+def frame(frame_id, offset, objects=(), texts=(), room=None, people=()):
     return {
         "id": frame_id,
         "at": EVENING,
@@ -18,7 +30,13 @@ def frame(frame_id, offset, objects=(), texts=()):
         "summary": "Making coffee. Steam rises.",
         "objects": list(objects),
         "texts": list(texts),
+        "room": room,
+        "people": [{"name": name} for name in people],
     }
+
+
+ALIKE = np.array([1.0, 0.0])
+DIFFERENT = np.array([0.0, 1.0])
 
 
 def test_short_lines_are_joined_into_one_passage():
@@ -33,26 +51,11 @@ def test_a_long_pause_starts_a_new_passage():
     assert group_passages(lines) == [[lines[0]], [lines[1]]]
 
 
-def test_each_object_becomes_its_own_fact_with_context():
-    facts = frame_facts([frame(1, 0.0, objects=[("bottle", "on counter"), ("mug", "next to sink")])], "Home")
+def test_a_frame_fact_names_the_people_and_room():
+    fact = frame_fact(frame(1, 0.0, room="Kitchen", people=["Friend 1"]), "Home")
 
-    object_facts = [fact["text"] for fact in facts if fact["kind"] == "object"]
-
-    assert len(object_facts) == 2
-    assert object_facts[0] == "bottle: on counter. At Home. Making coffee."
-
-
-def test_an_object_that_stays_put_is_not_repeated():
-    bottle = ("bottle", "on counter")
-    frames = [
-        frame(1, 0.0, objects=[bottle]),
-        frame(2, 2.0, objects=[bottle]),
-        frame(3, 4.0, objects=[("bottle", "in bag")]),
-    ]
-
-    object_facts = [fact["text"].split(".")[0] for fact in frame_facts(frames, None) if fact["kind"] == "object"]
-
-    assert object_facts == ["bottle: on counter", "bottle: in bag"]
+    assert fact["text"] == "Making coffee. Steam rises. With Friend 1. Room: Kitchen. At Home."
+    assert fact["frame_ids"] == [1]
 
 
 def test_a_passage_stops_before_it_gets_too_long():
@@ -62,11 +65,88 @@ def test_a_passage_stops_before_it_gets_too_long():
     assert group_passages(lines) == [[lines[0]], [lines[1], lines[2]]]
 
 
-def test_frames_and_speech_are_split_into_minutes():
-    early, late = frame(1, 5.0), frame(2, 70.0)
-    passage = [line(65, 68, "second minute")]
+def test_frames_that_look_alike_in_one_room_are_one_stretch():
+    frames = [frame(1, 0.0, room="Kitchen"), frame(2, 6.0, room="Kitchen"), frame(3, 12.0, room="Kitchen")]
 
-    assert stretches([early, late], [passage]) == [([early], []), ([late], [passage])]
+    assert group_frames(frames, [ALIKE] * 3) == [([0, 1, 2], "end")]
+
+
+def test_a_stretch_ends_when_the_room_changes():
+    frames = [frame(1, 0.0, room="Kitchen"), frame(2, 6.0, room="Hallway")]
+
+    assert group_frames(frames, [ALIKE, ALIKE]) == [([0], "room changed"), ([1], "end")]
+
+
+def test_a_stretch_ends_after_a_long_gap():
+    frames = [frame(1, 0.0), frame(2, 100.0)]
+
+    assert group_frames(frames, [ALIKE, ALIKE]) == [([0], "gap"), ([1], "end")]
+
+
+def test_a_stretch_ends_when_it_gets_too_long():
+    frames = [frame(index, index * 20.0) for index in range(8)]
+
+    groups = group_frames(frames, [ALIKE] * 8)
+
+    assert [members for members, _ in groups] == [[0, 1, 2, 3, 4, 5], [6, 7]]
+    assert groups[0][1] == "length"
+
+
+def test_a_stretch_ends_when_the_photo_looks_different():
+    frames = [frame(1, 0.0), frame(2, 6.0), frame(3, 12.0)]
+
+    assert group_frames(frames, [ALIKE, ALIKE, DIFFERENT]) == [([0, 1], "looks different"), ([2], "end")]
+
+
+def test_speech_joins_the_stretch_it_starts_in():
+    frames = [frame(1, 0.0, room="Kitchen"), frame(2, 40.0, room="Hallway")]
+    early, late = [line(-3, 2, "before the first photo")], [line(45, 50, "in the hallway")]
+
+    groups = stretches(frames, [ALIKE, ALIKE], [early, late])
+
+    assert groups == [([frames[0]], [early]), ([frames[1]], [late])]
+
+
+def test_speech_without_photos_is_split_by_length():
+    passages = [[line(0, 5, "one")], [line(60, 65, "two")], [line(130, 135, "three")]]
+
+    assert [len(heard) for _, heard in stretches([], [], passages)] == [2, 1]
+
+
+def test_a_stretch_gives_each_thing_person_and_text_once():
+    frames = [
+        frame(1, 0.0, texts=[("EXIT", "sign")], people=["Friend 1"]),
+        frame(2, 6.0, texts=[("EXIT", "sign")], people=["Friend 1", "Friend 2"]),
+    ]
+    stretch = Stretch(
+        title="Coffee",
+        happened="They make coffee. It is early.",
+        things=[Thing(name="edamame", where="in a bowl", photos=[1, 2]), Thing(name="stray", where="x", photos=[9])],
+        said=[],
+    )
+
+    facts = stretch_facts(frames, [], "Home", stretch)
+    by_kind = {}
+    for fact in facts:
+        by_kind.setdefault(fact["kind"], []).append(fact)
+
+    assert by_kind["summary"][0]["title"] == "Coffee"
+    assert by_kind["summary"][0]["end_offset_seconds"] == 6.0
+    assert [fact["text"] for fact in by_kind["object"]] == ["edamame: in a bowl. At Home. They make coffee."]
+    assert by_kind["object"][0]["frame_ids"] == [1, 2]
+    assert {fact["text"].split(".")[0]: fact["frame_ids"] for fact in by_kind["person"]} == {
+        "Friend 1 was there": [1, 2],
+        "Friend 2 was there": [2],
+    }
+    assert len(by_kind["text"]) == 1
+
+
+def test_without_a_model_answer_objects_are_merged_by_name():
+    frames = [frame(1, 0.0, objects=[("Mug", "on desk")]), frame(2, 6.0, objects=[("mug", "in hand")])]
+
+    facts = stretch_facts(frames, [], None, None)
+
+    assert [(fact["kind"], fact["frame_ids"]) for fact in facts] == [("object", [1, 2])]
 
 
 def test_speech_summaries_go_to_the_passage_they_name():

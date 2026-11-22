@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from bisect import bisect_right
 from datetime import datetime
 
 from memory import db, llm
@@ -11,8 +12,11 @@ CANDIDATES_PER_RANKING = 20
 
 FUSION_K = 60
 
+PER_STRETCH_AND_KIND = 2
+
 IN_RANGE_SQL = """
-    (%(start)s::timestamptz is null or at >= %(start)s::timestamptz)
+    (%(start)s::timestamptz is null
+     or at + make_interval(secs => coalesce(end_offset_seconds, offset_seconds) - offset_seconds) >= %(start)s::timestamptz)
     and (%(end)s::timestamptz is null or at <= %(end)s::timestamptz)
     and (%(moments)s::text[] is null or moment_id = any(%(moments)s::text[]))
 """
@@ -44,6 +48,39 @@ def fuse(rankings: list[list], k: int = FUSION_K) -> list[tuple]:
     return sorted(scores.items(), key=lambda pair: pair[1], reverse=True)
 
 
+def stretch_starts(conn, moment_ids: list[str]) -> dict[str, list[float]]:
+    """Return where each moment's stretches start, from its summaries, in order."""
+    starts: dict[str, list[float]] = {moment_id: [] for moment_id in moment_ids}
+    rows = conn.execute(
+        "select moment_id, offset_seconds from fact where kind = 'summary' and moment_id = any(%s)"
+        " order by offset_seconds",
+        (moment_ids,),
+    )
+
+    for moment_id, offset in rows:
+        starts[moment_id].append(float(offset))
+
+    return starts
+
+
+def spread(facts: list[dict], starts: dict[str, list[float]], limit: int, per_group: int = PER_STRETCH_AND_KIND) -> list[dict]:
+    """Keep the facts in order, but at most `per_group` of each kind from any one stretch, up to `limit`."""
+    kept, counts = [], {}
+
+    for fact in facts:
+        stretch = bisect_right(starts.get(fact["moment_id"], []), fact["offset_seconds"] + 0.01)
+        group = (fact["moment_id"], stretch, fact["kind"])
+
+        if counts.get(group, 0) < per_group:
+            counts[group] = counts.get(group, 0) + 1
+            kept.append(fact)
+
+        if len(kept) == limit:
+            break
+
+    return kept
+
+
 def search(
     conn,
     question: str,
@@ -69,17 +106,19 @@ def search(
     by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING_SQL, query_params)]
     by_keyword = [fact_id for (fact_id,) in conn.execute(BY_KEYWORD_SQL, query_params)]
 
-    ranked = fuse([by_meaning, by_keyword])[:limit]
+    ranked = fuse([by_meaning, by_keyword])
     fact_by_id = {fact["id"]: fact for fact in db.facts_by_id(conn, [fact_id for fact_id, _ in ranked])}
-
-    return [
+    found = [
         {
             **fact_by_id[fact_id],
             "score": score,
             "matched": [name for name, hits in (("meaning", by_meaning), ("keyword", by_keyword)) if fact_id in hits],
         }
         for fact_id, score in ranked
+        if fact_id in fact_by_id
     ]
+
+    return spread(found, stretch_starts(conn, list({fact["moment_id"] for fact in found})), limit)
 
 
 def print_results(results: list[dict]) -> None:

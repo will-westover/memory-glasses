@@ -58,7 +58,6 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
     title, overview = db.moment_overview(conn, moment_id)
     summaries = db.summaries(conn, moment_id)
     titles = db.chapter_titles(conn, moment_id)
-    ends = [fact["offset_seconds"] for fact in summaries[1:]] + [db.moment_duration(conn, moment_id)]
 
     return {
         "id": moment_id,
@@ -68,15 +67,15 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
             {
                 "id": fact["id"],
                 "start": fact["offset_seconds"],
-                "end": end,
+                "end": fact["end_offset_seconds"],
                 "title": titles.get(fact["id"]),
                 "text": fact["text"],
             }
-            for fact, end in zip(summaries, ends)
+            for fact in summaries
         ],
         "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
         "transcript": db.transcript_lines(conn, moment_id),
-        "summaries": [fact_json(fact) for fact in db.summaries(conn, moment_id)],
+        "summaries": [fact_json(fact) for fact in summaries],
         "has_video": has_video(moment_id),
         "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
         "has_mesh": storage.exists(MOMENTS_DIR / moment_id / "mesh.obj"),

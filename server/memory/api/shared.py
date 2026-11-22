@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from memory import db, storage
-from memory.config import FRAMES_PER_MINUTE, SUMMARY_STRETCH_SECONDS
+from memory.config import FRAMES_PER_MINUTE
 from memory.ingest.facts import first_sentence
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 
@@ -113,10 +113,10 @@ def fact_json(fact: dict, details: dict | None = None) -> dict:
     """Return a fact in the shape the app reads, with who and where when the details are given."""
     details = details or {}
     speech = fact["kind"] in SPEECH_KINDS
-    end = details.get("end_seconds") if speech else None
+    end = fact.get("end_offset_seconds") or details.get("end_seconds")
 
-    if fact["kind"] == "summary":
-        end = fact["offset_seconds"] + SUMMARY_STRETCH_SECONDS
+    if end is not None and end <= fact["offset_seconds"]:
+        end = None
 
     return {
         "id": fact["id"],

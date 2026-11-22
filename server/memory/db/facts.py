@@ -1,38 +1,58 @@
 """Facts, the rows search returns, and each moment's overview."""
 
-from datetime import timedelta
-
 import psycopg
-
-from memory.config import SUMMARY_STRETCH_SECONDS
 
 
 def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], vectors: list[str]) -> None:
-    """Store a moment's facts, replacing any earlier ones; two rebuilds of one moment wait for each other."""
+    """Store a moment's facts and the frames each covers, replacing any earlier ones; rebuilds of one moment wait in turn."""
     conn.execute("select pg_advisory_xact_lock(hashtext('facts:' || %s))", (moment_id,))
     conn.execute("delete from fact where moment_id = %s", (moment_id,))
 
     with conn.cursor() as cursor:
         cursor.executemany(
-            "insert into fact (moment_id, frame_id, kind, at, offset_seconds, text, embedding)"
-            " values (%s, %s, %s, %s, %s, %s, %s::vector)",
+            "insert into fact (moment_id, frame_id, kind, at, offset_seconds, end_offset_seconds, text, title, embedding)"
+            " values (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector) returning id",
             [
-                (moment_id, fact["frame_id"], fact["kind"], fact["at"], fact["offset_seconds"], fact["text"], vector)
+                (
+                    moment_id,
+                    fact["frame_id"],
+                    fact["kind"],
+                    fact["at"],
+                    fact["offset_seconds"],
+                    fact["end_offset_seconds"],
+                    fact["text"],
+                    fact.get("title"),
+                    vector,
+                )
                 for fact, vector in zip(facts, vectors)
             ],
+            returning=True,
+        )
+        fact_ids = []
+
+        while True:
+            fact_ids.append(cursor.fetchone()[0])
+
+            if not cursor.nextset():
+                break
+
+        cursor.executemany(
+            "insert into fact_frame (fact_id, frame_id) values (%s, %s)",
+            [(fact_id, frame_id) for fact_id, fact in zip(fact_ids, facts) for frame_id in fact["frame_ids"]],
         )
 
 
 FACT_SELECT = (
-    "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds, fact.text,"
+    "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds,"
+    "       coalesce(fact.end_offset_seconds, fact.offset_seconds), fact.text,"
     "       coalesce(frame.image_path, best.image_path, closest.image_path), frame.x, frame.z, room.name,"
     "       fact.frame_id"
     "  from fact left join frame on frame.id = fact.frame_id"
     "  join moment on moment.id = fact.moment_id left join room on room.id = frame.room_id"
     "  left join lateral ("
-    "    select seen.image_path from fact shown join frame seen on seen.id = shown.frame_id"
-    "     where fact.frame_id is null and shown.moment_id = fact.moment_id and shown.kind = 'frame'"
-    "       and shown.at between fact.at - interval '10 seconds' and fact.at + interval '70 seconds'"
+    "    select seen.image_path from fact_frame covered join frame seen on seen.id = covered.frame_id"
+    "      join fact shown on shown.frame_id = seen.id and shown.kind = 'frame'"
+    "     where fact.frame_id is null and covered.fact_id = fact.id"
     "     order by shown.embedding <=> fact.embedding limit 1"
     "  ) best on true"
     "  left join lateral ("
@@ -43,6 +63,8 @@ FACT_SELECT = (
     "  ) closest on true"
 )
 
+ENDS_AT = "fact.at + make_interval(secs => coalesce(fact.end_offset_seconds, fact.offset_seconds) - fact.offset_seconds)"
+
 
 def fact_rows(rows) -> list[dict]:
     return [
@@ -52,13 +74,14 @@ def fact_rows(rows) -> list[dict]:
             "at": at,
             "moment_id": moment_id,
             "offset_seconds": float(offset),
+            "end_offset_seconds": float(end),
             "text": text,
             "image_path": image_path,
             "position": [x, z] if x is not None else None,
             "room": room,
             "frame_id": frame_id,
         }
-        for fact_id, kind, at, moment_id, offset, text, image_path, x, z, room, frame_id in rows
+        for fact_id, kind, at, moment_id, offset, end, text, image_path, x, z, room, frame_id in rows
     ]
 
 
@@ -87,32 +110,21 @@ def facts_by_id(conn: psycopg.Connection, fact_ids: list[int]) -> list[dict]:
 
 
 def timeline(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:
-    """Return the frames, speech and summaries between two times, in order, from only the given moments if named."""
+    """Return the frames, speech and summaries that overlap two times, in order, from only the given moments if named."""
     return fact_rows(
         conn.execute(
-            f"{FACT_SELECT} where fact.at <= %(end)s"
-            " and (%(moments)s::text[] is null or fact.moment_id = any(%(moments)s::text[])) and ("
-            "    (fact.kind in ('frame', 'speech') and fact.at >= %(start)s)"
-            " or (fact.kind = 'summary' and fact.at > %(summary_start)s))"
+            f"{FACT_SELECT} where fact.at <= %(end)s and {ENDS_AT} >= %(start)s"
+            " and fact.kind in ('frame', 'speech', 'summary')"
+            " and (%(moments)s::text[] is null or fact.moment_id = any(%(moments)s::text[]))"
             " order by fact.at, fact.id",
-            {
-                "start": start,
-                "end": end,
-                "summary_start": start - timedelta(seconds=SUMMARY_STRETCH_SECONDS),
-                "moments": moments,
-            },
+            {"start": start, "end": end, "moments": moments},
         )
     )
 
 
-def save_overview(conn: psycopg.Connection, moment_id: str, title: str, overview: str, chapters: dict) -> None:
-    """Store a moment's title and overview, and the chapter title of each of its summaries."""
+def save_overview(conn: psycopg.Connection, moment_id: str, title: str, overview: str) -> None:
+    """Store a moment's title and overview."""
     conn.execute("update moment set title = %s, overview = %s where id = %s", (title, overview, moment_id))
-
-    with conn.cursor() as cursor:
-        cursor.executemany(
-            "update fact set title = %s where id = %s", [(name, fact_id) for fact_id, name in chapters.items()]
-        )
 
 
 def moments_without_title(conn: psycopg.Connection) -> list[str]:
@@ -158,19 +170,17 @@ def frame_fact(conn: psycopg.Connection, frame_id: int) -> dict | None:
 
 
 def source_details(conn: psycopg.Connection, facts: list[dict]) -> dict:
-    """Return, for each fact id, the people in its frame, its place, and for speech its speaker and end."""
+    """Return, for each fact id, the people in the frames it covers, its place, and for speech its speaker."""
     ids = [fact["id"] for fact in facts]
     rows = conn.execute(
-        "select f.id, f.frame_id, p.id, p.name, p.lat, p.lon,"
+        "select f.id, p.id, p.name, p.lat, p.lon,"
         "       (select coalesce(json_agg(distinct jsonb_build_object('id', pe.id, 'name', pe.name)), '[]')"
-        "          from face fa join person pe on pe.id = fa.person_id where fa.frame_id = f.frame_id),"
+        "          from face fa join person pe on pe.id = fa.person_id"
+        "         where fa.frame_id = f.frame_id"
+        "            or fa.frame_id in (select ff.frame_id from fact_frame ff where ff.fact_id = f.id)),"
         "       (select a.speaker from audio_segment a where a.moment_id = f.moment_id"
         "         and a.offset_seconds >= f.offset_seconds - 0.01 order by a.offset_seconds limit 1),"
-        "       (select max(a.offset_seconds + extract(epoch from a.end_at - a.start_at)) from audio_segment a"
-        "         where a.moment_id = f.moment_id and a.offset_seconds >= f.offset_seconds - 0.01"
-        "           and a.offset_seconds < coalesce((select min(n.offset_seconds) from fact n"
-        "                where n.moment_id = f.moment_id and n.kind = f.kind and n.offset_seconds > f.offset_seconds),"
-        "               'infinity'))"
+        "       f.end_offset_seconds"
         "  from fact f"
         "  left join segment s on s.moment_id = f.moment_id and f.at between s.start_at and s.end_at"
         "  left join place p on p.id = s.place_id"
@@ -185,7 +195,7 @@ def source_details(conn: psycopg.Connection, facts: list[dict]) -> dict:
             "end_seconds": float(end) if end is not None else None,
             "place": {"id": place_id, "name": name, "lat": lat, "lon": lon} if place_id else None,
         }
-        for fact_id, _, place_id, name, lat, lon, people, speaker, end in rows
+        for fact_id, place_id, name, lat, lon, people, speaker, end in rows
     }
 
 

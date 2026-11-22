@@ -1,4 +1,4 @@
-from memory.search import fuse
+from memory.search import fuse, spread
 
 
 def test_item_in_both_lists_beats_item_at_the_top_of_one():
@@ -19,3 +19,14 @@ def test_earlier_position_scores_higher_within_one_list():
 
 def test_empty_lists_give_no_results():
     assert fuse([[], []]) == []
+
+
+def test_one_stretch_gives_at_most_two_facts_of_each_kind():
+    def fact(fact_id, kind, offset, moment="m"):
+        return {"id": fact_id, "kind": kind, "offset_seconds": offset, "moment_id": moment}
+
+    facts = [fact(1, "object", 1), fact(2, "object", 2), fact(3, "object", 3), fact(4, "person", 4), fact(5, "object", 70)]
+
+    kept = spread(facts, {"m": [0.0, 60.0]}, limit=10)
+
+    assert [item["id"] for item in kept] == [1, 2, 4, 5]

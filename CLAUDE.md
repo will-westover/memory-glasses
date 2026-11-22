@@ -68,6 +68,8 @@ Everything else is your call.
 - A glasses recording ends only when the phone or glasses say so (`POST /glasses/recordings/{id}/end`); nothing
   checks for ones that went quiet. The first photo of a newer recording also ends any older one still open. Photos that
   arrive later start a new part. Photos are filed by when they were taken, not when they arrived.
+- Facts cover a stretch of a moment (`fact.end_offset_seconds`, and `fact_frame` for the photos), split by code where
+  the room changes, the photos stop looking alike, there is a 30 s gap or two minutes pass.
 - A moment is filed at the place the phone's map recognised, else the place whose frames look most alike (average
   embedding at least 0.75); for now each moment is one segment. Rooms come from one model call per moment, then a
   vote of frames within 1.5 m.
