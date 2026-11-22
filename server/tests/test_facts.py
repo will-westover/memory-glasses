@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
+import pytest
 
 from memory.ingest.facts import (
     Said,
@@ -28,7 +29,7 @@ def frame(frame_id, offset, objects=(), texts=(), room=None, people=()):
         "at": EVENING,
         "offset_seconds": offset,
         "summary": "Making coffee. Steam rises.",
-        "objects": list(objects),
+        "objects": [{"name": name, "location": location} for name, location in objects],
         "texts": list(texts),
         "room": room,
         "people": [{"name": name} for name in people],
@@ -49,6 +50,13 @@ def test_a_long_pause_starts_a_new_passage():
     lines = [line(0, 2, "first thought"), line(30, 32, "much later")]
 
     assert group_passages(lines) == [[lines[0]], [lines[1]]]
+
+
+def test_a_box_is_kept_inside_the_picture():
+    from memory.db.moments import clean_box
+
+    assert clean_box([0.9, -0.1, 0.5, 0.3]) == [0.9, 0.0, pytest.approx(0.1), 0.3]
+    assert clean_box([0.1, 0.2]) is None
 
 
 def test_a_frame_fact_names_the_people_and_room():

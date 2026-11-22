@@ -206,7 +206,10 @@ def speech_fact(passage: list[dict], place: str | None, kind: str, text: str) ->
 
 def describe_photo(number: int, frame: dict) -> str:
     """Return one photo as the line the stretch call reads."""
-    things = "; ".join(f"{name} ({location})" for name, location in frame["objects"])
+    things = "; ".join(
+        f"{item['name']} ({item['location']}{'; ' + item['details'] if item.get('details') else ''})"
+        for item in frame["objects"]
+    )
 
     return f"{number}. {int(frame['offset_seconds'])} s: {frame['summary']} Things: {things or 'none listed'}"
 
@@ -232,8 +235,9 @@ def things_by_name(frames: list[dict]) -> list[Thing]:
     found: dict[str, Thing] = {}
 
     for number, frame in enumerate(frames, start=1):
-        for name, location in frame["objects"]:
-            found.setdefault(name.lower(), Thing(name=name, where=location, photos=[])).photos.append(number)
+        for item in frame["objects"]:
+            thing = Thing(name=item["name"], where=item["location"], photos=[])
+            found.setdefault(item["name"].lower(), thing).photos.append(number)
 
     return list(found.values())
 
@@ -377,7 +381,9 @@ def print_stretches(conn, moment_id: str) -> None:
         start, end = frames[members[0]]["offset_seconds"], frames[members[-1]]["offset_seconds"]
         rooms = {frames[index].get("room") for index in members} - {None}
 
-        print(f"  {minutes_seconds(start):>6} to {minutes_seconds(end):>6}  {len(members):>3} frames  {reason:<16} {', '.join(rooms)}")
+        print(
+            f"  {minutes_seconds(start):>6} to {minutes_seconds(end):>6}  {len(members):>3} frames  {reason:<16} {', '.join(rooms)}"
+        )
 
 
 def main() -> int:

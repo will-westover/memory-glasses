@@ -111,6 +111,16 @@ def frames_without_caption(conn: psycopg.Connection, moment_id: str, limit: int 
     ).fetchall()
 
 
+def clean_box(box: list[float]) -> list[float] | None:
+    """Return a box of four fractions kept inside the picture, or None if it isn't one."""
+    if len(box) != 4:
+        return None
+
+    left, top, width, height = (min(max(value, 0.0), 1.0) for value in box)
+
+    return [left, top, min(width, 1 - left), min(height, 1 - top)]
+
+
 def save_caption(conn: psycopg.Connection, frame_id: int, caption) -> None:
     """Store a frame's caption, replacing any earlier one."""
     conn.execute(
@@ -123,8 +133,8 @@ def save_caption(conn: psycopg.Connection, frame_id: int, caption) -> None:
 
     with conn.cursor() as cursor:
         cursor.executemany(
-            "insert into frame_object (frame_id, name, location) values (%s, %s, %s)",
-            [(frame_id, item.name, item.location) for item in caption.objects],
+            "insert into frame_object (frame_id, name, location, details, box) values (%s, %s, %s, %s, %s)",
+            [(frame_id, item.name, item.location, item.details, clean_box(item.box)) for item in caption.objects],
         )
 
         cursor.executemany(
@@ -144,7 +154,8 @@ def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
         "select f.id, f.image_path, f.captured_at, extract(epoch from f.captured_at - s.started_at),"
         "       case when f.x is null then null else json_build_array(f.x, f.y, f.z, f.yaw) end,"
         "       f.summary, r.name,"
-        "       (select coalesce(json_agg(json_build_array(o.name, o.location)), '[]')"
+        "       (select coalesce(json_agg(json_build_object('name', o.name, 'location', o.location,"
+        "          'details', o.details, 'box', o.box)), '[]')"
         "          from frame_object o where o.frame_id = f.id),"
         "       (select coalesce(json_agg(json_build_array(t.text, t.surface)), '[]')"
         "          from frame_text t where t.frame_id = f.id)"
@@ -164,7 +175,7 @@ def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
             "at": captured_at,
             "offset_seconds": float(offset),
             "summary": summary,
-            "objects": [tuple(item) for item in objects],
+            "objects": objects,
             "texts": [tuple(item) for item in texts],
             "people": people,
             "position": pose,

@@ -63,7 +63,9 @@ FACT_SELECT = (
     "  ) closest on true"
 )
 
-ENDS_AT = "fact.at + make_interval(secs => coalesce(fact.end_offset_seconds, fact.offset_seconds) - fact.offset_seconds)"
+ENDS_AT = (
+    "fact.at + make_interval(secs => coalesce(fact.end_offset_seconds, fact.offset_seconds) - fact.offset_seconds)"
+)
 
 
 def fact_rows(rows) -> list[dict]:

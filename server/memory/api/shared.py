@@ -148,7 +148,7 @@ def frame_json(frame: dict) -> dict:
         "image": image_url(frame["image_path"]),
         "summary": frame["summary"],
         "short": first_sentence(frame["summary"]) if frame["summary"] else None,
-        "objects": [{"name": name, "location": location} for name, location in frame["objects"]],
+        "objects": [{"name": item["name"], "location": item["location"]} for item in frame["objects"]],
         "texts": [{"text": text, "surface": surface} for text, surface in frame["texts"]],
         "people": [
             {"id": person["id"], "name": person["name"], "face": f"/faces/{person['face_id']}"}

@@ -25,7 +25,13 @@ def test_one_stretch_gives_at_most_two_facts_of_each_kind():
     def fact(fact_id, kind, offset, moment="m"):
         return {"id": fact_id, "kind": kind, "offset_seconds": offset, "moment_id": moment}
 
-    facts = [fact(1, "object", 1), fact(2, "object", 2), fact(3, "object", 3), fact(4, "person", 4), fact(5, "object", 70)]
+    facts = [
+        fact(1, "object", 1),
+        fact(2, "object", 2),
+        fact(3, "object", 3),
+        fact(4, "person", 4),
+        fact(5, "object", 70),
+    ]
 
     kept = spread(facts, {"m": [0.0, 60.0]}, limit=10)
 

@@ -22,15 +22,21 @@ Describe it thoroughly and accurately. Your description is the only record of th
 later to answer any kind of question about what the wearer saw.
 
 Objects: list every separate thing you can see, large or small, including things in the background. Name each
-one as specifically as you can. Skip walls, floors and built-in furniture. For each, say where it is in a short
-phrase of your own, in whatever way describes it best.
+one as specifically as you can tell from the picture: the kind of plant, food, animal or device, and the brand or
+model when it is readable. Skip walls, floors and built-in furniture. For each, say where it is in a short phrase of
+your own, give the details that would tell it apart from a similar thing (colour, material, pattern, size, wear,
+any writing on it), and mark the box around it.
 
 Report only what is visible. Do not guess the names of people."""
 
 
 class SeenObject(BaseModel):
-    name: str = Field(description="A plain noun for the object, lowercase, e.g. 'water bottle'")
+    name: str = Field(description="The most specific plain name, lowercase, e.g. 'olive tree' or 'water bottle'")
     location: str = Field(description="Where it is, as a short lowercase phrase, e.g. 'on the kitchen island'")
+    details: str = Field(description="What would tell it apart: colour, material, pattern, size, writing; short")
+    box: list[float] = Field(
+        description="Left, top, width and height as fractions of the picture from 0 to 1, e.g. [0.4, 0.2, 0.1, 0.3]"
+    )
 
 
 class SeenText(BaseModel):
