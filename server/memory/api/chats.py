@@ -136,7 +136,7 @@ def ask_in_conversation(
     conversation_id: UUID, body: ChatQuestion, conn: psycopg.Connection = Depends(connection)
 ) -> dict:
     """Answer a question using the conversation so far, and store both."""
-    history, frame, question = question_context(conn, conversation_id, body)
+    history, frame, question_message = question_context(conn, conversation_id, body)
 
     try:
         replies = ask_agent(conn, body.question, history=history, frame=frame)["messages"]
@@ -144,7 +144,7 @@ def ask_in_conversation(
         conn.rollback()
         replies = failure_messages(error)
 
-    turn = save_turn(conn, conversation_id, [question, *replies])
+    turn = save_turn(conn, conversation_id, [question_message, *replies])
     conn.commit()
     give_title(conversation_id, body.question, (turn["answer"] or {}).get("answer"))
 
@@ -156,7 +156,7 @@ def sse_event(name: str, data: dict) -> str:
     return f"event: {name}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
-def answer_stream(conversation_id: UUID, body: ChatQuestion, history: list, frame: dict | None, question: dict):
+def answer_stream(conversation_id: UUID, body: ChatQuestion, history: list, frame: dict | None, question_message: dict):
     """Yield each step and piece of the answer as server-sent events, then store the turn and send it."""
     with db.connect() as conn:
         replies = None
@@ -175,7 +175,7 @@ def answer_stream(conversation_id: UUID, body: ChatQuestion, history: list, fram
             replies = failure_messages(error)
             yield sse_event("error", {"message": f"The answer failed: {error}"})
 
-        turn = save_turn(conn, conversation_id, [question, *replies])
+        turn = save_turn(conn, conversation_id, [question_message, *replies])
         conn.commit()
 
         yield sse_event("done", jsonable_encoder(turn))
@@ -188,10 +188,10 @@ def ask_stream(
     conversation_id: UUID, body: ChatQuestion, conn: psycopg.Connection = Depends(connection)
 ) -> StreamingResponse:
     """Answer a question as server-sent events: each step, the answer as it is written, then the stored turn."""
-    history, frame, question = question_context(conn, conversation_id, body)
+    history, frame, question_message = question_context(conn, conversation_id, body)
 
     return StreamingResponse(
-        answer_stream(conversation_id, body, history, frame, question),
+        answer_stream(conversation_id, body, history, frame, question_message),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache"},
     )

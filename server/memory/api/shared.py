@@ -24,9 +24,6 @@ EXTRA_FILES = {"poses": "poses.json", "mesh": "mesh.obj", "world_map": "world.ma
 RECORDING_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 
 
-MAX_FRAME_BYTES = 2_000_000
-
-
 MIN_DISPLAY_SCALE = 0.3
 
 

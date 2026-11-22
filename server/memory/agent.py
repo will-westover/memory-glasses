@@ -154,7 +154,7 @@ NO_ANSWER = Answer(
 )
 
 
-def instructions(conn, notes: str, moments: list[str] | None = None) -> str:
+def fill_instructions(conn, notes: str, moments: list[str] | None = None) -> str:
     """Return the instructions with the current time and the newest recordings filled in."""
     places = db.gps_places(conn)
     moment_rows = [row for row in db.list_moments(conn) if moments is None or row[0] in moments]
@@ -262,7 +262,7 @@ def fact_record(fact: dict) -> dict:
     }
 
 
-def now() -> datetime:
+def local_now() -> datetime:
     return datetime.now().astimezone()
 
 
@@ -281,7 +281,7 @@ def model_input(history: list[tuple[str, str]], question: str) -> list[dict]:
     return messages + [{"role": "user", "content": question}]
 
 
-def when(text: str | None) -> str:
+def spoken_time(text: str | None) -> str:
     """Return a tool's time argument the way a person would say it."""
     at = parse_time(text)
 
@@ -291,12 +291,16 @@ def when(text: str | None) -> str:
 def step_text(name: str, arguments: dict) -> str:
     """Describe one tool call in plain words."""
     if name == "search":
-        between = f" from {when(arguments['start'])} to {when(arguments['end'])}" if arguments.get("start") else ""
+        between = (
+            f" from {spoken_time(arguments['start'])} to {spoken_time(arguments['end'])}"
+            if arguments.get("start")
+            else ""
+        )
 
         return f'Searching for "{arguments["query"]}"{between}'
 
     if name == "timeline":
-        return f"Looking at what happened from {when(arguments.get('start'))} to {when(arguments.get('end'))}"
+        return f"Looking at what happened from {spoken_time(arguments.get('start'))} to {spoken_time(arguments.get('end'))}"
 
     return "Looking at what was nearby"
 
@@ -320,14 +324,14 @@ def answer_events(
     """Answer a question by letting the model call the tools, yielding each step and piece of the answer as it comes."""
     llm.require_price(model)
     started = time.monotonic()
-    prompt = instructions(conn, AGENT_NOTES, moments)
+    prompt = fill_instructions(conn, AGENT_NOTES, moments)
 
     seen: dict = {frame["id"]: frame} if frame else {}
     calls = []
     usd = 0.0
 
     asked = f"{question}\n\nThe question is about this frame:\n{fact_line(frame)}" if frame else question
-    send = model_input(list(history), asked)
+    round_input = model_input(list(history), asked)
     previous_id = None
     tools = TOOLS if use_nearby else [tool for tool in TOOLS if tool["name"] != "nearby"]
     messages = []
@@ -336,28 +340,28 @@ def answer_events(
         request = {
             "model": model,
             "instructions": prompt,
-            "input": send,
+            "input": round_input,
             "previous_response_id": previous_id,
             "tools": tools,
             "tool_choice": "auto" if round_number < MAX_TOOL_ROUNDS else "none",
         }
 
-        buffer, shown = "", ""
+        streamed_json, sent_text = "", ""
 
         with llm.client().responses.stream(**request, text_format=Answer, reasoning={"effort": "low"}) as stream:
             for event in stream:
                 if event.type != "response.output_text.delta":
                     continue
 
-                if not buffer:
+                if not streamed_json:
                     yield step_event("answer", "Writing the answer")
 
-                buffer += event.delta
-                text = shown_so_far(partial_string(buffer, "answer"), seen)
+                streamed_json += event.delta
+                text = shown_so_far(partial_string(streamed_json, "answer"), seen)
 
-                if len(text) > len(shown) and text.startswith(shown):
-                    yield "delta", {"text": text[len(shown) :]}
-                    shown = text
+                if len(text) > len(sent_text) and text.startswith(sent_text):
+                    yield "delta", {"text": text[len(sent_text) :]}
+                    sent_text = text
 
             response = stream.get_final_response()
 
@@ -367,18 +371,18 @@ def answer_events(
             usd += llm.log_cost(conn, "agent", model, response.usage, request=request, response=received)
 
         messages.append(
-            {"role": "assistant", "at": now(), "content": {"output": received["output"]}, "calls": call_ids}
+            {"role": "assistant", "at": local_now(), "content": {"output": received["output"]}, "calls": call_ids}
         )
 
-        requests = [item for item in response.output if item.type == "function_call"]
+        function_calls = [item for item in response.output if item.type == "function_call"]
 
-        if not requests:
+        if not function_calls:
             break
 
-        send = []
+        round_input = []
         previous_id = response.id
 
-        for call in requests:
+        for call in function_calls:
             arguments = json.loads(call.arguments)
             calls.append((call.name, arguments))
             yield step_event(call.name, step_text(call.name, arguments))
@@ -388,11 +392,11 @@ def answer_events(
 
             yield step_event(call.name, step_text(call.name, arguments), facts)
 
-            send.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
+            round_input.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
             messages.append(
                 {
                     "role": "tool",
-                    "at": now(),
+                    "at": local_now(),
                     "calls": call_ids,
                     "content": {
                         "call_id": call.call_id,
@@ -435,7 +439,7 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL, moments: list[str] 
 
     request = {
         "model": model,
-        "instructions": instructions(conn, PLAIN_NOTES, moments),
+        "instructions": fill_instructions(conn, PLAIN_NOTES, moments),
         "input": f"Question: {question}\n\nFacts:\n{fact_lines(facts)}",
     }
     response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})

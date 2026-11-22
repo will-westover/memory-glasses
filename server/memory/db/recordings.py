@@ -5,33 +5,33 @@ from datetime import datetime
 import psycopg
 
 
-def note_frame(conn: psycopg.Connection, base: str, taken: datetime, arrived: datetime) -> tuple[str, datetime]:
+def note_frame(conn: psycopg.Connection, recording: str, taken: datetime, arrived: datetime) -> tuple[str, datetime]:
     """Count a frame in the open part of a glasses recording, opening a new part if needed; return (name, start)."""
     row = conn.execute(
         "update recording set last_frame_at = %s, photos = photos + 1 where base = %s and job_id is null"
         " returning name, started_at",
-        (arrived, base),
+        (arrived, recording),
     ).fetchone()
 
     if row is not None:
         return row
 
-    (parts,) = conn.execute("select count(*) from recording where base = %s", (base,)).fetchone()
-    name = base if parts == 0 else f"{base}-part{parts + 1}"
+    (part_count,) = conn.execute("select count(*) from recording where base = %s", (recording,)).fetchone()
+    name = recording if part_count == 0 else f"{recording}-part{part_count + 1}"
 
     return conn.execute(
         "insert into recording (name, base, part, started_at, last_frame_at, photos) values (%s, %s, %s, %s, %s, 1)"
         " on conflict (name) do update set last_frame_at = excluded.last_frame_at, photos = recording.photos + 1"
         " returning name, started_at",
-        (name, base, parts + 1, taken, arrived),
+        (name, recording, part_count + 1, taken, arrived),
     ).fetchone()
 
 
-def end_recording(conn: psycopg.Connection, base: str) -> list[str]:
+def end_recording(conn: psycopg.Connection, recording: str) -> list[str]:
     """Mark a glasses recording's open part as over, and return its name if there was one."""
     rows = conn.execute(
         "update recording set ended_at = now() where base = %s and job_id is null and ended_at is null returning name",
-        (base,),
+        (recording,),
     )
 
     return [name for (name,) in rows]

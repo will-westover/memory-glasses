@@ -6,7 +6,7 @@ from pathlib import Path
 import psycopg
 
 
-def position(frame: dict) -> tuple:
+def frame_position(frame: dict) -> tuple:
     """Return a manifest frame's (x, y, z, yaw), or Nones if the recording had no positions."""
     pose = frame.get("position")
 
@@ -19,7 +19,7 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
     moment_id = manifest["id"]
     folder = f"moments/{moment_id}"
 
-    wanted = {(f"{folder}/{frame['file']}", frame["fingerprint"]): frame for frame in manifest["frames"]}
+    manifest_frames = {(f"{folder}/{frame['file']}", frame["fingerprint"]): frame for frame in manifest["frames"]}
 
     with conn.transaction():
         conn.execute(
@@ -44,7 +44,7 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
                 (moment_id, manifest["started_at"], manifest["lat"], manifest["lon"]),
             )
 
-        stored = {
+        stored_frames = {
             (image_path, fingerprint): (frame_id, captioned)
             for frame_id, image_path, fingerprint, captioned in conn.execute(
                 "select id, image_path, fingerprint, captioned_at is not null from frame where moment_id = %s",
@@ -52,15 +52,15 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
             )
         }
 
-        gone = [stored[key] for key in stored.keys() - wanted.keys()]
-        conn.execute("delete from frame where id = any(%s)", ([frame_id for frame_id, _ in gone],))
+        removed_frames = [stored_frames[key] for key in stored_frames.keys() - manifest_frames.keys()]
+        conn.execute("delete from frame where id = any(%s)", ([frame_id for frame_id, _ in removed_frames],))
 
         with conn.cursor() as cursor:
             cursor.executemany(
                 "update frame set captured_at = %s, x = %s, y = %s, z = %s, yaw = %s where id = %s",
                 [
-                    (wanted[key]["captured_at"], *position(wanted[key]), stored[key][0])
-                    for key in wanted.keys() & stored.keys()
+                    (manifest_frames[key]["captured_at"], *frame_position(manifest_frames[key]), stored_frames[key][0])
+                    for key in manifest_frames.keys() & stored_frames.keys()
                 ],
             )
 
@@ -68,16 +68,16 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
                 "insert into frame (moment_id, captured_at, image_path, fingerprint, x, y, z, yaw)"
                 " values (%s, %s, %s, %s, %s, %s, %s, %s)",
                 [
-                    (moment_id, wanted[key]["captured_at"], *key, *position(wanted[key]))
-                    for key in wanted.keys() - stored.keys()
+                    (moment_id, manifest_frames[key]["captured_at"], *key, *frame_position(manifest_frames[key]))
+                    for key in manifest_frames.keys() - stored_frames.keys()
                 ],
             )
 
     return {
-        "frames": len(wanted),
-        "captions_kept": sum(stored[key][1] for key in wanted.keys() & stored.keys()),
-        "captions_lost": sum(captioned for _, captioned in gone),
-        "changed": bool(stored) and wanted.keys() != stored.keys(),
+        "frames": len(manifest_frames),
+        "captions_kept": sum(stored_frames[key][1] for key in manifest_frames.keys() & stored_frames.keys()),
+        "captions_lost": sum(captioned for _, captioned in removed_frames),
+        "changed": bool(stored_frames) and manifest_frames.keys() != stored_frames.keys(),
     }
 
 

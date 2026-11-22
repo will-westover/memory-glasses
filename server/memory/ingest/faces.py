@@ -49,7 +49,7 @@ def faces_in(image, detector, recognizer) -> list[tuple]:
     detector.setInputSize((width, height))
     _, rows = detector.detect(image)
 
-    found = []
+    faces = []
 
     for row in rows if rows is not None else []:
         x, y, w, h, score = row[0], row[1], row[2], row[3], row[14]
@@ -61,19 +61,19 @@ def faces_in(image, detector, recognizer) -> list[tuple]:
         embedding = recognizer.feature(aligned).flatten()
         embedding = embedding / np.linalg.norm(embedding)
 
-        found.append(((x / width, y / height, w / width, h / height), float(score), embedding, facing_camera(row)))
+        faces.append(((x / width, y / height, w / width, h / height), float(score), embedding, facing_camera(row)))
 
-    return found
+    return faces
 
 
 def best_match(
-    embedding: np.ndarray, people: dict[int, np.ndarray], threshold: float = SAME_PERSON_SIMILARITY
+    embedding: np.ndarray, person_sums: dict[int, np.ndarray], threshold: float = SAME_PERSON_SIMILARITY
 ) -> int | None:
     """Return the person whose average face is most similar, if similar enough to be the same person."""
     best, best_score = None, threshold
 
-    for person_id, centre in people.items():
-        score = float(np.dot(embedding, centre / np.linalg.norm(centre)))
+    for person_id, embedding_sum in person_sums.items():
+        score = float(np.dot(embedding, embedding_sum / np.linalg.norm(embedding_sum)))
 
         if score >= best_score:
             best, best_score = person_id, score
@@ -81,7 +81,7 @@ def best_match(
     return best
 
 
-def images(frames: list[tuple]):
+def readable_images(frames: list[tuple]):
     """Yield (frame id, image) for each frame whose image can be read."""
     for frame_id, image_path in frames:
         image = cv2.imread(str(DATA_DIR / image_path))
@@ -90,7 +90,7 @@ def images(frames: list[tuple]):
             yield frame_id, image
 
 
-def vector(embedding: np.ndarray) -> str:
+def pgvector_text(embedding: np.ndarray) -> str:
     """Return an embedding as text Postgres can store."""
     return "[" + ",".join(f"{value:.6f}" for value in embedding) + "]"
 
@@ -102,27 +102,31 @@ def find_faces(conn, moment_id: str) -> dict[str, int]:
     frames = db.frame_images(conn, moment_id)
 
     db.clear_faces(conn, moment_id)
-    people = db.person_embedding_sums(conn)
+    person_sums = db.person_embedding_sums(conn)
     counts = {"frames": len(frames), "faces": 0, "new_people": 0, "skipped": 0}
 
-    found = [(frame_id, face) for frame_id, image in images(frames) for face in faces_in(image, detector, recognizer)]
-    found.sort(key=lambda item: not item[1][3])
+    detections = [
+        (frame_id, face)
+        for frame_id, image in readable_images(frames)
+        for face in faces_in(image, detector, recognizer)
+    ]
+    detections.sort(key=lambda item: not item[1][3])
 
-    for frame_id, (box, score, embedding, frontal) in found:
-        person_id = best_match(embedding, people)
+    for frame_id, (box, score, embedding, facing) in detections:
+        person_id = best_match(embedding, person_sums)
 
-        if person_id is None and not frontal:
+        if person_id is None and not facing:
             counts["skipped"] += 1
             continue
 
         if person_id is None:
             person_id = db.new_person(conn)
-            people[person_id] = embedding.copy()
+            person_sums[person_id] = embedding.copy()
             counts["new_people"] += 1
         else:
-            people[person_id] = people[person_id] + embedding
+            person_sums[person_id] = person_sums[person_id] + embedding
 
-        db.save_face(conn, frame_id, person_id, box, score, vector(embedding))
+        db.save_face(conn, frame_id, person_id, box, score, pgvector_text(embedding))
         counts["faces"] += 1
 
     db.remove_faceless_people(conn)

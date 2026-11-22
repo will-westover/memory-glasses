@@ -7,29 +7,31 @@ MARKER = re.compile(r"\[(\d+)\]")
 OPEN_MARKER = re.compile(r"\[\d*$")
 
 
-def renumber(text: str, cited: list[int], known) -> tuple[str, list[int]]:
+def renumber(text: str, cited: list[int], shown_ids) -> tuple[str, list[int]]:
     """Turn [fact number] markers into [1], [2] in order of first use, dropping unknown facts. Return text and ids."""
-    kept: list[int] = []
+    cited_in_order: list[int] = []
 
     for match in MARKER.finditer(text):
         fact_id = int(match.group(1))
 
-        if fact_id in known and fact_id not in kept:
-            kept.append(fact_id)
+        if fact_id in shown_ids and fact_id not in cited_in_order:
+            cited_in_order.append(fact_id)
 
-    kept += [fact_id for fact_id in dict.fromkeys(cited) if fact_id in known and fact_id not in kept]
+    cited_in_order += [
+        fact_id for fact_id in dict.fromkeys(cited) if fact_id in shown_ids and fact_id not in cited_in_order
+    ]
 
     def replace(match: re.Match) -> str:
         fact_id = int(match.group(1))
 
-        return f"[{kept.index(fact_id) + 1}]" if fact_id in kept else ""
+        return f"[{cited_in_order.index(fact_id) + 1}]" if fact_id in cited_in_order else ""
 
-    return re.sub(r" +([.,;:!?])", r"\1", MARKER.sub(replace, text)).replace("  ", " "), kept
+    return re.sub(r" +([.,;:!?])", r"\1", MARKER.sub(replace, text)).replace("  ", " "), cited_in_order
 
 
-def shown_so_far(text: str, known) -> str:
+def shown_so_far(text: str, shown_ids) -> str:
     """Return the renumbered answer text that is safe to show, holding back a marker still being written."""
-    return renumber(OPEN_MARKER.sub("", text), [], known)[0]
+    return renumber(OPEN_MARKER.sub("", text), [], shown_ids)[0]
 
 
 def partial_string(buffer: str, key: str) -> str:

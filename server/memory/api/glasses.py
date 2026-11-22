@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from memory import db, glasses, jobs, storage
 from memory.config import DATA_DIR
-from memory.api.shared import MAX_FRAME_BYTES, RECORDING_ID_PATTERN, STILL_SENDING_SECONDS, connection, current_settings
+from memory.api.shared import RECORDING_ID_PATTERN, STILL_SENDING_SECONDS, connection, current_settings
 
 router = APIRouter()
 
@@ -42,7 +42,7 @@ async def glasses_frame(
     else:
         jpeg = await request.body()
 
-        if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > MAX_FRAME_BYTES:
+        if not jpeg.startswith(b"\xff\xd8") or len(jpeg) > glasses.MAX_FRAME_BYTES:
             raise HTTPException(422, "the body must be one JPEG under 2 MB")
 
         path = glasses.save_frame(conn, x_recording, jpeg, taken=x_taken)
@@ -85,15 +85,15 @@ def end_recording(recording: str, conn: psycopg.Connection = Depends(connection)
 @router.get("/glasses/firmware")
 def glasses_firmware() -> dict:
     """Say which glasses firmware is newest, with a short-lived link to download it."""
-    found = latest_firmware()
+    firmware = latest_firmware()
 
-    if found is None:
+    if firmware is None:
         raise HTTPException(404, "no firmware published")
 
-    image = FIRMWARE_DIR / pathlib.PurePosixPath(found["key"]).name
-    url = storage.download_url(image, "application/octet-stream", seconds=3600)
+    firmware_path = FIRMWARE_DIR / pathlib.PurePosixPath(firmware["key"]).name
+    url = storage.download_url(firmware_path, "application/octet-stream", seconds=3600)
 
-    return {"version": found["version"], "size": found["size"], "crc32": found["crc32"], "url": url}
+    return {"version": firmware["version"], "size": firmware["size"], "crc32": firmware["crc32"], "url": url}
 
 
 @router.get("/glasses/status")

@@ -72,14 +72,14 @@ def forget_person(person_id: int, conn: psycopg.Connection = Depends(connection)
 @router.get("/faces/{face_id}")
 def face(face_id: int, conn: psycopg.Connection = Depends(connection)) -> Response:
     """Return one face, cropped from its photo with a little margin, as JPEG."""
-    found = db.face_crop(conn, face_id)
-    photo = storage.local_copy(DATA_DIR / found[0]) if found else None
+    face_row = db.face_crop(conn, face_id)
+    photo = storage.local_copy(DATA_DIR / face_row[0]) if face_row else None
     image = cv2.imread(str(photo)) if photo else None
 
     if image is None:
         raise HTTPException(404, "no such face")
 
-    _, x, y, w, h = found
+    _, x, y, w, h = face_row
     height, width = image.shape[:2]
     left, top = max(0, int((x - w * FACE_CROP_MARGIN) * width)), max(0, int((y - h * FACE_CROP_MARGIN) * height))
     right, bottom = int((x + w * (1 + FACE_CROP_MARGIN)) * width), int((y + h * (1 + FACE_CROP_MARGIN)) * height)

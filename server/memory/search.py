@@ -54,7 +54,7 @@ def search(
 ) -> list[dict]:
     """Return the facts that best match a question, best first, from only the given moments when some are named."""
     vector = llm.embed(conn, [question], "embed-question")[0]
-    values = {
+    query_params = {
         "vector": vector,
         "text": question,
         "limit": CANDIDATES_PER_RANKING,
@@ -66,15 +66,15 @@ def search(
     if start or end or moments:
         conn.execute("set local hnsw.iterative_scan = relaxed_order")
 
-    by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING_SQL, values)]
-    by_keyword = [fact_id for (fact_id,) in conn.execute(BY_KEYWORD_SQL, values)]
+    by_meaning = [fact_id for (fact_id,) in conn.execute(BY_MEANING_SQL, query_params)]
+    by_keyword = [fact_id for (fact_id,) in conn.execute(BY_KEYWORD_SQL, query_params)]
 
     ranked = fuse([by_meaning, by_keyword])[:limit]
-    details = {fact["id"]: fact for fact in db.facts_by_id(conn, [fact_id for fact_id, _ in ranked])}
+    fact_by_id = {fact["id"]: fact for fact in db.facts_by_id(conn, [fact_id for fact_id, _ in ranked])}
 
     return [
         {
-            **details[fact_id],
+            **fact_by_id[fact_id],
             "score": score,
             "matched": [name for name, hits in (("meaning", by_meaning), ("keyword", by_keyword)) if fact_id in hits],
         }

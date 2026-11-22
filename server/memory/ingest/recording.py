@@ -235,7 +235,7 @@ def build_moment(
 ) -> None:
     """Fill a folder with the moment's video, kept frames, audio, extra files, manifest and page."""
     started = start_time(info, video)
-    place = location(info)
+    lat_lon = location(info)
     frames_dir = build_dir / "frames"
     frames_dir.mkdir(parents=True)
 
@@ -270,8 +270,8 @@ def build_moment(
         "extras": sorted(extras),
         "started_at": started.isoformat(),
         "duration_seconds": duration(info),
-        "lat": place[0] if place else None,
-        "lon": place[1] if place else None,
+        "lat": lat_lon[0] if lat_lon else None,
+        "lon": lat_lon[1] if lat_lon else None,
         "frames_per_minute": frames_per_minute,
         "frames_sampled": sampled,
         "frames_blurry": sampled - usable,
@@ -388,32 +388,6 @@ def frames_to_reuse(moment_dir: Path) -> list[dict]:
         for frame in json.loads(manifest.read_text())["frames"]
         if (moment_dir / frame["file"]).is_file()
     ]
-
-
-def planned_frames(
-    video: Path,
-    frames_per_minute: float,
-    reusable_frames: list[dict] | None = None,
-    max_distance: int = DEFAULT_MAX_DISTANCE,
-    max_blur: float = DEFAULT_MAX_BLUR,
-) -> list[dict]:
-    """Return the frames that would be kept at a rate, each saying whether it's reused, without keeping anything."""
-    if not frames_per_minute:
-        return []
-
-    seconds_per_frame = 60 / frames_per_minute
-
-    with tempfile.TemporaryDirectory() as scratch:
-        frames_dir = Path(scratch) / "frames"
-        frames_dir.mkdir()
-        fingerprints, blur = extract_candidates(video, frames_dir, seconds_per_frame)
-        candidates = sorted(frames_dir.glob("*.jpg"))
-
-        _, _, picks = choose_frames(
-            fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates, reusable_frames or []
-        )
-
-    return [{"name": frame_name(pick["offset"]), "reused": pick["source"].parent != frames_dir} for pick in picks]
 
 
 def ingest(

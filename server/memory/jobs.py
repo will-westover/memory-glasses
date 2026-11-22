@@ -90,12 +90,12 @@ def process_glasses(job_id, task: dict) -> None:
     process_video(job_id, video, {}, task["frames_per_minute"], None, "glasses")
 
 
-def upload_task(names: dict, frames_per_minute: float, place_id: int | None, source: str) -> dict:
+def upload_task(file_names: dict, frames_per_minute: float, place_id: int | None, source: str) -> dict:
     """Describe the work for an uploaded recording: its files and how to process it."""
     return {
         "kind": "upload",
-        "video": names["video"],
-        "extras": [name for field, name in names.items() if field != "video"],
+        "video": file_names["video"],
+        "extras": [name for field, name in file_names.items() if field != "video"],
         "frames_per_minute": frames_per_minute,
         "place_id": place_id,
         "source": source,
