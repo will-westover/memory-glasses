@@ -21,6 +21,9 @@ MIN_FACE_PIXELS = 40
 SAME_PERSON_SIMILARITY = 0.363
 MIN_EYE_SPAN = 0.3
 MAX_NOSE_OFFSET = 0.5
+MIN_SHARPNESS = 22
+EDGE_MARGIN = 0.02
+SHARPNESS_SIZE = 112
 
 
 def load_models():
@@ -43,6 +46,39 @@ def facing_camera(row) -> bool:
     return eye_span / row[2] >= MIN_EYE_SPAN and nose_offset <= MAX_NOSE_OFFSET
 
 
+def sharpness(image, box: tuple) -> float:
+    """Return how much fine detail a face has: the variance of its edges at a fixed size. Blurry faces score low."""
+    height, width = image.shape[:2]
+    x, y, w, h = box
+    left, top = max(0, int(x * width)), max(0, int(y * height))
+    right, bottom = min(width, int((x + w) * width)), min(height, int((y + h) * height))
+
+    if right - left < 2 or bottom - top < 2:
+        return 0.0
+
+    gray = cv2.cvtColor(image[top:bottom, left:right], cv2.COLOR_BGR2GRAY)
+
+    return float(cv2.Laplacian(cv2.resize(gray, (SHARPNESS_SIZE, SHARPNESS_SIZE)), cv2.CV_64F).var())
+
+
+def cut_off(landmarks: list[tuple[float, float]], margin: float = EDGE_MARGIN) -> bool:
+    """Return whether the eyes, nose or mouth sit at the edge of the photo, as fractions of it, so the face is cut off."""
+    return any(not (margin <= x <= 1 - margin and margin <= y <= 1 - margin) for x, y in landmarks)
+
+
+def landmarks(row, width: int, height: int) -> list[tuple[float, float]]:
+    """Return a detection's eyes, nose and mouth corners as fractions of the photo."""
+    return [(float(row[4 + 2 * point]) / width, float(row[5 + 2 * point]) / height) for point in range(5)]
+
+
+def good_enough(image, row) -> bool:
+    """Return whether a detected face is whole and sharp enough to recognise someone by."""
+    height, width = image.shape[:2]
+    box = (row[0] / width, row[1] / height, row[2] / width, row[3] / height)
+
+    return not cut_off(landmarks(row, width, height)) and sharpness(image, box) >= MIN_SHARPNESS
+
+
 def faces_in(image, detector, recognizer) -> list[tuple]:
     """Return each clear face as (box as fractions of the image, score, unit-length embedding, facing the camera)."""
     height, width = image.shape[:2]
@@ -54,14 +90,16 @@ def faces_in(image, detector, recognizer) -> list[tuple]:
     for row in rows if rows is not None else []:
         x, y, w, h, score = row[0], row[1], row[2], row[3], row[14]
 
-        if min(w, h) < MIN_FACE_PIXELS:
+        box = (x / width, y / height, w / width, h / height)
+
+        if min(w, h) < MIN_FACE_PIXELS or not good_enough(image, row):
             continue
 
         aligned = recognizer.alignCrop(image, row)
         embedding = recognizer.feature(aligned).flatten()
         embedding = embedding / np.linalg.norm(embedding)
 
-        faces.append(((x / width, y / height, w / width, h / height), float(score), embedding, facing_camera(row)))
+        faces.append((box, float(score), embedding, facing_camera(row)))
 
     return faces
 
