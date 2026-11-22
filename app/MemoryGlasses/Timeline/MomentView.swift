@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MomentView: View {
-    let link: MomentLink
+    let link: MomentRoute
 
     @Environment(Router.self) private var router
 
@@ -108,7 +108,7 @@ struct MomentView: View {
                 }
 
                 if detail.hasVideo {
-                    RateControl(momentId: link.id, current: detail.framesPerMinute ?? 30) { await load() }
+                    AddFramesControl(momentId: link.id, currentRate: detail.framesPerMinute ?? 30) { await load() }
                 }
             }
             .padding(.horizontal, 20)

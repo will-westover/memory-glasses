@@ -58,9 +58,9 @@ struct StatsView: View {
 
     private func stored(_ counts: Counts) -> some View {
         HStack(spacing: 12) {
-            Tile(value: counts.moments, label: "Recordings")
-            Tile(value: counts.frames, label: "Frames")
-            Tile(value: counts.facts, label: "Facts")
+            CountTile(value: counts.moments, label: "Recordings")
+            CountTile(value: counts.frames, label: "Frames")
+            CountTile(value: counts.facts, label: "Facts")
         }
     }
 
@@ -97,7 +97,7 @@ struct StatsView: View {
     }
 }
 
-struct Tile: View {
+struct CountTile: View {
     let value: Int
     let label: String
 

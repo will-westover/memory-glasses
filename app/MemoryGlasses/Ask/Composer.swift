@@ -8,14 +8,14 @@ struct Composer: View {
 
     @State private var dictation = Dictation()
 
-    private var ready: Bool { !busy && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSend: Bool { !busy && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 4) {
             TextField(dictation.listening ? "Listening…" : "Ask anything", text: $text, axis: .vertical)
                 .lineLimit(1...5)
                 .focused(focused)
-                .onSubmit { if ready { send() } }
+                .onSubmit { if canSend { send() } }
                 .padding(.leading, 18)
                 .padding(.vertical, 13)
 
@@ -28,9 +28,9 @@ struct Composer: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color(.systemBackground))
                     .frame(width: 32, height: 32)
-                    .background(ready ? Color.primary : Color(.systemGray4), in: Circle())
+                    .background(canSend ? Color.primary : Color(.systemGray4), in: Circle())
             }
-            .disabled(!ready)
+            .disabled(!canSend)
             .padding(7)
             .accessibilityLabel("Send")
         }
@@ -63,7 +63,7 @@ struct Composer: View {
                     .onEnded { _ in
                         dictation.stop()
 
-                        if ready { send() }
+                        if canSend { send() }
                     }
             )
             .accessibilityLabel("Hold to talk")

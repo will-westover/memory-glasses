@@ -99,18 +99,18 @@ struct AnswerView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if let highlighted = answer.highlighted {
-                HighlightCard(fact: highlighted, reason: answer.highlightReason)
+            if let featured = answer.featuredSource {
+                FeaturedSourceCard(fact: featured, reason: answer.highlightReason)
             }
 
             CitedText(text: answer.answer, sources: answer.sources, open: openSource)
 
             LayoutCard(layout: answer.layout ?? "text", sources: answer.sources)
 
-            if !others.isEmpty {
+            if !remainingSources.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
-                        ForEach(others) { SourceChip(fact: $0, number: number(of: $0)) }
+                        ForEach(remainingSources) { SourceChip(fact: $0, number: number(of: $0)) }
                     }
                 }
                 .scrollClipDisabled()
@@ -156,7 +156,7 @@ struct AnswerView: View {
         .environment(\.openSource, openSource)
     }
 
-    private var others: [Fact] {
+    private var remainingSources: [Fact] {
         answer.sources.enumerated().filter { $0.offset != answer.highlight }.map(\.element)
     }
 

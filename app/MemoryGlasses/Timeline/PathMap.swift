@@ -7,14 +7,14 @@ struct PathMap: View {
 
     var body: some View {
         GeometryReader { space in
-            let fit = Fit(points: points, size: space.size)
+            let projection = PathProjection(points: points, size: space.size)
 
             ZStack {
                 Canvas { context, _ in
                     var line = Path()
 
                     for (position, point) in points.enumerated() {
-                        let at = fit.place(point[1], point[3])
+                        let at = projection.point(point[1], point[3])
                         position == 0 ? line.move(to: at) : line.addLine(to: at)
                     }
 
@@ -23,12 +23,12 @@ struct PathMap: View {
                     for (position, frame) in frames.enumerated() {
                         guard let pose = frame.position, position != index else { continue }
 
-                        let at = fit.place(pose.x, pose.z)
+                        let at = projection.point(pose.x, pose.z)
                         context.fill(Path(ellipseIn: CGRect(x: at.x - 3.5, y: at.y - 3.5, width: 7, height: 7)), with: .color(.primary.opacity(0.45)))
                     }
 
                     if frames.indices.contains(index), let pose = frames[index].position {
-                        let at = fit.place(pose.x, pose.z)
+                        let at = projection.point(pose.x, pose.z)
                         var arrow = Path()
                         arrow.move(to: at)
                         arrow.addLine(to: CGPoint(x: at.x + sin(pose.yaw) * 22, y: at.y + cos(pose.yaw) * 22))
@@ -39,18 +39,18 @@ struct PathMap: View {
                 }
             }
             .contentShape(Rectangle())
-            .onTapGesture { tap in jump(to: tap, fit: fit) }
+            .onTapGesture { tap in jump(to: tap, projection: projection) }
         }
         .aspectRatio(4 / 3, contentMode: .fit)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private func jump(to tap: CGPoint, fit: Fit) {
+    private func jump(to tap: CGPoint, projection: PathProjection) {
         let nearest = frames.indices
             .compactMap { position -> (Int, CGFloat)? in
                 guard let pose = frames[position].position else { return nil }
 
-                let at = fit.place(pose.x, pose.z)
+                let at = projection.point(pose.x, pose.z)
 
                 return (position, hypot(at.x - tap.x, at.y - tap.y))
             }
@@ -62,7 +62,7 @@ struct PathMap: View {
     }
 }
 
-struct Fit {
+struct PathProjection {
     let minX: Double
     let minZ: Double
     let scale: Double
@@ -82,7 +82,7 @@ struct Fit {
         offset = CGSize(width: (size.width - width * scale) / 2, height: (size.height - depth * scale) / 2)
     }
 
-    func place(_ x: Double, _ z: Double) -> CGPoint {
+    func point(_ x: Double, _ z: Double) -> CGPoint {
         CGPoint(x: offset.width + (x - minX) * scale, y: offset.height + (z - minZ) * scale)
     }
 }

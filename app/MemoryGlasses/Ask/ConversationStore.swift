@@ -87,7 +87,7 @@ struct ConversationGroup: Identifiable {
 final class ConversationStore {
     private(set) var summaries: [ConversationSummary] = []
     private(set) var turns: [UUID: [Turn]] = [:]
-    private(set) var contexts: [UUID: FrameContext] = [:]
+    private(set) var frameContexts: [UUID: FrameContext] = [:]
     private(set) var problem: String?
     private var query = ""
 
@@ -125,7 +125,7 @@ final class ConversationStore {
         do {
             let detail: ConversationDetail = try await API.current.send("/conversations", method: "POST", body: [String: String]())
             turns[detail.id] = []
-            contexts[detail.id] = frame
+            frameContexts[detail.id] = frame
 
             return detail.id
         } catch {
@@ -143,17 +143,17 @@ final class ConversationStore {
         let pending = Turn(question: question)
         turns[id, default: []].append(pending)
 
-        let body = ChatQuestion(question: question, frameId: contexts[id]?.id)
+        let body = ChatQuestion(question: question, frameId: frameContexts[id]?.id)
 
         do {
             if let answered = try await stream(body, in: id, turn: pending.id) {
-                replace(pending.id, in: id) { $0 = answered }
+                updateTurn(pending.id, in: id) { $0 = answered }
             } else {
                 let answered: Turn = try await API.current.send("/conversations/\(id)/ask", method: "POST", body: body)
-                replace(pending.id, in: id) { $0 = answered }
+                updateTurn(pending.id, in: id) { $0 = answered }
             }
         } catch {
-            replace(pending.id, in: id) { $0.problem = error.localizedDescription }
+            updateTurn(pending.id, in: id) { $0.problem = error.localizedDescription }
         }
 
         await refresh()
@@ -191,11 +191,11 @@ final class ConversationStore {
             switch event {
             case "step":
                 if let step = try? API.decoder.decode(LiveStep.self, from: data) {
-                    replace(turn, in: id) { $0.steps.append(step) }
+                    updateTurn(turn, in: id) { $0.steps.append(step) }
                 }
             case "delta":
                 if let delta = try? API.decoder.decode(StreamText.self, from: data) {
-                    replace(turn, in: id) { $0.streamed += delta.text }
+                    updateTurn(turn, in: id) { $0.streamed += delta.text }
                 }
             case "done":
                 return try API.decoder.decode(Turn.self, from: data)
@@ -214,7 +214,7 @@ final class ConversationStore {
         for id in ids {
             try? await API.current.delete("/conversations/\(id)")
             turns[id] = nil
-            contexts[id] = nil
+            frameContexts[id] = nil
         }
 
         await refresh()
@@ -246,7 +246,7 @@ final class ConversationStore {
         return groups
     }
 
-    private func replace(_ turnID: UUID, in id: UUID, change: (inout Turn) -> Void) {
+    private func updateTurn(_ turnID: UUID, in id: UUID, change: (inout Turn) -> Void) {
         guard let index = turns[id]?.firstIndex(where: { $0.id == turnID }) else { return }
 
         change(&turns[id]![index])

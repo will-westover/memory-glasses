@@ -50,7 +50,7 @@ struct CitedText: View {
     }
 }
 
-struct HighlightCard: View {
+struct FeaturedSourceCard: View {
     let fact: Fact
     let reason: String?
 

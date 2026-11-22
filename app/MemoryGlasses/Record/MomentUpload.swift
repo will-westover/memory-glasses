@@ -64,6 +64,6 @@ extension API {
             }
         }
 
-        let _: UploadStarted = try await send("/uploads/\(links.id)/done", method: "POST", body: [String: String]())
+        let _: UploadID = try await send("/uploads/\(links.id)/done", method: "POST", body: [String: String]())
     }
 }

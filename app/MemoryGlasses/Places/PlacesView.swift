@@ -57,7 +57,7 @@ struct PlaceDetail: View {
     let place: Place
 
     @State private var name = ""
-    @State private var detail: PlaceInfo?
+    @State private var detail: PlaceRooms?
     @State private var status: String?
 
     var body: some View {
@@ -110,7 +110,7 @@ struct PlaceDetail: View {
 
         do {
             let _: PlaceTag = try await API.current.send("/places/\(place.id)", method: "PUT",
-                                                        body: PersonName(name: trimmed.isEmpty ? nil : trimmed))
+                                                        body: NameUpdate(name: trimmed.isEmpty ? nil : trimmed))
             status = "Saved."
         } catch {
             status = error.localizedDescription
@@ -147,7 +147,7 @@ struct RoomDetail: View {
     private func save() async {
         do {
             let _: PlaceTag = try await API.current.send("/rooms/\(room.id)", method: "PUT",
-                                                        body: PersonName(name: name.trimmingCharacters(in: .whitespaces)))
+                                                        body: NameUpdate(name: name.trimmingCharacters(in: .whitespaces)))
             status = "Saved."
         } catch {
             status = error.localizedDescription

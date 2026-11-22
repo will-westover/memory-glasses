@@ -34,7 +34,7 @@ struct TimelineView: View {
                         ForEach(days, id: \.self) { day in
                             Section {
                                 ForEach(moments.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }) { moment in
-                                    NavigationLink(value: MomentLink(id: moment.id, startedAt: moment.startedAt)) {
+                                    NavigationLink(value: MomentRoute(id: moment.id, startedAt: moment.startedAt)) {
                                         VStack(alignment: .leading, spacing: 6) {
                                             MomentRow(moment: moment)
 
@@ -72,7 +72,7 @@ struct TimelineView: View {
                 }
             }
             .fullScreenCover(isPresented: $recording, onDismiss: { Task { await load() } }) { RecordView() }
-            .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
+            .navigationDestination(for: MomentRoute.self) { MomentView(link: $0) }
             .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
             .task { await load() }
             .task(id: active.map(\.id)) { await watchUploads() }

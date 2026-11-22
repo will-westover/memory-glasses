@@ -6,8 +6,8 @@ struct WorldView: View {
     @State private var world: World?
     @State private var problem: String?
     @State private var camera: MapCameraPosition = .automatic
-    @State private var openPlace: WorldPlace?
-    @State private var openMoment: MomentLink?
+    @State private var selectedPlace: WorldPlace?
+    @State private var selectedMoment: MomentRoute?
 
     var body: some View {
         NavigationStack {
@@ -22,10 +22,10 @@ struct WorldView: View {
             }
             .navigationTitle("World")
             .navigationDestination(for: WorldPlace.self) { PlaceSceneView(place: $0) }
-            .navigationDestination(for: MomentLink.self) { MomentView(link: $0) }
+            .navigationDestination(for: MomentRoute.self) { MomentView(link: $0) }
             .navigationDestination(for: Fact.self) { FrameView(fact: $0) }
-            .navigationDestination(item: $openPlace) { PlaceSceneView(place: $0) }
-            .navigationDestination(item: $openMoment) { MomentView(link: $0) }
+            .navigationDestination(item: $selectedPlace) { PlaceSceneView(place: $0) }
+            .navigationDestination(item: $selectedMoment) { MomentView(link: $0) }
             .task { await load() }
         }
     }
@@ -49,9 +49,9 @@ struct WorldView: View {
                     Section {
                         ForEach(world.places) { place in
                             if place.hasMap {
-                                NavigationLink(value: place) { spaceRow(place, icon: "cube.transparent") }
+                                NavigationLink(value: place) { placeRow(place, icon: "cube.transparent") }
                             } else {
-                                spaceRow(place, icon: "house")
+                                placeRow(place, icon: "house")
                             }
                         }
                     } header: {
@@ -61,7 +61,7 @@ struct WorldView: View {
 
                 Section {
                     ForEach(world.moments.filter { $0.place == nil }) { moment in
-                        NavigationLink(value: MomentLink(id: moment.id, startedAt: moment.startedAt)) {
+                        NavigationLink(value: MomentRoute(id: moment.id, startedAt: moment.startedAt)) {
                             Label(moment.startedAt.formatted(.dateTime.weekday(.abbreviated).month().day().hour().minute()),
                                   systemImage: sourceIcon(moment.source).symbol)
                         }
@@ -75,7 +75,7 @@ struct WorldView: View {
         }
     }
 
-    private func spaceRow(_ place: WorldPlace, icon: String) -> some View {
+    private func placeRow(_ place: WorldPlace, icon: String) -> some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(place.label).font(.body.weight(.medium))
@@ -93,7 +93,7 @@ struct WorldView: View {
         Map(position: $camera) {
             ForEach(world.places) { place in
                 Annotation(place.label, coordinate: CLLocationCoordinate2D(latitude: place.lat, longitude: place.lon)) {
-                    Button { if place.hasMap { openPlace = place } } label: {
+                    Button { if place.hasMap { selectedPlace = place } } label: {
                         Image(systemName: "house.fill")
                             .font(.caption)
                             .foregroundStyle(Color(.systemBackground))
@@ -105,7 +105,7 @@ struct WorldView: View {
 
             ForEach(world.moments.filter { $0.place == nil }) { moment in
                 Annotation("", coordinate: CLLocationCoordinate2D(latitude: moment.lat, longitude: moment.lon)) {
-                    Button { openMoment = MomentLink(id: moment.id, startedAt: moment.startedAt) } label: {
+                    Button { selectedMoment = MomentRoute(id: moment.id, startedAt: moment.startedAt) } label: {
                         FrameImage(path: moment.cover)
                             .frame(width: 30, height: 30)
                             .clipShape(Circle())
@@ -128,7 +128,7 @@ struct WorldView: View {
 }
 
 struct PlaceSceneView: View {
-    static let colors: [UIColor] = [.systemOrange, .systemBlue, .systemGreen, .systemPink, .systemPurple, .systemTeal,
+    static let roomColors: [UIColor] = [.systemOrange, .systemBlue, .systemGreen, .systemPink, .systemPurple, .systemTeal,
                                     .systemYellow, .systemIndigo]
 
     let place: WorldPlace
@@ -136,7 +136,7 @@ struct PlaceSceneView: View {
     @State private var scene: SCNScene?
     @State private var rooms: [(name: String, frames: [(moment: SceneMoment, frame: Frame)])] = []
     @State private var problem: String?
-    @State private var opened: Fact?
+    @State private var openedFrame: Fact?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -153,7 +153,7 @@ struct PlaceSceneView: View {
         }
         .navigationTitle(place.label)
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $opened) { FrameView(fact: $0) }
+        .navigationDestination(item: $openedFrame) { FrameView(fact: $0) }
         .task { await load() }
     }
 
@@ -163,7 +163,7 @@ struct PlaceSceneView: View {
                 ForEach(Array(rooms.enumerated()), id: \.offset) { position, room in
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(Color(Self.colors[position % Self.colors.count]))
+                            .fill(Color(Self.roomColors[position % Self.roomColors.count]))
                             .frame(width: 10, height: 10)
 
                         Text(room.name)
@@ -181,13 +181,13 @@ struct PlaceSceneView: View {
 
         let (moment, frame) = rooms[layer].frames[index]
 
-        opened = Fact(id: -frame.id, kind: "frame", at: frame.at, momentId: moment.id, offsetSeconds: frame.offsetSeconds,
+        openedFrame = Fact(id: -frame.id, kind: "frame", at: frame.at, momentId: moment.id, offsetSeconds: frame.offsetSeconds,
                       text: frame.summary, image: frame.image)
     }
 
     private func load() async {
         do {
-            let loaded: PlaceSceneData = try await API.current.get("/places/\(place.id)/scene")
+            let loaded: PlaceScene = try await API.current.get("/places/\(place.id)/scene")
             var mesh: URL?
 
             if let meshMoment = loaded.meshMoment {
@@ -215,7 +215,7 @@ struct PlaceSceneView: View {
             }
 
             let roomLayers = grouped.enumerated().map { position, room in
-                SceneLayer(path: [], frames: room.frames.map(\.frame), color: Self.colors[position % Self.colors.count])
+                SceneLayer(path: [], frames: room.frames.map(\.frame), color: Self.roomColors[position % Self.roomColors.count])
             }
             let paths = loaded.moments.map { SceneLayer(path: $0.path, frames: [], color: .systemGray) }
 

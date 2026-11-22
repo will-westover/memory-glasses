@@ -22,7 +22,7 @@ enum GlassesLinkState {
     }
 }
 
-struct FirmwareInfo: Decodable {
+struct FirmwareRelease: Decodable {
     let version: String
     let size: Int
     let crc32: UInt32
@@ -63,7 +63,7 @@ final class GlassesLink: NSObject {
     var lastUpload: Date?
     var glassesDisplayText = ""
     var glassesVersion: String?
-    var availableUpdate: FirmwareInfo?
+    var availableUpdate: FirmwareRelease?
     var updateProgress: Double?
     var updateMessage: String?
 

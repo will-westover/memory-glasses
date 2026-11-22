@@ -7,36 +7,36 @@ struct ReprocessEstimate: Decodable {
     let usd: Double
 }
 
-struct UploadStarted: Decodable {
+struct UploadID: Decodable {
     let id: UUID
 }
 
-struct RateControl: View {
+struct AddFramesControl: View {
     let momentId: String
-    let current: Double
-    let finished: () async -> Void
+    let currentRate: Double
+    let onReprocessed: () async -> Void
 
     @State private var rate = 60.0
     @State private var estimate: ReprocessEstimate?
-    @State private var checking = false
-    @State private var working: String?
+    @State private var loadingEstimate = false
+    @State private var progressMessage: String?
     @State private var problem: String?
 
-    private var canAdd: Bool { current < 60 }
+    private var canAdd: Bool { currentRate < 60 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionTitle("Frames per minute")
 
-            Text("\(Int(current)) a minute")
+            Text("\(Int(currentRate)) a minute")
                 .font(.subheadline.weight(.medium))
 
             if !canAdd {
                 Text("This moment already has the most frames.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-            } else if let working {
-                Label(working, systemImage: "hourglass")
+            } else if let progressMessage {
+                Label(progressMessage, systemImage: "hourglass")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
@@ -44,11 +44,11 @@ struct RateControl: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
-                Slider(value: $rate, in: (current + 1)...60, step: 1) { editing in
-                    if !editing { Task { await check() } }
+                Slider(value: $rate, in: (currentRate + 1)...60, step: 1) { editing in
+                    if !editing { Task { await loadEstimate() } }
                 }
 
-                if checking {
+                if loadingEstimate {
                     ProgressView()
                 } else if let estimate {
                     Text(summary(estimate))
@@ -66,15 +66,15 @@ struct RateControl: View {
                     .foregroundStyle(.red)
             }
         }
-        .task { if canAdd { rate = min(60, current * 2); await check() } }
+        .task { if canAdd { rate = min(60, currentRate * 2); await loadEstimate() } }
     }
 
     private func summary(_ estimate: ReprocessEstimate) -> String {
         "\(estimate.newFrames) new frames, about \(dollars(estimate.usd)). \(estimate.keptCaptions) kept."
     }
 
-    private func check() async {
-        checking = true
+    private func loadEstimate() async {
+        loadingEstimate = true
         problem = nil
 
         do {
@@ -83,22 +83,22 @@ struct RateControl: View {
             problem = error.localizedDescription
         }
 
-        checking = false
+        loadingEstimate = false
     }
 
     private func reprocess() async {
         do {
-            let started: UploadStarted = try await API.current.send(
+            let started: UploadID = try await API.current.send(
                 "/moments/\(momentId)/reprocess", method: "POST", body: FrameRate(framesPerMinute: rate)
             )
-            working = "Starting…"
-            await follow(started.id)
+            progressMessage = "Starting…"
+            await watchReprocess(started.id)
         } catch {
             problem = error.localizedDescription
         }
     }
 
-    private func follow(_ id: UUID) async {
+    private func watchReprocess(_ id: UUID) async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(3))
 
@@ -107,16 +107,16 @@ struct RateControl: View {
 
             switch upload.status {
             case "ready":
-                working = nil
+                progressMessage = nil
                 estimate = nil
-                await finished()
+                await onReprocessed()
                 return
             case "failed":
-                working = nil
+                progressMessage = nil
                 problem = upload.error ?? "Adding frames failed."
                 return
             default:
-                working = (upload.step ?? "Waiting") + "…"
+                progressMessage = (upload.step ?? "Waiting") + "…"
             }
         }
     }

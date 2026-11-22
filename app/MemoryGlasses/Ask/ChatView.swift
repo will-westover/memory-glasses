@@ -24,7 +24,7 @@ struct ChatView: View {
 
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 32) {
-                if let context = store.contexts[id] {
+                if let context = store.frameContexts[id] {
                     FrameContextCard(context: context)
                 }
 
@@ -59,7 +59,7 @@ struct ChatView: View {
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 20) {
-            if store.contexts[id] == nil {
+            if store.frameContexts[id] == nil {
                 Image(systemName: "eyeglasses")
                     .font(.system(size: 30, weight: .light))
                     .foregroundStyle(.secondary)
@@ -79,7 +79,7 @@ struct ChatView: View {
                     .font(.title3.weight(.semibold))
             }
         }
-        .padding(.top, store.contexts[id] == nil ? 80 : 0)
+        .padding(.top, store.frameContexts[id] == nil ? 80 : 0)
     }
 
     private func suggestionList(_ questions: [String]) -> some View {
@@ -103,7 +103,7 @@ struct ChatView: View {
             await store.load(id)
         }
 
-        guard (store.turns[id] ?? []).isEmpty, store.contexts[id] == nil else { return }
+        guard (store.turns[id] ?? []).isEmpty, store.frameContexts[id] == nil else { return }
 
         composing = true
         await loadSuggestions()

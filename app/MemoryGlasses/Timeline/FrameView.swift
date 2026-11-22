@@ -59,7 +59,7 @@ struct FrameView: View {
 
                 seen(frame)
 
-                NavigationLink(value: MomentLink(id: fact.momentId, startedAt: fact.moment.startedAt,
+                NavigationLink(value: MomentRoute(id: fact.momentId, startedAt: fact.moment.startedAt,
                                                   focus: frame.offsetSeconds)) {
                     Label("Open in Timeline", systemImage: "clock")
                         .font(.subheadline.weight(.medium))

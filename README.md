@@ -42,12 +42,12 @@ Inside `server/memory/`, the same word means the same thing at every layer:
    [pipeline.py](server/memory/pipeline.py). The result is a moment.
 
 A recording made in the app skips steps 1 to 5: it uploads the video straight to storage
-([Upload.swift](app/MemoryGlasses/Record/Upload.swift)) and the pipeline runs on it.
+([MomentUpload.swift](app/MemoryGlasses/Record/MomentUpload.swift)) and the pipeline runs on it.
 
 ## What happens to a question
 
 1. You type it in the app: [ChatView.swift](app/MemoryGlasses/Ask/ChatView.swift).
-2. The app posts it and reads the answer as it streams: [Conversations.swift](app/MemoryGlasses/Ask/Conversations.swift)
+2. The app posts it and reads the answer as it streams: [ConversationStore.swift](app/MemoryGlasses/Ask/ConversationStore.swift)
    to `POST /conversations/{id}/ask/stream` in [api/chats.py](server/memory/api/chats.py).
 3. The agent decides what to look up, with three tools (search, timeline, nearby): [agent.py](server/memory/agent.py).
 4. Search finds facts by meaning and by keyword and merges the two: [search.py](server/memory/search.py).

@@ -129,7 +129,7 @@ struct RoomInfo: Decodable, Identifiable, Hashable {
     let frames: Int
 }
 
-struct PlaceInfo: Decodable {
+struct PlaceRooms: Decodable {
     let id: Int
     let name: String?
     let rooms: [RoomInfo]
@@ -149,7 +149,7 @@ struct Answer: Codable {
     var followUps: [String]? = nil
     var nextSteps: [NextStep]? = nil
 
-    var highlighted: Fact? {
+    var featuredSource: Fact? {
         guard let highlight, sources.indices.contains(highlight) else { return nil }
 
         return sources[highlight]
@@ -222,15 +222,15 @@ struct GlassesStatus: Decodable {
     let processing: Int
 }
 
-struct MomentLink: Hashable {
+struct MomentRoute: Hashable {
     let id: String
     let startedAt: Date
     var focus: Double? = nil
 }
 
 extension Fact {
-    var moment: MomentLink {
-        MomentLink(id: momentId, startedAt: at.addingTimeInterval(-offsetSeconds), focus: offsetSeconds)
+    var moment: MomentRoute {
+        MomentRoute(id: momentId, startedAt: at.addingTimeInterval(-offsetSeconds), focus: offsetSeconds)
     }
 
     var isSpeech: Bool { kind == "speech" || kind == "said" }
@@ -279,7 +279,7 @@ struct SceneMoment: Decodable, Identifiable {
     let frames: [Frame]
 }
 
-struct PlaceSceneData: Decodable {
+struct PlaceScene: Decodable {
     let id: Int
     let meshMoment: String?
     let moments: [SceneMoment]

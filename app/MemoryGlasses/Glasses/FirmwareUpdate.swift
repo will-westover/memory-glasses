@@ -139,7 +139,7 @@ extension GlassesLink {
         isCheckingForUpdate = true
         defer { isCheckingForUpdate = false }
 
-        let latest: FirmwareInfo? = try? await API.current.get("/glasses/firmware")
+        let latest: FirmwareRelease? = try? await API.current.get("/glasses/firmware")
         availableUpdate = latest.flatMap { $0.version > version ? $0 : nil }
 
         guard let found = availableUpdate else {

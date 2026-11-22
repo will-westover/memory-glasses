@@ -20,8 +20,8 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
 
     @Published private(set) var stage: Stage = .ready
     @Published private(set) var elapsed: TimeInterval = 0
-    @Published private(set) var tracking = "Starting camera…"
-    @Published private(set) var room = ""
+    @Published private(set) var trackingMessage = "Starting camera…"
+    @Published private(set) var placeMessage = ""
 
     let session = ARSession()
     let hasLidar = ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification)
@@ -35,16 +35,16 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
-    private var firstTime: TimeInterval?
-    private var lastWritten: TimeInterval = 0
+    private var firstFrameTime: TimeInterval?
+    private var lastVideoFrameTime: TimeInterval = 0
     private var isRecording = false
     private var poses: [[Double]] = []
-    private var lastPose: TimeInterval = 0
+    private var lastPoseTime: TimeInterval = 0
     private var startedAt = Date()
     private var outputURL: URL?
-    private var candidate: Place?
-    private var recognised: Place?
-    private var lookedSince = Date()
+    private var candidatePlace: Place?
+    private var recognisedPlace: Place?
+    private var lookingSince = Date()
 
     override init() {
         super.init()
@@ -55,7 +55,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
 
     func startCamera() {
         guard canRecord else {
-            tracking = "Recording needs a real iPhone"
+            trackingMessage = "Recording needs a real iPhone"
             return
         }
 
@@ -67,20 +67,20 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
 
     @MainActor
     private func startTracking() async {
-        candidate = nil
-        recognised = nil
-        room = "Looking for a known place…"
+        candidatePlace = nil
+        recognisedPlace = nil
+        placeMessage = "Looking for a known place…"
 
         let configuration = freshConfiguration()
 
         if let (known, map) = await nearestPlaceMap() {
-            candidate = known
+            candidatePlace = known
             configuration.initialWorldMap = map
         } else {
-            room = "New place"
+            placeMessage = "New place"
         }
 
-        lookedSince = .now
+        lookingSince = .now
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
     }
 
@@ -130,14 +130,14 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         elapsed = 0
 
         queue.async {
-            if self.candidate != nil, self.recognised == nil {
+            if self.candidatePlace != nil, self.recognisedPlace == nil {
                 self.giveUpLooking()
             }
 
-            self.firstTime = nil
-            self.lastWritten = 0
+            self.firstFrameTime = nil
+            self.lastVideoFrameTime = 0
             self.poses = []
-            self.lastPose = 0
+            self.lastPoseTime = 0
             self.isRecording = true
         }
 
@@ -230,54 +230,54 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let state = describe(frame.camera.trackingState)
-        DispatchQueue.main.async { if self.tracking != state { self.tracking = state } }
-        checkRoom(frame)
+        DispatchQueue.main.async { if self.trackingMessage != state { self.trackingMessage = state } }
+        checkPlaceRecognised(frame)
 
         guard isRecording, let writer, let videoInput, let adaptor else { return }
 
-        if firstTime == nil {
-            firstTime = frame.timestamp
+        if firstFrameTime == nil {
+            firstFrameTime = frame.timestamp
             writer.startWriting()
             writer.startSession(atSourceTime: CMTime(seconds: frame.timestamp, preferredTimescale: 600))
         }
 
-        guard frame.timestamp - lastWritten >= 1.0 / 30, videoInput.isReadyForMoreMediaData else { return }
+        guard frame.timestamp - lastVideoFrameTime >= 1.0 / 30, videoInput.isReadyForMoreMediaData else { return }
 
         adaptor.append(frame.capturedImage, withPresentationTime: CMTime(seconds: frame.timestamp, preferredTimescale: 600))
-        lastWritten = frame.timestamp
+        lastVideoFrameTime = frame.timestamp
         logPose(frame)
 
-        let seconds = frame.timestamp - (firstTime ?? frame.timestamp)
+        let seconds = frame.timestamp - (firstFrameTime ?? frame.timestamp)
         DispatchQueue.main.async { self.elapsed = seconds }
     }
 
-    private func checkRoom(_ frame: ARFrame) {
-        guard let candidate, recognised == nil else { return }
+    private func checkPlaceRecognised(_ frame: ARFrame) {
+        guard let candidatePlace, recognisedPlace == nil else { return }
 
         if case .normal = frame.camera.trackingState {
-            recognised = candidate
-            DispatchQueue.main.async { self.room = "Recognised \(candidate.label)" }
-        } else if Date.now.timeIntervalSince(lookedSince) > Self.recogniseSeconds {
+            recognisedPlace = candidatePlace
+            DispatchQueue.main.async { self.placeMessage = "Recognised \(candidatePlace.label)" }
+        } else if Date.now.timeIntervalSince(lookingSince) > Self.recogniseSeconds {
             giveUpLooking()
         }
     }
 
     private func giveUpLooking() {
-        candidate = nil
-        DispatchQueue.main.async { self.room = "New place" }
+        candidatePlace = nil
+        DispatchQueue.main.async { self.placeMessage = "New place" }
         session.run(freshConfiguration(), options: [.resetTracking, .removeExistingAnchors])
     }
 
     private func logPose(_ frame: ARFrame) {
-        guard frame.timestamp - lastPose >= Self.poseInterval, case .normal = frame.camera.trackingState else { return }
+        guard frame.timestamp - lastPoseTime >= Self.poseInterval, case .normal = frame.camera.trackingState else { return }
 
         let transform = frame.camera.transform
         let forward = -transform.columns.2
-        let seconds = frame.timestamp - (firstTime ?? frame.timestamp)
+        let seconds = frame.timestamp - (firstFrameTime ?? frame.timestamp)
 
         poses.append([seconds, Double(transform.columns.3.x), Double(transform.columns.3.y),
                       Double(transform.columns.3.z), Double(atan2(forward.x, forward.z))])
-        lastPose = frame.timestamp
+        lastPoseTime = frame.timestamp
     }
 
     private func writePoses() -> URL? {
@@ -335,13 +335,13 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     }
 
     func session(_ session: ARSession, didOutputAudioSampleBuffer audioSampleBuffer: CMSampleBuffer) {
-        guard isRecording, firstTime != nil, let audioInput, audioInput.isReadyForMoreMediaData else { return }
+        guard isRecording, firstFrameTime != nil, let audioInput, audioInput.isReadyForMoreMediaData else { return }
 
         audioInput.append(audioSampleBuffer)
     }
 
     func session(_ session: ARSession, didFailWithError error: Error) {
-        DispatchQueue.main.async { self.tracking = "Camera error: \(error.localizedDescription)" }
+        DispatchQueue.main.async { self.trackingMessage = "Camera error: \(error.localizedDescription)" }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -366,7 +366,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         stage = .uploading(0)
 
         do {
-            try await API.current.uploadMoment(video: outputURL, framesPerMinute: framesPerMinute, placeId: recognised?.id,
+            try await API.current.uploadMoment(video: outputURL, framesPerMinute: framesPerMinute, placeId: recognisedPlace?.id,
                                                extras: extras) { progress in
                 DispatchQueue.main.async { self.stage = .uploading(progress) }
             }

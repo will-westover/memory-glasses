@@ -17,15 +17,15 @@ struct PersonTag: Codable, Hashable {
     let face: String?
 }
 
-struct PersonName: Encodable {
+struct NameUpdate: Encodable {
     let name: String?
 }
 
-struct Merge: Encodable {
+struct MergeRequest: Encodable {
     let into: Int
 }
 
-struct Ack: Decodable {}
+struct EmptyReply: Decodable {}
 
 struct FaceImage: View {
     let path: String?
@@ -159,8 +159,8 @@ struct PersonView: View {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
 
         do {
-            let _: Ack = try await API.current.send("/people/\(person.id)", method: "PUT",
-                                                   body: PersonName(name: trimmed.isEmpty ? nil : trimmed))
+            let _: EmptyReply = try await API.current.send("/people/\(person.id)", method: "PUT",
+                                                   body: NameUpdate(name: trimmed.isEmpty ? nil : trimmed))
             status = "Saved. Answers will use the new name in about a minute."
         } catch {
             status = error.localizedDescription
@@ -169,7 +169,7 @@ struct PersonView: View {
 
     private func merge(into other: Person) async {
         do {
-            let _: Ack = try await API.current.send("/people/\(person.id)/merge", method: "POST", body: Merge(into: other.id))
+            let _: EmptyReply = try await API.current.send("/people/\(person.id)/merge", method: "POST", body: MergeRequest(into: other.id))
             dismiss()
         } catch {
             status = error.localizedDescription

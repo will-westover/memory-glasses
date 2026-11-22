@@ -66,10 +66,10 @@ struct RecordView: View {
                         .foregroundStyle(.white)
                 }
 
-                pill(recorder.tracking, systemImage: "location.viewfinder")
+                pill(recorder.trackingMessage, systemImage: "location.viewfinder")
 
-                if !recorder.room.isEmpty {
-                    pill(recorder.room, systemImage: "house")
+                if !recorder.placeMessage.isEmpty {
+                    pill(recorder.placeMessage, systemImage: "house")
                 }
 
                 if recorder.hasLidar {
