@@ -10,7 +10,6 @@ struct GlassesView: View {
     @State private var serverReachable = false
     @State private var people: [Person] = []
     @State private var places: [Place] = []
-    @State private var captionCost: Double?
 
     private let link = GlassesLink.shared
     private static let presets: [(name: String, rate: Double)] = [("Light", 10), ("Normal", 30), ("Detailed", 60)]
@@ -25,27 +24,28 @@ struct GlassesView: View {
 
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack {
+                        HStack(spacing: 6) {
                             Text(rateLabel)
                                 .font(.headline)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
 
-                            Spacer()
+                            Spacer(minLength: 4)
 
-                            if let hourlyCost {
-                                Text(hourlyCost)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        HStack(spacing: 8) {
                             ForEach(Self.presets, id: \.name) { preset in
-                                Button(preset.name) {
+                                Button {
                                     settings.framesPerMinute = preset.rate
                                     Task { await save() }
+                                } label: {
+                                    Text(preset.name)
+                                        .font(.caption.weight(.medium))
+                                        .padding(.horizontal, 9)
+                                        .padding(.vertical, 4)
+                                        .background(settings.framesPerMinute == preset.rate ? Color.primary.opacity(0.14) : Color.primary.opacity(0.06),
+                                                    in: Capsule())
+                                        .foregroundStyle(settings.framesPerMinute == preset.rate ? Color.primary : Color.secondary)
                                 }
-                                .buttonStyle(.bordered)
-                                .tint(settings.framesPerMinute == preset.rate ? .accentColor : .secondary)
+                                .buttonStyle(.plain)
                             }
                         }
 
@@ -56,7 +56,7 @@ struct GlassesView: View {
                     }
                     .disabled(!serverReachable)
                 } header: {
-                    InfoHeader(title: "Camera", text: "How often the glasses take a picture. More pictures remember more and cost more to describe. The cost shown is the most an hour of recording would cost; pictures that look the same as the last one are skipped.")
+                    InfoHeader(title: "Camera", text: "How often the glasses take a picture. More pictures remember more and cost more to describe. Pictures that look the same as the last one are skipped.")
                 }
 
                 Section {
@@ -164,12 +164,6 @@ struct GlassesView: View {
         settings.framesPerMinute == 0 ? "No pictures" : "\(Int(settings.framesPerMinute)) pictures a minute"
     }
 
-    private var hourlyCost: String? {
-        guard let captionCost, settings.framesPerMinute > 0 else { return nil }
-
-        return "up to \(dollars(captionCost * settings.framesPerMinute * 60)) an hour"
-    }
-
     private var peopleCount: String {
         let named = people.filter { $0.name != nil }.count
 
@@ -200,11 +194,6 @@ struct GlassesView: View {
 
         people = (try? await API.current.get("/people")) ?? []
         places = (try? await API.current.get("/places")) ?? []
-
-        if let stats: Stats = try? await API.current.get("/stats"),
-           let caption = stats.costs.first(where: { $0.step == "caption" }), caption.calls > 0 {
-            captionCost = caption.usd / Double(caption.calls)
-        }
     }
 
     private func save() async {
