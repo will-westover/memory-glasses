@@ -45,6 +45,17 @@ def finish_upload(job_id: UUID, conn: psycopg.Connection = Depends(connection)) 
     return {"id": job_id, "status": "processing"}
 
 
+@router.post("/uploads/{job_id}/retry")
+def retry_upload(job_id: UUID, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Try a failed job again."""
+    if not db.retry_job(conn, job_id):
+        raise HTTPException(404, "no failed job with that id")
+
+    jobs.start_job(conn, job_id)
+
+    return {"id": job_id, "status": "processing"}
+
+
 @router.get("/uploads")
 def uploads(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List recent processing jobs and how far along each is."""

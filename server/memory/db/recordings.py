@@ -70,3 +70,15 @@ def latest_recording(conn: psycopg.Connection) -> dict | None:
     ).fetchone()
 
     return {"photos": row[0], "seconds_since_last": round(float(row[1]), 1)} if row else None
+
+
+def end_older_recordings(conn: psycopg.Connection, recording: str) -> list[str]:
+    """Mark as over every open glasses recording that started before this one's open part, and return their names."""
+    rows = conn.execute(
+        "update recording set ended_at = now() where job_id is null and ended_at is null and base <> %(base)s"
+        " and started_at < (select max(started_at) from recording where base = %(base)s and job_id is null)"
+        " returning name",
+        {"base": recording},
+    )
+
+    return [name for (name,) in rows]

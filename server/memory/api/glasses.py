@@ -41,6 +41,10 @@ async def glasses_frame(
 
         path = glasses.save_frame(conn, x_recording, jpeg, taken=x_taken)
 
+    if db.end_older_recordings(conn, x_recording):
+        conn.commit()
+        jobs.process_ended_recordings()
+
     return {
         "recording": x_recording,
         "frame": path.name,

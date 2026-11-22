@@ -52,3 +52,14 @@ def recent_jobs(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
 def count_processing_jobs(conn: psycopg.Connection) -> int:
     """Return how many jobs are being worked on."""
     return conn.execute("select count(*) from job where status = 'processing'").fetchone()[0]
+
+
+def retry_job(conn: psycopg.Connection, job_id) -> bool:
+    """Set a failed job back to processing, and say whether there was one."""
+    row = conn.execute(
+        "update job set status = 'processing', step = null, error = null"
+        " where id = %s and status = 'failed' and task is not null returning id",
+        (job_id,),
+    ).fetchone()
+
+    return row is not None

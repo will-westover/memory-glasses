@@ -27,7 +27,7 @@ struct TimelineView: View {
                     List {
                         if !active.isEmpty {
                             Section {
-                                ForEach(active) { UploadRow(upload: $0) }
+                                ForEach(active) { upload in UploadRow(upload: upload) { await retry(upload) } }
                             }
                         }
 
@@ -106,6 +106,13 @@ struct TimelineView: View {
         uploads.filter { $0.status != "ready" && $0.receivedAt > .now.addingTimeInterval(-24 * 3600) }
     }
 
+    private func retry(_ upload: UploadStatus) async {
+        let _: UploadID? = try? await API.current.send("/uploads/\(upload.id)/retry", method: "POST", body: [String: String]())
+
+        await load()
+        await watchUploads()
+    }
+
     private func watchUploads() async {
         while !Task.isCancelled && active.contains(where: { $0.status == "processing" }) {
             try? await Task.sleep(for: .seconds(4))
@@ -171,6 +178,7 @@ struct MomentRow: View {
 
 struct UploadRow: View {
     let upload: UploadStatus
+    let retry: () async -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -195,6 +203,13 @@ struct UploadRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+            }
+
+            if upload.status == "failed" {
+                Spacer()
+
+                Button("Try again") { Task { await retry() } }
+                    .buttonStyle(.bordered)
             }
         }
         .padding(.vertical, 4)
