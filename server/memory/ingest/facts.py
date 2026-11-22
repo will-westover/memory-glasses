@@ -33,7 +33,8 @@ Write, using only what is given:
 - title: two to five words on what this stretch was about, so someone scanning a list can tell stretches apart.
 - happened: two or three sentences on what took place, combining what was seen and said.
 - things: everything seen, each thing once. The same thing is often described in different words in different
-  photos; merge those into one. Give each a short name, where it was, and the numbers of the photos it is in.
+  photos; merge those into one. Give each a short name, where it was in the scene, and the numbers of the photos it
+  is in. Say where it was in plain words, never by photo number.
 - said: for each passage, its number and one or two plain sentences stating what was said and by which speaker.
   Leave out filler words. Keep names, numbers and other specifics."""
 
@@ -45,7 +46,7 @@ class Said(BaseModel):
 
 class Thing(BaseModel):
     name: str = Field(description="A short name for the thing")
-    where: str = Field(description="Where it was")
+    where: str = Field(description="Where it was in the scene, without photo numbers")
     photos: list[int] = Field(description="The numbers of the photos it is in")
 
 

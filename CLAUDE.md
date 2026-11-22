@@ -13,8 +13,10 @@ Recording -> kept frames and audio -> captions and transcript -> small facts, ea
 in Postgres (pgvector) -> agent with search tools -> judge and cost log. An iPhone app sits on top, and the glasses
 send it photos.
 
-Words: a **moment** is one recording, start to finish; a **frame** is one photo kept from it; a **segment** is a
-stretch of a moment at one **place**, or on the move; a **room** is a part of a place. Chats are stored as raw
+Words: a **moment** is one recording, start to finish; a **frame** is one photo kept from it, and its **caption** is
+what the model wrote about it; a **stretch** is a run of frames that are one scene, and its **summary** is what the
+model wrote about it, titled as a **chapter**; a **fact** is one searchable line with a start, an end and the frames it
+covers; a **segment** is the part of a moment at one **place**, or on the move; a **room** is a part of a place. Chats are stored as raw
 **messages**; every model call is a **model_call**, linked to the message or frame it was for.
 
 Where things live, what happens to a photo and to a question, and the commands (`make`) are in `README.md`. Keep
