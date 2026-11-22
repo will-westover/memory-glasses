@@ -88,5 +88,7 @@ Everything else is your call.
   ignored `data/evals/`.
 - Faces use OpenCV's YuNet and SFace models in the ignored `server/models/`. The user has written consent from
   the people recorded.
+- Two local models are the exceptions to "models come from OpenAI": faces (above) and voices. Silero VAD and
+  WeSpeaker run on the CPU from `server/models/`, to split speech and to name speakers by their voiceprint.
 - Test clips are in the ignored `data/samples/`. The user's recordings are real data on their own account; don't
   add test users or fake data.

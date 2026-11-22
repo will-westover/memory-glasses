@@ -185,19 +185,27 @@ def captioned_frames(conn: psycopg.Connection, moment_id: str) -> list[dict]:
     ]
 
 
-def save_transcript(conn: psycopg.Connection, moment_id: str, segments) -> None:
-    """Store a moment's transcript, replacing any earlier one."""
+def save_transcript(conn: psycopg.Connection, moment_id: str, lines) -> None:
+    """Store a moment's transcript lines, each with its voiceprint, replacing any earlier ones."""
     conn.execute("delete from audio_segment where moment_id = %s", (moment_id,))
 
     with conn.cursor() as cursor:
         cursor.executemany(
-            "insert into audio_segment (moment_id, start_at, end_at, offset_seconds, speaker, text)"
-            " select id, started_at + make_interval(secs => %s), started_at + make_interval(secs => %s), %s, %s, %s"
+            "insert into audio_segment (moment_id, start_at, end_at, offset_seconds, speaker, text, voice)"
+            " select id, started_at + make_interval(secs => %s), started_at + make_interval(secs => %s), %s, %s, %s, %s"
             " from moment where id = %s",
             [
-                (segment.start, segment.end, segment.start, segment.speaker, segment.text.strip(), moment_id)
-                for segment in segments
-                if segment.text.strip()
+                (
+                    line.start,
+                    line.end,
+                    line.start,
+                    line.speaker,
+                    line.text.strip(),
+                    "[" + ",".join(f"{value:.6f}" for value in line.voice) + "]" if line.voice is not None else None,
+                    moment_id,
+                )
+                for line in lines
+                if line.text.strip()
             ],
         )
 

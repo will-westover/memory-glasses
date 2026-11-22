@@ -43,6 +43,12 @@ Inside `server/memory/`, the same word means the same thing at every layer:
 7. Facts are written per stretch: frames are grouped where the room changes, the photos stop looking alike, there is
    a gap or two minutes pass, and each stretch gets one summary and one fact per thing, person and text seen:
    [ingest/facts.py](server/memory/ingest/facts.py).
+8. The audio becomes timed lines, each with a voiceprint: [ingest/transcript.py](server/memory/ingest/transcript.py).
+   With `TRANSCRIBE_MODEL=gpt-transcribe`, Silero VAD finds the runs of speech, each run is transcribed on its own
+   (with `gpt-live-transcribe` when that hears nothing), and WeSpeaker gives each line a voiceprint:
+   [ingest/speech.py](server/memory/ingest/speech.py). The model files go in the ignored `server/models/`:
+   `silero_vad.onnx` from github.com/snakers4/silero-vad and `voxceleb_resnet34_LM.onnx` from
+   huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM.
 
 A recording made in the app skips steps 1 to 5: it uploads the video straight to storage
 ([MomentUpload.swift](app/MemoryGlasses/Record/MomentUpload.swift)) and the pipeline runs on it.

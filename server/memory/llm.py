@@ -14,12 +14,13 @@ from memory.config import EMBED_MODEL, SERVER_DIR
 
 PRICES_FILE = SERVER_DIR / "prices.json"
 PRICES = json.loads(PRICES_FILE.read_text())["usd_per_million_tokens"]
+MINUTE_PRICES = json.loads(PRICES_FILE.read_text()).get("usd_per_minute", {})
 COLLECTED_CALL_IDS: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar("collected", default=None)
 
 
 def require_price(model: str) -> None:
     """Stop before any call is paid for if the model has no price."""
-    if model not in PRICES:
+    if model not in PRICES and model not in MINUTE_PRICES:
         raise SystemExit(f"error: no price for {model}. Add it to {PRICES_FILE}")
 
 
@@ -33,8 +34,11 @@ def client() -> OpenAI:
     return OpenAI(max_retries=MAX_RETRIES)
 
 
-def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
-    """Return what a call cost in dollars."""
+def cost_usd(model: str, input_tokens: int, cached_tokens: int, output_tokens: int, seconds: float = 0) -> float:
+    """Return what a call cost in dollars, by its tokens or, for models priced by the minute, its seconds of audio."""
+    if model in MINUTE_PRICES:
+        return seconds / 60 * MINUTE_PRICES[model]
+
     price = PRICES[model]
     fresh_tokens = input_tokens - cached_tokens
 
@@ -51,6 +55,7 @@ def log_cost(
     frame_id: int | None = None,
     request: dict | None = None,
     response: dict | None = None,
+    seconds: float = 0,
 ) -> float:
     """Record one model call in model_call and return its cost in dollars."""
     input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", 0)
@@ -58,7 +63,7 @@ def log_cost(
     cached_tokens = getattr(details, "cached_tokens", 0) or 0
     output_tokens = getattr(usage, "output_tokens", 0) or 0
 
-    usd = cost_usd(model, input_tokens, cached_tokens, output_tokens)
+    usd = cost_usd(model, input_tokens, cached_tokens, output_tokens, seconds)
 
     saved = conn.execute(
         "insert into model_call (step, model, frame_id, input_tokens, cached_tokens, output_tokens, usd, request,"
