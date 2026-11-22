@@ -63,7 +63,9 @@ def stretch_starts(conn, moment_ids: list[str]) -> dict[str, list[float]]:
     return starts
 
 
-def spread(facts: list[dict], starts: dict[str, list[float]], limit: int, per_group: int = PER_STRETCH_AND_KIND) -> list[dict]:
+def spread(
+    facts: list[dict], starts: dict[str, list[float]], limit: int, per_group: int = PER_STRETCH_AND_KIND
+) -> list[dict]:
     """Keep the facts in order, but at most `per_group` of each kind from any one stretch, up to `limit`."""
     kept, counts = [], {}
 
@@ -119,6 +121,19 @@ def search(
     ]
 
     return spread(found, stretch_starts(conn, list({fact["moment_id"] for fact in found})), limit)
+
+
+def search_within(conn, question: str, limit: int, window: tuple, moments: list[str] | None = None) -> list[dict]:
+    """Search inside the question's time window first, and everywhere only if nothing there matches."""
+    start, end = window
+
+    if start and end:
+        found = search(conn, question, limit, start, end, moments)
+
+        if found:
+            return found
+
+    return search(conn, question, limit, moments=moments)
 
 
 def print_results(results: list[dict]) -> None:

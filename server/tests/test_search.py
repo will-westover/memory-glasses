@@ -30,3 +30,11 @@ def test_one_stretch_gives_at_most_two_facts_of_each_kind():
     kept = spread(facts, {"m": [0.0, 60.0]}, limit=10)
 
     assert [item["id"] for item in kept] == [1, 2, 4, 5]
+
+
+def test_a_window_time_without_an_offset_is_local_and_bad_text_is_none():
+    from memory.when import local_time
+
+    assert local_time("2026-11-20T17:00:00").utcoffset() is not None
+    assert local_time("Friday evening") is None
+    assert local_time(None) is None

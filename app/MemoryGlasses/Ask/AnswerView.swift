@@ -61,6 +61,7 @@ struct StepLine: View {
         case "timeline": "clock"
         case "nearby": "scope"
         case "answer": "text.bubble"
+        case "when": "calendar"
         default: "sparkle"
         }
     }

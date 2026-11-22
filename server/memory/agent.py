@@ -15,7 +15,8 @@ from memory import db, llm
 from memory.citations import partial_string, renumber, shown_so_far
 from memory.config import AGENT_MODEL, minutes_seconds
 from memory.gps import place_for
-from memory.search import search
+from memory.search import search_within
+from memory.when import question_window
 
 MAX_TOOL_ROUNDS = 5
 
@@ -219,8 +220,10 @@ def fact_lines(facts: list[dict]) -> str:
     return "\n".join(fact_line(fact) for fact in facts)
 
 
-def find_facts(conn, name: str, arguments: dict, moments: list[str] | None = None) -> list[dict]:
-    """Return the facts one tool call asks for, from only the given moments when some are named."""
+def find_facts(
+    conn, name: str, arguments: dict, moments: list[str] | None = None, window: tuple = (None, None)
+) -> list[dict]:
+    """Return the facts one tool call asks for; a search with no times of its own looks in the question's window."""
     if name == "nearby":
         near = db.nearby_facts(conn, arguments["fact_id"], arguments.get("metres") or NEARBY_DEFAULT_METRES)
 
@@ -230,7 +233,9 @@ def find_facts(conn, name: str, arguments: dict, moments: list[str] | None = Non
     end = parse_time(arguments.get("end"))
 
     if name == "search":
-        return search(conn, arguments["query"], SEARCH_RESULTS, start, end, moments)
+        return search_within(
+            conn, arguments["query"], SEARCH_RESULTS, (start, end) if start and end else window, moments
+        )
 
     if not start or not end:
         raise ValueError("timeline needs a start and an end")
@@ -238,10 +243,12 @@ def find_facts(conn, name: str, arguments: dict, moments: list[str] | None = Non
     return fit_timeline(db.timeline(conn, start, end, moments))
 
 
-def run_tool(conn, name: str, arguments: dict, seen: dict, moments: list[str] | None = None) -> tuple[str, list[dict]]:
+def run_tool(
+    conn, name: str, arguments: dict, seen: dict, moments: list[str] | None = None, window: tuple = (None, None)
+) -> tuple[str, list[dict]]:
     """Run one tool call, remember the facts it returned, and return them as text and as found."""
     try:
-        facts = find_facts(conn, name, arguments, moments)
+        facts = find_facts(conn, name, arguments, moments, window)
     except ValueError:
         return f"error: start and end must be {ISO_TIME}", []
 
@@ -294,6 +301,13 @@ def spoken_time(text: str | None) -> str:
     return f"{at:%a} {at:%-I:%M} {at:%p}".replace("AM", "am").replace("PM", "pm") if at else "?"
 
 
+def window_text(window: tuple) -> str:
+    """Describe the question's time window in plain words."""
+    start, end = window
+
+    return f"Looking from {spoken_time(start.isoformat())} to {spoken_time(end.isoformat())}"
+
+
 def step_text(name: str, arguments: dict) -> str:
     """Describe one tool call in plain words."""
     if name == "search":
@@ -334,7 +348,11 @@ def answer_events(
 
     seen: dict = {frame["id"]: frame} if frame else {}
     calls = []
-    usd = 0.0
+
+    window, usd = ((None, None), 0.0) if frame else question_window(conn, question, list(history))
+
+    if window[0]:
+        yield step_event("when", window_text(window))
 
     asked = f"{question}\n\nThe question is about this frame:\n{fact_line(frame)}" if frame else question
     round_input = model_input(list(history), asked)
@@ -394,7 +412,7 @@ def answer_events(
             yield step_event(call.name, step_text(call.name, arguments))
 
             with llm.collect_call_ids() as call_ids:
-                output, facts = run_tool(conn, call.name, arguments, seen, moments)
+                output, facts = run_tool(conn, call.name, arguments, seen, moments, window)
 
             yield step_event(call.name, step_text(call.name, arguments), facts)
 
@@ -417,7 +435,9 @@ def answer_events(
     parsed = response.output_parsed or NO_ANSWER
     messages[-1]["content"]["answer"] = parsed.model_dump()
 
-    yield "result", {**answer_result(parsed, seen, calls, usd, round_number + 1, started), "messages": messages}
+    model_calls = round_number + 1 + (0 if frame else 1)
+
+    yield "result", {**answer_result(parsed, seen, calls, usd, model_calls, started), "messages": messages}
 
 
 def ask_agent(
@@ -440,7 +460,8 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL, moments: list[str] 
     llm.require_price(model)
     started = time.monotonic()
 
-    facts = search(conn, question, PLAIN_RESULTS, moments=moments)
+    window, when_usd = question_window(conn, question)
+    facts = search_within(conn, question, PLAIN_RESULTS, window, moments)
     seen = {fact["id"]: fact for fact in facts}
 
     request = {
@@ -451,7 +472,7 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL, moments: list[str] 
     response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})
     usd = llm.log_cost(conn, "rag", model, response.usage, request=request, response=response.model_dump(mode="json"))
 
-    return answer_result(response.output_parsed, seen, [], usd, 1, started)
+    return answer_result(response.output_parsed, seen, [], usd + when_usd, 2, started)
 
 
 def answer_result(answer: Answer | None, seen: dict, calls: list, usd: float, model_calls: int, started: float) -> dict:
