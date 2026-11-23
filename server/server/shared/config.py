@@ -34,6 +34,8 @@ SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gpt-6-luna")
 
 PARALLEL_CALLS = int(os.environ.get("PARALLEL_CALLS", "16"))
 
+NEIGHBOUR_METRES = 1.5
+
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gpt-6-sol")
 
 

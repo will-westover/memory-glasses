@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from server import db
 from server.shared import llm, storage
-from server.shared.config import CAPTION_MODEL, DATA_DIR, SUMMARY_MODEL, PARALLEL_CALLS
+from server.shared.config import CAPTION_MODEL, DATA_DIR, SUMMARY_MODEL, PARALLEL_CALLS, NEIGHBOUR_METRES
 
 CANDIDATES = 3
 CROP_PIXELS = 384
@@ -67,10 +67,70 @@ def distinct_things(conn, things: list[dict]) -> list[dict]:
     return [thing for number, thing in enumerate(things, start=1) if number in chosen]
 
 
+SPOT_INSTRUCTIONS = """\
+Each new thing below was seen by someone's camera glasses within a short distance of the earlier things listed under
+it, measured in the same room map. Say which earlier thing, if any, is the same kind of object (a mug and a mug, not
+a mug and a plate; not a thing and a part of it or what it sits on) with nothing in the details that conflicts. If
+none is, or more than one could be, say none."""
+
+
+class SpotPick(BaseModel):
+    number: int = Field(description="The number of the new thing")
+    letter: str | None = Field(description="The letter of the earlier thing that is the same kind of object, or null")
+
+
+class SpotPicks(BaseModel):
+    picks: list[SpotPick]
+
+
+def spot_matches(conn, things: list[dict]) -> dict[int, tuple[int, str]]:
+    """Find, for things with a spot, an earlier thing of the same kind close by in the same room map, with one text
+    call. Return {thing: (earlier thing, reason)}."""
+    near = [
+        (thing, close) for thing in things if (close := db.close_things(conn, thing["id"], NEIGHBOUR_METRES, True))
+    ]
+
+    if not near:
+        return {}
+
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    listed = "\n\n".join(
+        f"{number}. {label(thing)}\n"
+        + "\n".join(
+            f"  {letter}) {label(other)}, {other['metres']:.1f} m away" for letter, other in zip(letters, close)
+        )
+        for number, (thing, close) in enumerate(near, start=1)
+    )
+    response = llm.client().responses.parse(
+        model=SUMMARY_MODEL,
+        instructions=SPOT_INSTRUCTIONS,
+        input=listed,
+        text_format=SpotPicks,
+        reasoning={"effort": "low"},
+    )
+    llm.log_cost(conn, "link-spot", SUMMARY_MODEL, response.usage)
+    found = {}
+
+    for pick in response.output_parsed.picks if response.output_parsed else []:
+        if not pick.letter or not 0 < pick.number <= len(near):
+            continue
+
+        thing, close = near[pick.number - 1]
+        index = letters.find(pick.letter.strip().lower()[:1])
+
+        if 0 <= index < len(close):
+            reason = f"Same kind of thing, {close[index]['metres']:.1f} m from where it was"
+            found[thing["id"]] = (close[index]["id"], reason)
+
+    return found
+
+
 class Match(BaseModel):
     seen_kind: str = Field(description="What kind of object the first image shows, in a few words")
     candidate_kind: str | None = Field(description="What kind of object the chosen candidate shows, or null")
-    same_kind: bool = Field(description="True only if both are the same kind of object, and neither is part of the other")
+    same_kind: bool = Field(
+        description="True only if both are the same kind of object, and neither is part of the other"
+    )
     same_as: int | None = Field(description="The number of the candidate that is the very same object, or null")
     certain: bool = Field(description="True only if the photos leave no real doubt")
     reason: str = Field(description="One short sentence on what decided it")
@@ -155,16 +215,22 @@ def link_moment(conn, moment_id: str) -> dict[str, int]:
 
     llm.require_price(LINK_MODEL)
     llm.require_price(SUMMARY_MODEL)
+    particular = distinct_things(conn, things)
+    by_spot = spot_matches(conn, particular)
     pairs = [
         (thing, candidates)
-        for thing in distinct_things(conn, things)
-        if (candidates := db.link_candidates(conn, thing["id"], moment_id, place["id"] if place else None, CANDIDATES))
+        for thing in particular
+        if thing["id"] not in by_spot
+        and (candidates := db.link_candidates(conn, thing["id"], moment_id, place["id"] if place else None, CANDIDATES))
     ]
 
     with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
         results = list(pool.map(lambda pair: compare(*pair), pairs))
 
     chosen: dict[int, list[tuple]] = {}
+
+    for thing_id, (earlier, reason) in by_spot.items():
+        chosen.setdefault(earlier, []).append((thing_id, reason))
 
     for (thing, candidates), (match, usage) in zip(pairs, results):
         if usage is not None:
@@ -182,4 +248,4 @@ def link_moment(conn, moment_id: str) -> dict[str, int]:
 
     conn.commit()
 
-    return {"things": len(things), "compared": len(pairs), "linked": linked}
+    return {"things": len(things), "by_spot": len(by_spot), "compared": len(pairs), "linked": linked}

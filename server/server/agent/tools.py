@@ -5,14 +5,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from server import db
+from server.shared.config import NEIGHBOUR_METRES
 from server.agent.reading import NOTHING_FOUND, coverage_text, fact_lines, parse_time, spoken_time
 from server.agent.search import search_within
 
 SEARCH_RESULTS = 12
 
 TIMELINE_CHARACTERS = 12_000
-
-NEARBY_METRES = 1.5
 
 OVERVIEW_KINDS = ("day", "recording", "activity", "summary")
 
@@ -116,19 +115,31 @@ def now_line(seen: dict | None) -> str:
     room = seen["room"] if seen["room"] and seen["room"].lower() not in ("room", (seen["place"] or "").lower()) else None
     where = ", ".join(part for part in (seen["place"], room and f"room: {room}", seen["where"]) if part)
     details = f" ({seen['details']})" if seen["details"] else ""
+    near = f"; near {', '.join(seen['near'])}" if seen.get("near") else ""
 
-    return f"Last seen {seen['at'].astimezone():%a %d %b %Y %H:%M}: {where or 'place unknown'}{details}.\n"
+    return f"Last seen {seen['at'].astimezone():%a %d %b %Y %H:%M}: {where or 'place unknown'}{near}{details}.\n"
 
 
 def entity(asking: Asking, arguments: dict) -> tuple[str, list[dict]]:
     facts = asking.only_asked(db.entity_facts(asking.conn, arguments["fact_id"]))
 
-    return now_line(db.last_seen(asking.conn, arguments["fact_id"], asking.moments)) + fact_lines(facts), facts
+    seen = db.last_seen(asking.conn, arguments["fact_id"], asking.moments)
+
+    if seen:
+        close = db.close_things(asking.conn, seen["entity_id"], NEIGHBOUR_METRES, False)
+        seen["near"] = [f"{other['name']} ({other['metres']:.1f} m)" for other in close if other["metres"] > 0][:3]
+
+    return now_line(seen) + fact_lines(facts), facts
 
 
 def nearby(asking: Asking, arguments: dict) -> tuple[str, list[dict]]:
-    near = db.nearby_facts(asking.conn, arguments["fact_id"], arguments.get("metres") or NEARBY_METRES)
-    facts = asking.only_asked(near)
+    metres = arguments.get("metres") or NEIGHBOUR_METRES
+    thing = db.fact_entity(asking.conn, arguments["fact_id"])
+    close = [other["id"] for other in db.close_things(asking.conn, thing, metres, False)] if thing else []
+    by_spot = db.thing_facts(asking.conn, close) if close else []
+    by_camera = db.nearby_facts(asking.conn, arguments["fact_id"], metres)
+    seen = {fact["id"] for fact in by_spot}
+    facts = asking.only_asked(by_spot + [fact for fact in by_camera if fact["id"] not in seen])
 
     return fact_lines(facts), facts
 
@@ -192,10 +203,11 @@ TOOLS = [
     ),
     Tool(
         "nearby",
-        "List what was seen close to where a frame fact's photo was taken, in any recording at the same mapped place.",
+        "List what was seen close to a thing (by where things stand in the room, when that is known) or close to where "
+        "a frame fact's photo was taken, in any recording at the same mapped place.",
         {
-            "fact_id": ("integer", "The number of a frame fact"),
-            "metres": (["number", "null"], f"How far around to look; {NEARBY_METRES} if null"),
+            "fact_id": ("integer", "The number of a frame or object fact"),
+            "metres": (["number", "null"], f"How far around to look; {NEIGHBOUR_METRES} if null"),
         },
         lambda arguments: "Looking at what was nearby",
         nearby,

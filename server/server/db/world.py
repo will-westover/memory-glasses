@@ -179,7 +179,7 @@ def last_seen(conn: psycopg.Connection, fact_id: int, moments: list[str] | None 
     """Return the latest sighting of the thing or person a fact is about, across its links: when, at which place and
     in which room, where and how it looked."""
     row = conn.execute(
-        "select s.at, p.name, r.name, s.place, s.details from sighting s join entity e on e.id = s.entity_id"
+        "select s.at, p.name, r.name, s.place, s.details, e.id from sighting s join entity e on e.id = s.entity_id"
         "  join frame f on f.id = s.frame_id left join room r on r.id = f.room_id"
         "  left join frame_segment fs on fs.frame_id = f.id left join place p on p.id = fs.place_id"
         " where coalesce(e.merged_into, e.id) = ("
@@ -189,7 +189,7 @@ def last_seen(conn: psycopg.Connection, fact_id: int, moments: list[str] | None 
         {"id": fact_id, "moments": moments},
     ).fetchone()
 
-    return dict(zip(("at", "place", "room", "where", "details"), row)) if row else None
+    return dict(zip(("at", "place", "room", "where", "details", "entity_id"), row)) if row else None
 
 
 def boxed_sightings_with_camera(conn: psycopg.Connection, moment_id: str) -> list[tuple]:
@@ -228,6 +228,41 @@ def spot_spread(conn: psycopg.Connection, moment_id: str) -> list[tuple]:
         " group by e.id, e.name having count(*) > 1 order by 2",
         (moment_id,),
     ).fetchall()
+
+
+PLACED_THINGS = """
+    select e.id, e.name, e.details, e.spot, e.merged_into, f.moment_id, fs.place_id, coalesce(fs.in_place_map, false)
+           as in_map
+      from entity e join frame f on f.id = e.crop_frame_id left join frame_segment fs on fs.frame_id = f.id
+     where e.spot is not null
+"""
+
+
+def close_things(conn: psycopg.Connection, entity_id: int, metres: float, other_moments: bool) -> list[dict]:
+    """Return the things whose spot lies within `metres` of a thing's spot, nearest first: in the same moment, or in
+    another moment mapped in the same place map. With other_moments, only those from other moments."""
+    rows = conn.execute(
+        f"with placed as ({PLACED_THINGS}), here as (select * from placed where id = %(id)s)"
+        " select p.id, p.name, p.details,"
+        "        sqrt(power(p.spot[1] - h.spot[1], 2) + power(p.spot[2] - h.spot[2], 2) + power(p.spot[3] - h.spot[3], 2))"
+        "   from placed p, here h"
+        "  where p.id <> h.id and p.merged_into is null and coalesce(h.merged_into, h.id) <> p.id"
+        "    and (p.moment_id = h.moment_id and not %(other)s"
+        "         or p.moment_id <> h.moment_id and p.place_id = h.place_id and p.in_map and h.in_map)"
+        "    and sqrt(power(p.spot[1] - h.spot[1], 2) + power(p.spot[2] - h.spot[2], 2)"
+        "             + power(p.spot[3] - h.spot[3], 2)) <= %(metres)s"
+        "  order by 4",
+        {"id": entity_id, "metres": metres, "other": other_moments},
+    ).fetchall()
+
+    return [{"id": other, "name": name, "details": details, "metres": float(far)} for other, name, details, far in rows]
+
+
+def fact_entity(conn: psycopg.Connection, fact_id: int) -> int | None:
+    """Return the thing or person a fact is about, if any."""
+    row = conn.execute("select entity_id from fact where id = %s", (fact_id,)).fetchone()
+
+    return row[0] if row else None
 
 
 def coverage(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:

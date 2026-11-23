@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from server import db
 from server.shared import llm, storage
-from server.shared.config import DATA_DIR, SUMMARY_MODEL
+from server.shared.config import DATA_DIR, SUMMARY_MODEL, NEIGHBOUR_METRES
 from server.ingest.facts import build_facts
 from server.ingest.poses import load_poses
 from server.shared.gps import distance_m
@@ -27,7 +27,6 @@ MOMENTS_DIR = DATA_DIR / "moments"
 PLACE_SEARCH_METRES = 150
 SAME_PLACE_SIMILARITY = 0.75
 TRAVEL_METRES = 30
-NEIGHBOUR_METRES = 1.5
 
 INSTRUCTIONS = """\
 You are given everything recorded in one moment by a person's camera: each frame's description, when it was taken,

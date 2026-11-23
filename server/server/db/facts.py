@@ -132,6 +132,20 @@ def nearby_facts(conn: psycopg.Connection, fact_id: int, metres: float, limit: i
     )
 
 
+def thing_facts(conn: psycopg.Connection, entity_ids: list[int]) -> list[dict]:
+    """Return the latest object fact about each of some things, in the order the things are given."""
+    rows = fact_rows(
+        conn.execute(
+            f"{FACT_SELECT} where fact.id in (select distinct on (entity_id) id from fact"
+            "  where entity_id = any(%s) and kind = 'object' order by entity_id, at desc)",
+            (entity_ids,),
+        )
+    )
+    order = {entity_id: index for index, entity_id in enumerate(entity_ids)}
+
+    return sorted(rows, key=lambda fact: order.get(fact.get("entity_id"), len(order)))
+
+
 def entity_facts(conn: psycopg.Connection, fact_id: int, limit: int = 30) -> list[dict]:
     """Return the facts about the same thing or person as one fact, across every moment, oldest first."""
     return fact_rows(

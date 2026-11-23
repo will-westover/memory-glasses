@@ -51,7 +51,9 @@ Inside `server/server/`, the same word means the same thing at every layer:
    minutes pass. One call per scene sees its photos, captions, people and speech, and records each thing seen as a
    sighting of a thing already known in the recording or a new one; people come from faces:
    [ingest/facts.py](server/server/ingest/facts.py), [db/world.py](server/server/db/world.py).
-9. One text call picks the new things that are a particular object, not a surface or a vague shape. Each of those is
+9. One text call picks the new things that are a particular object, not a surface or a vague shape. A thing with a
+   spot (below) is first matched, by one text call, to an earlier thing of the same kind within 1.5 m in the same room
+   map. Each of the others is
    compared with the closest-reading earlier things at the same place (anywhere, if the place is unknown) by a vision
    check of the two photo crops. It links only when certain and no other candidate could be it; a link never moves anything, so it can be
    undone: [ingest/link.py](server/server/ingest/link.py).
