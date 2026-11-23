@@ -41,7 +41,7 @@ fn wait_for_ack(link: &Link, state: &mut State, display: &mut Display, number: u
 
 fn record_one_by_bluetooth(link: &Link, state: &mut State, display: &mut Display) {
     if !state.recording || state.frames_per_minute <= 0.0 {
-        display.show(&["BT", if state.recording { "No pics" } else { "Paused" }]);
+        display.show(&[if state.recording { "No photos set" } else { "Paused" }]);
         state.recording_to_end = None;
         handle_phone_message(link, state, display, MESSAGE_POLL);
         return;
@@ -58,13 +58,13 @@ fn record_one_by_bluetooth(link: &Link, state: &mut State, display: &mut Display
                 state.frames_sent = number;
                 println!("sent frame {number}: {} bytes by Bluetooth in {} ms", jpeg.len(),
                          send_started.elapsed().as_millis());
-                display.show(&["BT", &state.status_line()]);
+                display.show(&[&state.status_line()]);
             } else {
                 println!("frame {number} wasn't acknowledged");
-                display.show(&["BT", &state.status_line(), "No ack"]);
+                display.show(&[&state.status_line(), "Not sent"]);
             }
         }
-        None => display.show(&["BT", &state.status_line(), "No pic"]),
+        None => display.show(&[&state.status_line(), "Camera?"]),
     }
 
     while state.recording && state.frames_per_minute > 0.0 && started.elapsed() < state.frame_interval() && link.phone_ready() {
@@ -107,7 +107,7 @@ fn main() {
     let mut phone_last_seen = Instant::now();
     let mut firmware_marked_valid = false;
 
-    display.show(&["BT", "waiting"]);
+    display.show(&["Finding phone"]);
 
     loop {
         if let Some(percent) = link.update_progress() {
@@ -140,7 +140,7 @@ fn main() {
                 }
             }
             _ => {
-                display.show(&["BT", "waiting"]);
+                display.show(&["Finding phone"]);
                 handle_phone_message(&link, &mut state, &mut display, Duration::from_millis(500));
             }
         }

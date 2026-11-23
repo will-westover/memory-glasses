@@ -158,6 +158,20 @@ SEEN_AGAIN_SQL = """
 """
 
 
+def later_moments_seeing_again(conn: psycopg.Connection, moment_id: str) -> list[str]:
+    """Return the later moments that saw again something this moment saw, oldest first."""
+    rows = conn.execute(
+        "with groups as (select distinct coalesce(e.merged_into, e.id) as root from entity e"
+        "                join sighting s on s.entity_id = e.id join frame f on f.id = s.frame_id where f.moment_id = %(id)s)"
+        " select distinct m.id, m.started_at from entity e join groups g on coalesce(e.merged_into, e.id) = g.root"
+        "   join sighting s on s.entity_id = e.id join frame f on f.id = s.frame_id join moment m on m.id = f.moment_id"
+        "  where m.started_at > (select started_at from moment where id = %(id)s) order by m.started_at",
+        {"id": moment_id},
+    ).fetchall()
+
+    return [later for later, _ in rows]
+
+
 def seen_again(conn: psycopg.Connection, moment_id: str) -> list[tuple[dict, dict]]:
     """Return each thing in a moment that was seen before, as (how it is now, how it was the last time before)."""
     rows = conn.execute(SEEN_AGAIN_SQL, (moment_id,)).fetchall()

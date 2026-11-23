@@ -263,7 +263,13 @@ def refresh_speech_facts(conn, moment_id: str) -> int:
     _, lat, lon = db.moment_start_and_location(conn, moment_id)
     place = place_for(lat, lon, db.gps_places(conn))
     passages = group_passages(db.transcript_lines(conn, moment_id))
-    facts = [speech_fact(passage, place, "speech", spoken(passage)) for passage in passages]
+    scenes = dict(
+        conn.execute("select offset_seconds, episode_id from fact where moment_id = %s and kind = 'speech'", (moment_id,))
+    )
+    facts = [
+        {**speech_fact(passage, place, "speech", spoken(passage)), "episode_id": scenes.get(passage[0]["start"])}
+        for passage in passages
+    ]
     vectors = llm.embed(conn, [fact["text"] for fact in facts], "embed") if facts else []
     db.add_facts(conn, moment_id, "speech", facts, vectors)
 
@@ -304,6 +310,9 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     conn.commit()
     link_moment(conn, moment_id)
     changes = write_changes(conn, moment_id)
+
+    for later in db.later_moments_seeing_again(conn, moment_id):
+        write_changes(conn, later)
 
     write_overview(conn, moment_id)
     add_recording_fact(conn, moment_id, place)
