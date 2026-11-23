@@ -17,13 +17,23 @@ PARALLEL_CALLS = 8
 LINK_MODEL = CAPTION_MODEL
 
 INSTRUCTIONS = """\
-You compare photos of things seen by someone's camera glasses at the same place on different days. The first image
-is a thing just seen; each later image is a candidate seen before. Decide whether the first is the very same object
-as one of the candidates (the same mug, the same plant), not just the same kind of thing. Look at colour, shape,
-pattern, wear, writing and what it sits on. Two things of the same kind that differ in any of these are different.
-Say none when anything conflicts, when a crop is too small or blurred to compare, when the match rests only on
-the setting rather than on the object itself, or when more than one candidate could be it. Say how sure you are.
-A wrong match is worse than a missed one."""
+You compare photos of things seen by someone's camera glasses on different days. The first image is a thing just
+seen; each later image is a candidate seen before. Decide whether the first is the very same object as one of the
+candidates (the same mug, the same plant), not just the same kind of thing.
+
+They are different, and you must say none, when:
+- they are different kinds of object, even if similar or used together (a chair and a stool, a jacket and a shirt,
+  a counter and a table, a cup and its saucer);
+- one is part of the other, sits on or in it, or holds it (a book and its shelf, a lampshade and the lamp, a magnet
+  and the door it is on, a candle and its holder);
+- the object itself differs in colour, shape, pattern, wear, writing or size (differences from light, angle,
+  distance, blur or what is hidden from view do not count);
+- a crop is too small, blurred or cut off to compare, or the match rests on the setting rather than the object;
+- more than one candidate could be it.
+
+Name the kind of object in each image first. When they are the same kind and nothing about the object itself
+differs, and it was seen at the same place, it is very likely the same one: say so. A wrong match is worse than a
+missed one."""
 
 
 DISTINCT_INSTRUCTIONS = """\
@@ -58,6 +68,9 @@ def distinct_things(conn, things: list[dict]) -> list[dict]:
 
 
 class Match(BaseModel):
+    seen_kind: str = Field(description="What kind of object the first image shows, in a few words")
+    candidate_kind: str | None = Field(description="What kind of object the chosen candidate shows, or null")
+    same_kind: bool = Field(description="True only if both are the same kind of object, and neither is part of the other")
     same_as: int | None = Field(description="The number of the candidate that is the very same object, or null")
     certain: bool = Field(description="True only if the photos leave no real doubt")
     reason: str = Field(description="One short sentence on what decided it")
@@ -150,7 +163,7 @@ def link_moment(conn, moment_id: str) -> dict[str, int]:
         if usage is not None:
             llm.log_cost(conn, "link", LINK_MODEL, usage)
 
-        if match and match.certain and match.same_as and 0 < match.same_as <= len(candidates):
+        if match and match.certain and match.same_kind and match.same_as and 0 < match.same_as <= len(candidates):
             chosen.setdefault(candidates[match.same_as - 1]["id"], []).append((thing["id"], match.reason))
 
     linked = 0
