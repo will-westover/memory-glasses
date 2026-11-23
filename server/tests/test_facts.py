@@ -59,6 +59,15 @@ def test_a_box_is_kept_inside_the_picture():
     assert clean_box([0.1, 0.2]) is None
 
 
+def test_a_renamed_thing_still_gets_the_box_of_the_object_it_was_said_to_be():
+    from memory.ingest.facts import object_boxes
+
+    photo = frame(5, 0.0)
+    photo["objects"] = [{"name": "green bean pods", "location": "in a bowl", "box": [0, 0.5, 0.25, 0.25]}]
+
+    assert object_boxes([photo], ["1.1", "1.9", "x"]) == {5: [0.0, 0.5, 0.25, 0.25]}
+
+
 def test_a_frame_fact_names_the_people_and_room():
     fact = frame_fact(frame(1, 0.0, room="Kitchen", people=["Friend 1"]), "Home")
 
@@ -143,8 +152,9 @@ def test_a_stretch_gives_each_thing_person_and_text_once():
                 photos=[1, 2],
                 same_as=None,
                 on_screen=False,
+                objects=[],
             ),
-            Thing(name="stray", where="x", details="", photos=[9], same_as=None, on_screen=False),
+            Thing(name="stray", where="x", details="", photos=[9], same_as=None, on_screen=False, objects=[]),
         ],
         said=[],
     )
@@ -180,7 +190,9 @@ def test_a_thing_seen_again_in_a_later_scene_stays_one_thing():
     known = []
 
     def scene(photos_frame, same_as):
-        thing = Thing(name="mug", where="on desk", details="blue", photos=[1], same_as=same_as, on_screen=False)
+        thing = Thing(
+            name="mug", where="on desk", details="blue", photos=[1], same_as=same_as, on_screen=False, objects=[]
+        )
         return Stretch(title="t", happened="Working.", things=[thing], said=[])
 
     stretch_facts([first], [], None, scene(first, None), known, 0)

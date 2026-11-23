@@ -40,7 +40,8 @@ Write, using only what is given:
   photos ("edamame pod", "green bean pods", "bowl of edamame"); that is one thing, not several. Check the
   descriptions against the photos you can see. Give each the most specific name the photos and the speech give,
   where it was in the scene, the details that tell it apart (keep the colours, materials and writing), and the
-  numbers of the photos it is in. Say where it was in plain words, never by photo number. People recognised by name
+  numbers of the photos it is in, and which numbered objects in those photos' lists it is ("3.2" is photo 3, object
+  [2]). Say where it was in plain words, never by photo number. People recognised by name
   are recorded already: do not list them as things, but do list what they wear or hold, saying whose (e.g. "worn by
   Me"). Before listing a thing as new, check the things seen earlier in this recording; when it is one of them, give
   its label in same_as. Mark things only seen on a screen or in a picture.
@@ -60,6 +61,9 @@ class Thing(BaseModel):
         description="What tells it apart: colour, material, pattern, writing; keep the photos' details"
     )
     photos: list[int] = Field(description="The numbers of the photos it is in")
+    objects: list[str] = Field(
+        description="Which listed objects it is, as photo and object number, e.g. '3.2' for photo 3, object [2]"
+    )
     same_as: str | None = Field(description="The label of the same thing seen earlier in this recording, or null")
     on_screen: bool = Field(description="True if it was only seen on a screen or in a picture")
 
@@ -224,8 +228,8 @@ def speech_fact(passage: list[dict], place: str | None, kind: str, text: str) ->
 def describe_photo(number: int, frame: dict) -> str:
     """Return one photo as the line the scene call reads."""
     things = "; ".join(
-        f"{item['name']} ({item['location']}{'; ' + item['details'] if item.get('details') else ''})"
-        for item in frame["objects"]
+        f"[{index}] {item['name']} ({item['location']}{'; ' + item['details'] if item.get('details') else ''})"
+        for index, item in enumerate(frame["objects"], start=1)
     )
     names = sorted({person["name"] for person in frame.get("people", []) if person["name"]})
     people = f" People: {', '.join(names)}." if names else ""
@@ -282,7 +286,7 @@ def things_by_name(frames: list[dict]) -> list[Thing]:
     found: dict[str, Thing] = {}
 
     for number, frame in enumerate(frames, start=1):
-        for item in frame["objects"]:
+        for index, item in enumerate(frame["objects"], start=1):
             thing = Thing(
                 name=item["name"],
                 where=item["location"],
@@ -290,6 +294,7 @@ def things_by_name(frames: list[dict]) -> list[Thing]:
                 photos=[],
                 same_as=None,
                 on_screen=False,
+                objects=[f"{number}.{index}"],
             )
             found.setdefault(item["name"].lower(), thing).photos.append(number)
 
@@ -346,7 +351,26 @@ def matching_box(frame: dict, name: str) -> list | None:
     return None
 
 
-def remember(known: list[dict], thing: Thing, shown: list[dict], scene: int) -> dict:
+def object_boxes(frames: list[dict], references: list[str]) -> dict[int, list[float]]:
+    """Return the box of each listed object a thing was said to be, by frame id; references look like '3.2'."""
+    boxes = {}
+
+    for reference in references:
+        photo, _, number = reference.partition(".")
+
+        if not (photo.isdigit() and number.isdigit()) or not 0 < int(photo) <= len(frames):
+            continue
+
+        frame = frames[int(photo) - 1]
+        objects = frame["objects"]
+
+        if 0 < int(number) <= len(objects) and objects[int(number) - 1].get("box"):
+            boxes.setdefault(frame["id"], [float(value) for value in objects[int(number) - 1]["box"]])
+
+    return boxes
+
+
+def remember(known: list[dict], thing: Thing, shown: list[dict], scene: int, boxes: dict | None = None) -> dict:
     """Add a thing's sightings to the one it is the same as, or to a new one, and return that one."""
     item = next((entry for entry in known if thing.same_as and entry["label"] == thing.same_as), None)
 
@@ -355,7 +379,11 @@ def remember(known: list[dict], thing: Thing, shown: list[dict], scene: int) -> 
         known.append(item)
 
     source = "screen" if thing.on_screen else "seen"
-    item["sightings"] += [(frame, thing.where, thing.details, source, scene) for frame in shown]
+    boxes = boxes or {}
+    item["sightings"] += [
+        (frame, thing.where, thing.details, source, scene, boxes.get(frame["id"]) or matching_box(frame, thing.name))
+        for frame in shown
+    ]
 
     return item
 
@@ -376,7 +404,7 @@ def stretch_facts(
         shown = [frames[number - 1] for number in sorted(set(thing.photos)) if 0 < number <= len(frames)]
 
         if shown:
-            item = remember(known, thing, shown, scene)
+            item = remember(known, thing, shown, scene, object_boxes(frames, thing.objects))
             details = f" {thing.details.rstrip('.')}." if thing.details else ""
             screen = " Seen on a screen." if thing.on_screen else ""
             fact = covering("object", f"{thing.name}: {thing.where}.{details}{screen}{where} {context}", shown)
@@ -415,21 +443,19 @@ def all_stretch_facts(conn, groups: list[tuple[list, list]], place: str | None, 
     return facts
 
 
+def best_crop(item: dict) -> tuple[int, list | None]:
+    """Return the frame and box that show a thing: its first sighting with a box, else its first sighting."""
+    boxed = next(((frame["id"], box) for frame, *_, box in item["sightings"] if box), None)
+
+    return boxed or (item["sightings"][0][0]["id"], None)
+
+
 def save_world(conn, moment_id: str, facts: list[dict], known: list[dict], thing_vectors: list[str]) -> None:
     """Store the moment's scenes, things and sightings, and point each fact at its scene and thing or person."""
     db.forget_world(conn, moment_id)
 
     scenes = {fact["scene"]: db.save_scene(conn, moment_id, fact) for fact in facts if fact["kind"] == "summary"}
-    things = {
-        item["label"]: db.new_thing(
-            conn,
-            item["name"],
-            item["details"],
-            item["sightings"][0][0]["id"],
-            matching_box(item["sightings"][0][0], item["name"]),
-        )
-        for item in known
-    }
+    things = {item["label"]: db.new_thing(conn, item["name"], item["details"], *best_crop(item)) for item in known}
     db.save_thing_vectors(conn, {things[item["label"]]: vector for item, vector in zip(known, thing_vectors)})
     people = {
         fact["person_id"]: db.person_entity(conn, fact["person_id"], fact["person_name"])
@@ -445,11 +471,11 @@ def save_world(conn, moment_id: str, facts: list[dict], known: list[dict], thing
             frame["at"],
             place,
             details,
-            matching_box(frame, item["name"]),
+            box,
             source,
         )
         for item in known
-        for frame, place, details, source, scene in item["sightings"]
+        for frame, place, details, source, scene, box in item["sightings"]
     ]
     rows += [
         (people[fact["person_id"]], frame_id, scenes.get(fact["scene"]), fact["at"], None, None, None, "seen")
