@@ -20,6 +20,7 @@ covers, and its kind:
 - said, conversation: what a passage or a whole conversation was about
 - summary, activity, day: what happened in a scene, in a run of scenes, or in a whole day
 - recording: a whole recording's title, overview, start, end and length
+- change: what changed about a thing since it was last seen at the same place: moved, or looks different
 Facts name the recording they come from and the room when it is known; facts from phone recordings also say
 where, in metres. Things worn or held by someone recognised say whose.
 

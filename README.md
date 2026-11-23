@@ -55,6 +55,8 @@ Inside `server/server/`, the same word means the same thing at every layer:
    compared with the closest-reading earlier things at the same place (anywhere, if the place is unknown) by a vision
    check of the two photo crops. It links only when certain and no other candidate could be it; a link never moves anything, so it can be
    undone: [ingest/link.py](server/server/ingest/link.py).
+   Each thing seen again is compared with the last time it was seen; if it moved to other furniture or its state
+   changed, that becomes a change fact: [ingest/changes.py](server/server/ingest/changes.py).
 10. One call groups the scenes into activities and the speech into whole conversations, and the day's summary is
     rewritten from its activities: [ingest/activities.py](server/server/ingest/activities.py).
 11. Facts, the search index, are rebuilt from all of this: one per recording, activity, conversation, day, scene,

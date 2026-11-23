@@ -135,6 +135,46 @@ def link_things(conn: psycopg.Connection, entity_id: int, same_as: int, reason: 
     )
 
 
+SEEN_AGAIN_SQL = """
+    with now as (
+        select distinct on (e.id) e.id, e.name, coalesce(e.merged_into, e.id) as root, s.at, s.place, s.details,
+               r.name as room, s.frame_id, extract(epoch from s.at - m.started_at) as offset_seconds
+          from entity e join frame crop on crop.id = e.crop_frame_id
+          join sighting s on s.entity_id = e.id join frame f on f.id = s.frame_id
+          join moment m on m.id = f.moment_id left join room r on r.id = f.room_id
+         where crop.moment_id = %s
+           and (e.merged_into is not null or exists (select 1 from entity other where other.merged_into = e.id))
+         order by e.id, s.at desc
+    )
+    select now.id, now.name, now.at, now.place, now.details, now.room, now.frame_id, now.offset_seconds,
+           before.at, before.place, before.details, before.room
+      from now cross join lateral (
+        select s.at, s.place, s.details, r.name as room from sighting s join entity e on e.id = s.entity_id
+          join frame f on f.id = s.frame_id left join room r on r.id = f.room_id
+         where coalesce(e.merged_into, e.id) = now.root and e.id <> now.id and s.at < now.at
+         order by s.at desc limit 1
+      ) before
+     order by now.at
+"""
+
+
+def seen_again(conn: psycopg.Connection, moment_id: str) -> list[tuple[dict, dict]]:
+    """Return each thing in a moment that was seen before, as (how it is now, how it was the last time before)."""
+    rows = conn.execute(SEEN_AGAIN_SQL, (moment_id,)).fetchall()
+
+    return [
+        (
+            {"entity_id": entity_id, "name": name, "at": at, "where": where, "details": details, "room": room,
+             "frame_id": frame_id, "offset_seconds": float(offset)},
+            {"at": before_at, "where": before_where, "details": before_details, "room": before_room},
+        )
+        for (
+            entity_id, name, at, where, details, room, frame_id, offset,
+            before_at, before_where, before_details, before_room,
+        ) in rows
+    ]
+
+
 def coverage(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:
     """Return the recordings that overlap a time range, oldest first, each with its scenes, title and times."""
     rows = conn.execute(

@@ -8,6 +8,7 @@ from server import db
 from server.shared import llm
 from server.shared.config import SUMMARY_MODEL, minutes_seconds, spoken_length
 from server.ingest.activities import write_activities
+from server.ingest.changes import write_changes
 from server.ingest.link import link_moment
 from server.ingest.overview import write_overview
 from server.shared.gps import place_for
@@ -27,7 +28,9 @@ from server.ingest.scenes import (
     vector,
 )
 
-KINDS = ("frame", "person", "object", "text", "speech", "said", "summary", "recording", "activity", "conversation")
+KINDS = (
+    "frame", "person", "object", "text", "speech", "said", "summary", "recording", "activity", "conversation", "change",
+)
 
 
 def at_place(place: str | None, room: str | None = None) -> str:
@@ -285,12 +288,13 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
         db.replace_facts(conn, moment_id, facts, frame_vectors + rest_vectors)
 
     link_moment(conn, moment_id)
+    changes = write_changes(conn, moment_id)
 
     write_overview(conn, moment_id)
     add_recording_fact(conn, moment_id, place)
     grouped = write_activities(conn, moment_id, passages)
 
-    return count_kinds(facts) | {"recording": 1} | grouped
+    return count_kinds(facts) | {"recording": 1, "change": changes} | grouped
 
 
 def print_stretches(conn, moment_id: str) -> None:
