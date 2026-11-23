@@ -11,6 +11,8 @@ struct TimelineView: View {
     @State private var problem: String?
     @State private var loaded = false
     @State private var recording = false
+    @State private var more = false
+    @State private var loadingMore = false
 
     var body: some View {
         @Bindable var router = router
@@ -33,9 +35,11 @@ struct TimelineView: View {
                             }
                         }
 
-                        ForEach(days, id: \.self) { day in
+                        let byDay = Dictionary(grouping: moments) { Calendar.current.startOfDay(for: $0.startedAt) }
+
+                        ForEach(byDay.keys.sorted(by: >), id: \.self) { day in
                             Section {
-                                ForEach(moments.filter { Calendar.current.isDate($0.startedAt, inSameDayAs: day) }) { moment in
+                                ForEach(byDay[day] ?? []) { moment in
                                     NavigationLink(value: MomentRoute(id: moment.id, startedAt: moment.startedAt)) {
                                         VStack(alignment: .leading, spacing: 6) {
                                             MomentRow(moment: moment)
@@ -60,6 +64,13 @@ struct TimelineView: View {
                     }
                     .listStyle(.plain)
                     .refreshable { await load() }
+                    .safeAreaInset(edge: .bottom) {
+                        if more {
+                            ProgressView()
+                                .padding()
+                                .task(id: moments.count) { await loadMore() }
+                        }
+                    }
                 }
             }
             .safeAreaInset(edge: .top) {
@@ -122,17 +133,19 @@ struct TimelineView: View {
         }
     }
 
-    private var days: [Date] {
-        let starts = moments.map { Calendar.current.startOfDay(for: $0.startedAt) }
+    private func page(before: Date?) async throws -> [MomentSummary] {
+        let after = before.map { "?before=\(ISO8601DateFormatter().string(from: $0))" } ?? ""
 
-        return Array(Set(starts)).sorted(by: >)
+        return try await API.current.get("/moments\(after)")
     }
 
     private func load() async {
         do {
-            async let fetchedMoments: [MomentSummary] = API.current.get("/moments")
+            async let fetchedMoments = page(before: nil)
             async let fetchedUploads: [UploadStatus]? = try? API.current.get("/uploads")
-            moments = try await fetchedMoments
+            let first = try await fetchedMoments
+            moments = first
+            more = !first.isEmpty
             uploads = await fetchedUploads ?? []
             problem = nil
         } catch {
@@ -140,6 +153,19 @@ struct TimelineView: View {
         }
 
         loaded = true
+    }
+
+    private func loadMore() async {
+        guard more, !loadingMore, let oldest = moments.last?.startedAt else { return }
+
+        loadingMore = true
+        defer { loadingMore = false }
+
+        guard let next = try? await page(before: oldest) else { return }
+
+        let fresh = next.filter { found in !moments.contains { $0.id == found.id } }
+        moments += fresh
+        more = !fresh.isEmpty
     }
 }
 

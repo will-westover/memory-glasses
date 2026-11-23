@@ -32,6 +32,8 @@ AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-6-luna")
 
 SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "gpt-6-luna")
 
+PARALLEL_CALLS = int(os.environ.get("PARALLEL_CALLS", "16"))
+
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gpt-6-sol")
 
 

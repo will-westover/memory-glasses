@@ -8,7 +8,7 @@ from server import db
 from server.agent.reading import NOTHING_FOUND, coverage_text, fact_lines, parse_time, spoken_time
 from server.search import search_within
 
-SEARCH_RESULTS = 8
+SEARCH_RESULTS = 12
 
 TIMELINE_CHARACTERS = 12_000
 

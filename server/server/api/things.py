@@ -1,7 +1,7 @@
 """Things seen more than once: the links made between them, to check, confirm or undo."""
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException
 
 from server import db
 from server.api.shared import connection, image_url
@@ -13,9 +13,14 @@ def side_json(side: dict) -> dict:
     return {"id": side["id"], "name": side["name"], "image": image_url(side["image_path"]), "box": side["box"]}
 
 
+LINKS_PAGE = 50
+
+
 @router.get("/things/links")
-def thing_links(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
-    """List the newest links between things, newest first, each with both photos and the reason."""
+def thing_links(
+    before: int | None = None, limit: int = Query(LINKS_PAGE, ge=1, le=500), conn: psycopg.Connection = Depends(connection)
+) -> list[dict]:
+    """List links between things newest first, a page at a time, each with both photos and the reason."""
     return [
         {
             **side_json(link),
@@ -23,7 +28,7 @@ def thing_links(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
             "reason": link["reason"],
             "confirmed": link["confirmed"],
         }
-        for link in db.recent_links(conn)
+        for link in db.recent_links(conn, limit, before)
     ]
 
 

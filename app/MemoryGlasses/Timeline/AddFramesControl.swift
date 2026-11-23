@@ -4,7 +4,7 @@ struct ReprocessEstimate: Decodable {
     let frames: Int
     let newFrames: Int
     let keptCaptions: Int
-    let usd: Double
+    let usd: Double?
 }
 
 struct UploadID: Decodable {
@@ -16,13 +16,13 @@ struct AddFramesControl: View {
     let currentRate: Double
     let onReprocessed: () async -> Void
 
-    @State private var rate = 60.0
+    @State private var rate = GlassesSettings.maxFramesPerMinute
     @State private var estimate: ReprocessEstimate?
     @State private var loadingEstimate = false
     @State private var progressMessage: String?
     @State private var problem: String?
 
-    private var canAdd: Bool { currentRate < 60 }
+    private var canAdd: Bool { currentRate < GlassesSettings.maxFramesPerMinute }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -44,7 +44,7 @@ struct AddFramesControl: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
-                Slider(value: $rate, in: (currentRate + 1)...60, step: 1) { editing in
+                Slider(value: $rate, in: (currentRate + 1)...GlassesSettings.maxFramesPerMinute, step: 1) { editing in
                     if !editing { Task { await loadEstimate() } }
                 }
 
@@ -66,11 +66,11 @@ struct AddFramesControl: View {
                     .foregroundStyle(.red)
             }
         }
-        .task { if canAdd { rate = min(60, currentRate * 2); await loadEstimate() } }
+        .task { if canAdd { rate = min(GlassesSettings.maxFramesPerMinute, currentRate * 2); await loadEstimate() } }
     }
 
     private func summary(_ estimate: ReprocessEstimate) -> String {
-        "\(estimate.newFrames) new photos, about \(dollars(estimate.usd))."
+        estimate.usd.map { "\(estimate.newFrames) new photos, about \(dollars($0))." } ?? "\(estimate.newFrames) new photos."
     }
 
     private func loadEstimate() async {

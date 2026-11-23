@@ -11,12 +11,20 @@ def lock_moment(conn: psycopg.Connection, moment_id: str) -> None:
 
 
 def forget_world(conn: psycopg.Connection, moment_id: str) -> None:
-    """Delete a moment's scenes and sightings, and things no longer seen anywhere that nobody confirmed."""
-    conn.execute("delete from sighting where frame_id in (select id from frame where moment_id = %s)", (moment_id,))
+    """Delete a moment's scenes and sightings, and the things it saw that are no longer seen anywhere and nobody
+    confirmed."""
+    seen = [
+        entity_id
+        for (entity_id,) in conn.execute(
+            "delete from sighting where frame_id in (select id from frame where moment_id = %s) returning entity_id",
+            (moment_id,),
+        )
+    ]
     conn.execute("delete from episode where moment_id = %s", (moment_id,))
     conn.execute(
-        "delete from entity e where e.person_id is null and not e.confirmed"
-        " and not exists (select 1 from sighting s where s.entity_id = e.id)"
+        "delete from entity e where e.id = any(%s) and e.person_id is null and not e.confirmed"
+        " and not exists (select 1 from sighting s where s.entity_id = e.id)",
+        (list(set(seen)),),
     )
 
 
@@ -59,9 +67,10 @@ def save_sightings(conn: psycopg.Connection, rows: list[tuple]) -> None:
 
     conn.execute(
         "update entity e set first_seen = s.first, last_seen = s.last"
-        " from (select entity_id, min(at) as first, max(at) as last from sighting group by entity_id) s"
-        " where s.entity_id = e.id and e.id = any(%s)",
-        (list({row[0] for row in rows}),),
+        " from (select entity_id, min(at) as first, max(at) as last from sighting where entity_id = any(%(ids)s)"
+        "       group by entity_id) s"
+        " where s.entity_id = e.id",
+        {"ids": list({row[0] for row in rows})},
     )
 
 
@@ -158,14 +167,15 @@ def confirm_link(conn: psycopg.Connection, entity_id: int) -> bool:
     )
 
 
-def recent_links(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
-    """Return the newest links between things, with each side's name and photo, for you to check."""
+def recent_links(conn: psycopg.Connection, limit: int, before: int | None = None) -> list[dict]:
+    """Return links between things newest first, a page at a time, with each side's name and photo, for you to check."""
     rows = conn.execute(
         "select e.id, e.name, fe.image_path, e.crop_box, r.id, r.name, fr.image_path, r.crop_box, e.merge_reason, e.confirmed"
         "  from entity e join entity r on r.id = e.merged_into"
         "  left join frame fe on fe.id = e.crop_frame_id left join frame fr on fr.id = r.crop_frame_id"
-        " order by e.id desc limit %s",
-        (limit,),
+        " where %(before)s::bigint is null or e.id < %(before)s::bigint"
+        " order by e.id desc limit %(limit)s",
+        {"before": before, "limit": limit},
     )
 
     return [

@@ -8,9 +8,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from server import db, glasses, jobs, storage
 from server.config import DATA_DIR
-from server.api.shared import RECORDING_ID_PATTERN, STILL_SENDING_SECONDS, connection, current_settings
+from server.api.shared import RECORDING_ID_PATTERN, connection, current_settings
 
 router = APIRouter()
+
+PHOTOS_MISSED_BEFORE_QUIET = 3
 
 
 @router.post("/glasses/frames")
@@ -98,9 +100,13 @@ def glasses_firmware() -> dict:
 def glasses_status(conn: psycopg.Connection = Depends(connection)) -> dict:
     """Say whether the glasses are sending, how many photos the current recording has, and what is processing."""
     latest = db.latest_recording(conn)
+    rate = current_settings(conn).frames_per_minute
+    expected_gap = 60 / rate if rate else None
 
     return {
-        "sending": latest is not None and latest["seconds_since_last"] < STILL_SENDING_SECONDS,
+        "sending": latest is not None
+        and expected_gap is not None
+        and latest["seconds_since_last"] < PHOTOS_MISSED_BEFORE_QUIET * expected_gap,
         "photos": latest["photos"] if latest else 0,
         "seconds_since_last": latest["seconds_since_last"] if latest else None,
         "processing": db.count_processing_jobs(conn),

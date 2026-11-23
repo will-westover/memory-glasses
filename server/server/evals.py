@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from server import db, llm, storage
 
 from server.agent import ask_agent, ask_plain
-from server.config import AGENT_MODEL, DATA_DIR, JUDGE_MODEL, SERVER_DIR
+from server.config import AGENT_MODEL, DATA_DIR, JUDGE_MODEL, SERVER_DIR, PARALLEL_CALLS
 
 QUESTION_FILES = (SERVER_DIR / "evals" / "questions.json", DATA_DIR / "evals" / "questions.json")
 RUNS_DIR = DATA_DIR / "evals" / "runs"
@@ -25,7 +25,6 @@ MODES = {"agent": ask_agent, "plain": ask_plain, "no-nearby": partial(ask_agent,
 DEFAULT_MODES = ("agent", "plain")
 VERDICT_POINTS = {"correct": 1.0, "partial": 0.5, "wrong": 0.0}
 SETS = ("dev", "test", "all")
-DEFAULT_PARALLEL = 16
 NOT_RECORDED = "NOT RECORDED"
 
 JUDGE_INSTRUCTIONS = f"""\
@@ -357,7 +356,7 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, default=1, help="ask every question this many times, to see the spread")
     parser.add_argument("--set", choices=SETS, default="dev", help="dev while working; test only before a decision")
     parser.add_argument("--kind", action="append", help="ask only questions of these kinds")
-    parser.add_argument("--parallel", type=int, default=DEFAULT_PARALLEL, help="how many questions to ask at once")
+    parser.add_argument("--parallel", type=int, default=PARALLEL_CALLS, help="how many questions to ask at once")
     parser.add_argument("--against", help="a saved run to compare this run with, question by question")
     parser.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"), help="only compare two saved runs")
     args = parser.parse_args()

@@ -227,6 +227,8 @@ struct FrameRate: Encodable {
 }
 
 struct GlassesSettings: Codable, Equatable {
+    static let maxFramesPerMinute = 60.0
+
     var framesPerMinute = 30.0
     var displayScale = 1.0
     var displayX = 0.0

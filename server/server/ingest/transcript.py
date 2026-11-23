@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from server import db, llm, storage
-from server.config import DATA_DIR, TRANSCRIBE_MODEL, minutes_seconds
+from server.config import DATA_DIR, TRANSCRIBE_MODEL, minutes_seconds, PARALLEL_CALLS
 from server.ingest import speech
 
 DIARIZE_MODEL = "gpt-4o-transcribe-diarize"
@@ -22,7 +22,6 @@ FALLBACK_MODEL = "gpt-live-transcribe"
 LIVE_RATE = 24000
 UPLOAD_KBPS = 48
 UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024
-PARALLEL_CHUNKS = 8
 SAME_VOICE = 0.35
 
 
@@ -150,7 +149,7 @@ def chunked(samples: np.ndarray, model: str, keywords: list[str]) -> tuple[list[
     chunks = speech.speech_chunks(samples)
     clips = [speech.clip(samples, start, end) for start, end in chunks]
 
-    with ThreadPoolExecutor(PARALLEL_CHUNKS) as pool:
+    with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
         results = list(pool.map(lambda clip: transcribe_chunk(clip, model, keywords), clips))
 
     lines = [Line(start, end, text) for (start, end), (text, _) in zip(chunks, results) if text]

@@ -4,9 +4,10 @@ import io
 import math
 import re
 import wave
+from datetime import datetime
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from server import db, jobs, storage
@@ -29,11 +30,19 @@ from server.api.shared import (
 router = APIRouter()
 
 
+MOMENTS_PAGE = 50
+
+
 @router.get("/moments")
-def moments(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
-    """List every moment, newest first."""
+def moments(
+    before: datetime | None = None,
+    limit: int = Query(MOMENTS_PAGE, ge=1, le=500),
+    conn: psycopg.Connection = Depends(connection),
+) -> list[dict]:
+    """List moments newest first, a page at a time: those that started before `before`, if given."""
     places = db.gps_places(conn)
-    covers = db.covers(conn)
+    page = db.list_moments(conn, before, limit)
+    covers = db.covers(conn, [row[0] for row in page])
 
     return [
         {
@@ -47,7 +56,7 @@ def moments(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
             "cover": image_url(covers.get(moment_id)),
             "title": title,
         }
-        for moment_id, source, started_at, duration, frames, has_sound, lat, lon, title in db.list_moments(conn)
+        for moment_id, source, started_at, duration, frames, has_sound, lat, lon, title in page
     ]
 
 
@@ -88,22 +97,44 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
     }
 
 
-def audio_clip(path, start: float, end: float) -> bytes:
-    """Return the part of a WAV file between two times as a WAV file of its own."""
-    with wave.open(str(path)) as source:
-        rate = source.getframerate()
-        first = min(max(0, int(start * rate)), source.getnframes())
-        last = min(max(first, int(end * rate)), source.getnframes())
+WAV_HEADER_BYTES = 4096
 
-        source.setpos(first)
-        frames = source.readframes(last - first)
-        params = source.getparams()
+
+def wav_layout(header: bytes) -> tuple[int, int, int, int, int]:
+    """Read a WAV header: return channels, frame rate, bytes per sample, where the sound starts and how many bytes it has."""
+    position, channels, rate, width = 12, 1, 0, 2
+
+    while position + 8 <= len(header):
+        name, size = header[position : position + 4], int.from_bytes(header[position + 4 : position + 8], "little")
+
+        if name == b"fmt ":
+            channels = int.from_bytes(header[position + 10 : position + 12], "little")
+            rate = int.from_bytes(header[position + 12 : position + 16], "little")
+            width = int.from_bytes(header[position + 22 : position + 24], "little") // 8
+        elif name == b"data":
+            return channels, rate, width, position + 8, size
+
+        position += 8 + size + size % 2
+
+    raise ValueError("no sound in this WAV header")
+
+
+def audio_clip(read, start: float, end: float) -> bytes:
+    """Return the part of a WAV file between two times as a WAV file of its own, reading only the bytes it needs."""
+    channels, rate, width, data_start, data_size = wav_layout(read(0, WAV_HEADER_BYTES - 1))
+    block = channels * width
+    frames = data_size // block
+    first = min(max(0, int(start * rate)), frames)
+    last = min(max(first, int(end * rate)), frames)
+    sound = read(data_start + first * block, data_start + last * block - 1) if last > first else b""
 
     out = io.BytesIO()
 
     with wave.open(out, "wb") as clip:
-        clip.setparams(params)
-        clip.writeframes(frames)
+        clip.setnchannels(channels)
+        clip.setsampwidth(width)
+        clip.setframerate(rate)
+        clip.writeframes(sound)
 
     return out.getvalue()
 
@@ -116,10 +147,10 @@ def audio(moment_id: str, start: float, end: float) -> Response:
 
     file = (MOMENTS_DIR / moment_id / "audio.wav").resolve()
 
-    if not file.is_relative_to(MOMENTS_DIR) or storage.local_copy(file) is None:
+    if not file.is_relative_to(MOMENTS_DIR) or not storage.exists(file):
         raise HTTPException(404, "no sound for this moment")
 
-    return Response(audio_clip(file, start, end), media_type="audio/wav")
+    return Response(audio_clip(lambda first, last: storage.read_range(file, first, last), start, end), media_type="audio/wav")
 
 
 @router.get("/moments/{moment_id}/path")
@@ -172,7 +203,7 @@ def reprocess_estimate(
         "frames": slots,
         "new_frames": slots - kept,
         "kept_captions": kept,
-        "usd": round((slots - kept) * db.average_caption_cost(conn), 4),
+        "usd": round((slots - kept) * per_frame, 4) if (per_frame := db.average_caption_cost(conn)) is not None else None,
     }
 
 

@@ -12,7 +12,7 @@ struct GlassesView: View {
     @State private var savedRecording: Bool?
 
     private let link = GlassesLink.shared
-    private static let presets: [(name: String, rate: Double)] = [("Light", 10), ("Normal", 30), ("Detailed", 60)]
+    private static let presets: [(name: String, rate: Double)] = [("Light", 10), ("Normal", 30), ("Detailed", GlassesSettings.maxFramesPerMinute)]
 
     var body: some View {
         NavigationStack {
@@ -46,7 +46,7 @@ struct GlassesView: View {
                             }
                         }
 
-                        Slider(value: $settings.framesPerMinute, in: 0...60, step: 1) { editing in
+                        Slider(value: $settings.framesPerMinute, in: 0...GlassesSettings.maxFramesPerMinute, step: 1) { editing in
                             if !editing { Task { await save() } }
                         }
                         .accessibilityLabel("Pictures a minute")

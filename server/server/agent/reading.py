@@ -6,6 +6,8 @@ from server.config import spoken_length
 
 NOTHING_FOUND = "Nothing was recorded that matches."
 
+COVERAGE_CHARACTERS = 12_000
+
 
 def parse_time(text: str | None) -> datetime | None:
     """Read an ISO 8601 time. One without a UTC offset is taken as local time."""
@@ -105,8 +107,13 @@ def coverage_text(recordings: list[dict], start: datetime, end: datetime) -> str
 
     total = (end - start).total_seconds()
     unrecorded = spoken_length(max(total - recorded, 0))
-    lines.append(
-        f"Recorded {spoken_length(recorded)} of the {spoken_length(total)} asked about; not recorded {unrecorded}."
-    )
+    totals = f"Recorded {spoken_length(recorded)} of the {spoken_length(total)} asked about; not recorded {unrecorded}."
 
-    return "\n".join(lines)
+    if len("\n".join(lines)) > COVERAGE_CHARACTERS:
+        lines = [line for line in lines if not line.startswith("  - ")]
+        lines.append("Scenes are left out because the range is long; ask for a shorter range to see them.")
+
+    if len("\n".join(lines)) > COVERAGE_CHARACTERS:
+        lines = [line.split("): ")[0] + ")" for line in lines[:-1]] + lines[-1:]
+
+    return "\n".join(lines + [totals])

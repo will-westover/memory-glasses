@@ -30,7 +30,7 @@ def people(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
 @router.get("/people/{person_id}")
 def person(person_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Return a person with a photo from each scene they are in and the recordings they are in."""
-    found = next((person for person in db.list_people(conn) if person["id"] == person_id), None)
+    found = next(iter(db.list_people(conn, person_id)), None)
 
     if not found:
         raise HTTPException(404, "no such person")

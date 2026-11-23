@@ -23,8 +23,8 @@ def costs(conn: psycopg.Connection) -> list[dict]:
     ]
 
 
-def average_caption_cost(conn: psycopg.Connection) -> float:
-    """Return the average cost of describing one frame so far."""
-    (average,) = conn.execute("select coalesce(avg(usd), 0.006) from model_call where step = 'caption'").fetchone()
+def average_caption_cost(conn: psycopg.Connection) -> float | None:
+    """Return the average cost of describing one frame so far, or None before any frame has been described."""
+    (average,) = conn.execute("select avg(usd) from model_call where step = 'caption'").fetchone()
 
-    return float(average)
+    return float(average) if average is not None else None

@@ -114,13 +114,15 @@ FIRST_LOCATION_JOIN = (
 )
 
 
-def list_moments(conn: psycopg.Connection) -> list[tuple]:
-    """Return every moment, newest first, with where it started if known."""
+def list_moments(conn: psycopg.Connection, before=None, limit: int | None = None) -> list[tuple]:
+    """Return moments newest first, those that started before a time if one is given, with where each started."""
     return conn.execute(
-        "select s.id, s.source, s.started_at, s.duration_seconds, count(f.id), s.audio_path is not null,"
-        "       l.lat, l.lon, s.title"
-        f" from moment s left join frame f on f.moment_id = s.id{FIRST_LOCATION_JOIN}"
-        " group by s.id, l.lat, l.lon order by s.started_at desc"
+        "select s.id, s.source, s.started_at, s.duration_seconds,"
+        "       (select count(*) from frame f where f.moment_id = s.id), s.audio_path is not null, l.lat, l.lon, s.title"
+        f" from moment s{FIRST_LOCATION_JOIN}"
+        " where %(before)s::timestamptz is null or s.started_at < %(before)s::timestamptz"
+        " order by s.started_at desc limit %(limit)s",
+        {"before": before, "limit": limit},
     ).fetchall()
 
 
@@ -276,13 +278,15 @@ def transcript_lines(conn: psycopg.Connection, moment_id: str) -> list[dict]:
     ]
 
 
-def covers(conn: psycopg.Connection) -> dict[str, str]:
-    """Return the first frame's image path for each moment."""
+def covers(conn: psycopg.Connection, moment_ids: list[str] | None = None) -> dict[str, str]:
+    """Return the first frame's image path for each moment, or for the given ones."""
     rows = conn.execute(
-        "select distinct on (moment_id) moment_id, image_path from frame order by moment_id, captured_at"
+        "select m.id, (select f.image_path from frame f where f.moment_id = m.id order by f.captured_at limit 1)"
+        " from moment m where %(ids)s::text[] is null or m.id = any(%(ids)s::text[])",
+        {"ids": moment_ids},
     )
 
-    return dict(rows.fetchall())
+    return {moment_id: path for moment_id, path in rows if path}
 
 
 def counts(conn: psycopg.Connection) -> dict:

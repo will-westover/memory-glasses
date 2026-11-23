@@ -75,6 +75,18 @@ def is_not_found(error: Exception) -> bool:
     return getattr(error, "response", {}).get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound")
 
 
+def read_range(path: Path, start: int, end: int) -> bytes:
+    """Return bytes start to end (inclusive) of a kept file, from the local copy if there is one, else from R2."""
+    if path.is_file():
+        with open(path, "rb") as file:
+            file.seek(start)
+            return file.read(end - start + 1)
+
+    response = bucket().meta.client.get_object(Bucket=bucket().name, Key=bucket_key(path), Range=f"bytes={start}-{end}")
+
+    return response["Body"].read()
+
+
 def exists(path: Path) -> bool:
     """Say whether a file is kept, locally or in R2, without downloading it."""
     if path.is_file():

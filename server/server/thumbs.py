@@ -8,7 +8,7 @@ from pathlib import Path
 import cv2
 
 from server import db, storage
-from server.config import DATA_DIR
+from server.config import DATA_DIR, PARALLEL_CALLS
 
 THUMB_PIXELS = 400
 
@@ -58,7 +58,7 @@ def main() -> int:
     with db.connect() as conn:
         paths = [path for (path,) in conn.execute("select image_path from frame order by id")]
 
-    with ThreadPoolExecutor(16) as pool:
+    with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
         made = sum(pool.map(backfill, paths))
 
     print(f"{made} of {len(paths)} frames have a small copy")

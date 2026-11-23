@@ -1,6 +1,11 @@
 import wave
 
 from server.api.moments import audio_clip
+from server.storage import read_range
+
+
+def reader(path):
+    return lambda first, last: read_range(path, first, last)
 
 
 def make_wav(path, seconds, rate=1000):
@@ -21,14 +26,14 @@ def clip_seconds(data):
 def test_clip_covers_the_requested_stretch(tmp_path):
     make_wav(tmp_path / "a.wav", 10)
 
-    assert clip_seconds(audio_clip(tmp_path / "a.wav", 2, 5)) == 3
+    assert clip_seconds(audio_clip(reader(tmp_path / "a.wav"), 2, 5)) == 3
 
 
 def test_clip_stops_at_the_end_of_the_recording(tmp_path):
     make_wav(tmp_path / "a.wav", 10)
 
-    assert clip_seconds(audio_clip(tmp_path / "a.wav", 8, 30)) == 2
-    assert clip_seconds(audio_clip(tmp_path / "a.wav", 20, 30)) == 0
+    assert clip_seconds(audio_clip(reader(tmp_path / "a.wav"), 8, 30)) == 2
+    assert clip_seconds(audio_clip(reader(tmp_path / "a.wav"), 20, 30)) == 0
 
 
 def test_a_chapter_loses_the_room_and_place_the_search_index_adds():

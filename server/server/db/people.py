@@ -44,13 +44,15 @@ def remove_faceless_people(conn: psycopg.Connection) -> None:
     conn.execute("delete from person p where name is null and not exists (select 1 from face where person_id = p.id)")
 
 
-def list_people(conn: psycopg.Connection) -> list[dict]:
-    """Return every person with a face count, when they were seen, and their clearest face."""
+def list_people(conn: psycopg.Connection, person_id: int | None = None) -> list[dict]:
+    """Return every person, or just one, with a face count, when they were seen, and their clearest face."""
     rows = conn.execute(
         "select p.id, p.name, count(f.id), min(fr.captured_at), max(fr.captured_at),"
         "       (select f2.id from face f2 where f2.person_id = p.id order by f2.w * f2.h * f2.score desc limit 1)"
         "  from person p join face f on f.person_id = p.id join frame fr on fr.id = f.frame_id"
-        " group by p.id order by count(f.id) desc"
+        " where %(id)s::bigint is null or p.id = %(id)s::bigint"
+        " group by p.id order by count(f.id) desc",
+        {"id": person_id},
     )
 
     return [

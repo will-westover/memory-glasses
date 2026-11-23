@@ -11,10 +11,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from server import db, llm, storage
-from server.config import CAPTION_MODEL, DATA_DIR
+from server.config import CAPTION_MODEL, DATA_DIR, PARALLEL_CALLS
 
 IMAGE_WIDTH = 1080
-PARALLEL_CALLS = 8
 SPOKEN_WINDOW_SECONDS = 30
 
 INSTRUCTIONS = """\

@@ -27,7 +27,6 @@ RECORDING_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,40}$")
 MIN_DISPLAY_SCALE = 0.3
 
 
-STILL_SENDING_SECONDS = 20
 
 
 class ChatQuestion(BaseModel):

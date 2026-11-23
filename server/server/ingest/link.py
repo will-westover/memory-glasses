@@ -8,12 +8,11 @@ import cv2
 from pydantic import BaseModel, Field
 
 from server import db, llm, storage
-from server.config import CAPTION_MODEL, DATA_DIR, SUMMARY_MODEL
+from server.config import CAPTION_MODEL, DATA_DIR, SUMMARY_MODEL, PARALLEL_CALLS
 
 CANDIDATES = 3
 CROP_PIXELS = 384
 CROP_MARGIN = 0.15
-PARALLEL_CALLS = 8
 LINK_MODEL = CAPTION_MODEL
 
 INSTRUCTIONS = """\
