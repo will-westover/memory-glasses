@@ -46,6 +46,7 @@ struct AskView: View {
                     Section {
                         ForEach(group.conversations) { conversation in
                             NavigationLink(value: conversation.id) { ConversationRow(conversation: conversation) }
+                                .task { if conversation.id == groups.last?.conversations.last?.id { await store.loadMore() } }
                         }
                         .onDelete { offsets in
                             let ids = offsets.map { group.conversations[$0].id }

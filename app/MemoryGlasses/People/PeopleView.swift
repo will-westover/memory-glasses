@@ -42,6 +42,7 @@ struct PeopleView: View {
     @State private var people: [Person] = []
     @State private var problem: String?
     @State private var loaded = false
+    @State private var more = false
 
     var body: some View {
         Group {
@@ -72,6 +73,7 @@ struct PeopleView: View {
                         }
                         .padding(.vertical, 2)
                     }
+                    .task { if person.id == people.last?.id { await loadMore() } }
                 }
                 .listStyle(.plain)
                 .refreshable { await load() }
@@ -84,12 +86,21 @@ struct PeopleView: View {
     private func load() async {
         do {
             people = try await API.current.get("/people")
+            more = !people.isEmpty
             problem = nil
         } catch {
             problem = error.localizedDescription
         }
 
         loaded = true
+    }
+
+    private func loadMore() async {
+        guard more, let next: [Person] = try? await API.current.get("/people?offset=\(people.count)") else { return }
+
+        let fresh = next.filter { found in !people.contains { $0.id == found.id } }
+        people += fresh
+        more = !fresh.isEmpty
     }
 }
 

@@ -161,7 +161,7 @@ struct TimelineView: View {
         loadingMore = true
         defer { loadingMore = false }
 
-        guard let next = try? await page(before: oldest) else { return }
+        guard let next = try? await page(before: oldest.addingTimeInterval(1)) else { return }
 
         let fresh = next.filter { found in !moments.contains { $0.id == found.id } }
         moments += fresh

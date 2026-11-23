@@ -90,6 +90,8 @@ final class ConversationStore {
     private(set) var frameContexts: [UUID: FrameContext] = [:]
     private(set) var problem: String?
     private(set) var loaded = false
+    private var more = false
+    private var loadingMore = false
     private var query = ""
 
     func refresh() async {
@@ -107,12 +109,32 @@ final class ConversationStore {
 
         do {
             summaries = try await API.current.get(path)
+            more = !summaries.isEmpty
             problem = nil
         } catch {
             problem = error.localizedDescription
         }
 
         loaded = true
+    }
+
+    func loadMore() async {
+        guard more, !loadingMore, let oldest = summaries.last?.updatedAt else { return }
+
+        loadingMore = true
+        defer { loadingMore = false }
+
+        var path = "/conversations?before=\(ISO8601DateFormatter().string(from: oldest.addingTimeInterval(1)))"
+
+        if !query.isEmpty, let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            path += "&q=\(encoded)"
+        }
+
+        guard let next: [ConversationSummary] = try? await API.current.get(path) else { return }
+
+        let fresh = next.filter { found in !summaries.contains { $0.id == found.id } }
+        summaries += fresh
+        more = !fresh.isEmpty
     }
 
     func load(_ id: UUID) async {

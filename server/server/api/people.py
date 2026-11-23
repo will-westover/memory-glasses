@@ -3,7 +3,7 @@
 import psycopg
 from pydantic import BaseModel
 import cv2
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from server import db, names, voices
@@ -23,10 +23,17 @@ def person_json(person: dict) -> dict:
     return {**person, "face": f"/faces/{person['face_id']}" if person["face_id"] else None}
 
 
+PEOPLE_PAGE = 100
+
+
 @router.get("/people")
-def people(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
-    """List everyone whose face was found, most seen first."""
-    return [person_json(person) for person in db.list_people(conn)]
+def people(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(PEOPLE_PAGE, ge=1, le=500),
+    conn: psycopg.Connection = Depends(connection),
+) -> list[dict]:
+    """List everyone whose face was found, most seen first, a page at a time."""
+    return [person_json(person) for person in db.list_people(conn, limit=limit, offset=offset)]
 
 
 @router.get("/people/{person_id}")

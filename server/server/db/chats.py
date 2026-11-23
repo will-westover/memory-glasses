@@ -8,8 +8,11 @@ from psycopg.types.json import Jsonb
 from server.agent.citations import renumber
 
 
-def conversations(conn: psycopg.Connection, query: str | None = None) -> list[dict]:
-    """Return conversations newest first, with a title and the latest answer; only those matching `query` if given."""
+def conversations(
+    conn: psycopg.Connection, query: str | None = None, before=None, limit: int | None = None
+) -> list[dict]:
+    """Return conversations newest first, a page at a time, with a title and the latest answer; only those matching
+    `query` if given, and only those updated before `before` if given."""
     rows = conn.execute(
         "select c.id, c.updated_at,"
         "       coalesce(c.title, (select content->>'text' from message"
@@ -21,8 +24,9 @@ def conversations(conn: psycopg.Connection, query: str | None = None) -> list[di
         " where exists (select 1 from message where conversation_id = c.id and role = 'user')"
         "   and (%(query)s::text is null or c.title ilike %(like)s or exists (select 1 from message"
         "         where conversation_id = c.id and role in ('user', 'assistant') and content::text ilike %(like)s))"
-        " order by c.updated_at desc",
-        {"query": query, "like": f"%{query}%" if query else None},
+        "   and (%(before)s::timestamptz is null or c.updated_at < %(before)s::timestamptz)"
+        " order by c.updated_at desc limit %(limit)s",
+        {"query": query, "like": f"%{query}%" if query else None, "before": before, "limit": limit},
     )
 
     return [

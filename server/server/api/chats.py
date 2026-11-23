@@ -64,10 +64,18 @@ def turns_json(conn: psycopg.Connection, turns: list[dict]) -> list[dict]:
     return [turn_json(turn, details) for turn in turns]
 
 
+CONVERSATIONS_PAGE = 50
+
+
 @router.get("/conversations")
-def conversations(q: str | None = None, conn: psycopg.Connection = Depends(connection)) -> list[dict]:
-    """List conversations, newest first; only those whose title or messages mention `q` if given."""
-    return db.conversations(conn, q.strip() if q and q.strip() else None)
+def conversations(
+    q: str | None = None,
+    before: datetime | None = None,
+    limit: int = Query(CONVERSATIONS_PAGE, ge=1, le=500),
+    conn: psycopg.Connection = Depends(connection),
+) -> list[dict]:
+    """List conversations newest first, a page at a time; only those whose title or messages mention `q` if given."""
+    return db.conversations(conn, q.strip() if q and q.strip() else None, before, limit)
 
 
 @router.post("/conversations")
