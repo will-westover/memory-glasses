@@ -125,6 +125,30 @@ func clock(_ seconds: Double) -> String {
     String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
 }
 
+func seenCount(_ count: Int) -> String {
+    switch count {
+    case 1: "Seen once"
+    case 2: "Seen twice"
+    default: "Seen \(count) times"
+    }
+}
+
+func whenLast(_ date: Date) -> String {
+    date > Date.now.addingTimeInterval(-6 * 86_400)
+        ? date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        : date.formatted(.dateTime.month(.abbreviated).day())
+}
+
+func spokenLength(_ seconds: Double) -> String {
+    let whole = Int(seconds.rounded())
+
+    if whole < 60 { return "\(whole) s" }
+
+    let minutes = (whole + 30) / 60
+
+    return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
+}
+
 func dollars(_ amount: Double) -> String {
     if amount == 0 {
         return "$0"

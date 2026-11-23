@@ -52,7 +52,7 @@ struct PlacesView: View {
 }
 
 func momentCount(_ count: Int) -> String {
-    count == 1 ? "1 moment" : "\(count) moments"
+    count == 1 ? "1 recording" : "\(count) recordings"
 }
 
 struct PlaceDetail: View {
@@ -136,7 +136,7 @@ struct RoomDetail: View {
             } header: {
                 Text("Name")
             } footer: {
-                Text(status ?? "\(room.frames) frames taken here. Answers use this name.")
+                Text(status ?? "\(room.frames == 1 ? "1 photo" : "\(room.frames) photos") taken here. Answers use this name.")
             }
         }
         .navigationTitle(room.name)

@@ -34,7 +34,7 @@ struct WorldView: View {
     private func content(_ world: World) -> some View {
         if world.moments.isEmpty {
             ContentUnavailableView("Nowhere yet", systemImage: "map",
-                                   description: Text("Moments recorded with a location appear here."))
+                                   description: Text("Recordings with a location appear here."))
         } else {
             List {
                 Section {
@@ -45,17 +45,25 @@ struct WorldView: View {
                         .listRowSeparator(.hidden)
                 }
 
-                if !world.places.isEmpty {
+                let places = world.places.filter { $0.moments > 0 }
+
+                if !places.isEmpty {
                     Section {
-                        ForEach(world.places) { place in
+                        ForEach(places) { place in
                             if place.hasMap {
-                                NavigationLink(value: place) { placeRow(place, icon: "cube.transparent") }
+                                NavigationLink(value: place) { placeRow(place) }
                             } else {
-                                placeRow(place, icon: "house")
+                                placeRow(place)
                             }
                         }
                     } header: {
                         SectionTitle("Places").textCase(nil)
+                    }
+                }
+
+                Section {
+                    NavigationLink { PeopleView() } label: {
+                        Label("People", systemImage: "person.2")
                     }
                 }
 
@@ -67,7 +75,7 @@ struct WorldView: View {
                         }
                     }
                 } header: {
-                    SectionTitle("Other moments with a location").textCase(nil)
+                    SectionTitle("Other recordings").textCase(nil)
                 }
             }
             .listStyle(.plain)
@@ -75,17 +83,15 @@ struct WorldView: View {
         }
     }
 
-    private func placeRow(_ place: WorldPlace, icon: String) -> some View {
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(place.label).font(.body.weight(.medium))
-                Text(place.rooms.isEmpty ? momentCount(place.moments) : place.rooms.joined(separator: ", "))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-        } icon: {
-            Image(systemName: icon)
+    private func placeRow(_ place: WorldPlace) -> some View {
+        let rooms = place.rooms.filter { $0.lowercased() != place.label.lowercased() }
+
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(place.label).font(.body.weight(.medium))
+            Text(rooms.isEmpty ? momentCount(place.moments) : rooms.joined(separator: ", "))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
     }
 
@@ -94,7 +100,7 @@ struct WorldView: View {
             ForEach(world.places) { place in
                 Annotation(place.label, coordinate: CLLocationCoordinate2D(latitude: place.lat, longitude: place.lon)) {
                     Button { if place.hasMap { selectedPlace = place } } label: {
-                        Image(systemName: "house.fill")
+                        Image(systemName: "mappin")
                             .font(.caption)
                             .foregroundStyle(Color(.systemBackground))
                             .frame(width: 30, height: 30)

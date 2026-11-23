@@ -134,7 +134,7 @@ struct PlaceholderRows: View {
                     Text("A moment from earlier today")
                         .font(.body.weight(.medium))
 
-                    Text("Home · 2:31 · 40 frames")
+                    Text("Home · 2 min")
                         .font(.subheadline)
                 }
             }

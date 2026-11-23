@@ -95,13 +95,13 @@ struct MomentView: View {
 
                         ForEach(chapters) { chapter in
                             chapterRow(chapter, open: chapterContaining(offset, in: chapters)?.id == chapter.id || focused?.id == chapter.id,
-                                       lines: detail.transcript.filter { chapterContaining($0.start, in: chapters)?.id == chapter.id },
+                                       lines: detail.transcript.sentences.filter { chapterContaining($0.start, in: chapters)?.id == chapter.id },
                                        detail: detail)
                         }
                     }
                 }
 
-                let outside = detail.transcript.filter { chapterContaining($0.start, in: chapters) == nil }
+                let outside = detail.transcript.sentences.filter { chapterContaining($0.start, in: chapters) == nil }
 
                 if !outside.isEmpty {
                     transcript(outside, title: chapters.isEmpty ? "Transcript" : "Also said", hasVideo: detail.hasVideo)
@@ -127,10 +127,10 @@ struct MomentView: View {
                     .lineLimit(4)
             }
 
-            Text([link.startedAt.formatted(date: .abbreviated, time: .shortened), clock(length(detail, chapters))]
+            Text([link.startedAt.formatted(date: .abbreviated, time: .shortened), spokenLength(length(detail, chapters))]
                 .joined(separator: " · "))
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -142,7 +142,7 @@ struct MomentView: View {
 
                 Text(clock(frame.offsetSeconds))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 
@@ -244,9 +244,9 @@ struct MomentView: View {
 
             Text(clock(line.start))
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
 
-            Text(KeywordMatch.emphasize("\(line.speaker.map { "\($0): " } ?? "")\(line.text)", spoken ? router.focusWords : []))
+            Text(KeywordMatch.emphasize(line.text, spoken ? router.focusWords : []))
                 .font(.subheadline)
         }
         .padding(spoken ? 8 : 0)

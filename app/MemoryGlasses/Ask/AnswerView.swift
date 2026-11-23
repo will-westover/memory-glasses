@@ -150,10 +150,6 @@ struct AnswerView: View {
                 }
                 .scrollClipDisabled()
             }
-
-            Text("\(answer.sources.count) sources · \(String(format: "%.1f", answer.seconds)) s · \(dollars(answer.usd))")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
         }
         .environment(\.openSource, openSource)
     }

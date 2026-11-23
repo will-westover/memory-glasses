@@ -86,7 +86,7 @@ struct RecordView: View {
         case .ready, .recording:
             VStack(spacing: 18) {
                 if recorder.stage == .ready {
-                    pill("\(Int(framesPerMinute)) frames a minute, from Glasses settings", systemImage: "photo.stack")
+                    pill("\(Int(framesPerMinute)) photos a minute", systemImage: "photo.stack")
                 }
 
                 recordButton

@@ -2,6 +2,7 @@
 
 import io
 import math
+import re
 import wave
 
 import psycopg
@@ -49,6 +50,11 @@ def moments(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     ]
 
 
+def without_place(text: str) -> str:
+    """Return a summary without the room and place the search index adds to its end."""
+    return re.sub(r"(\s+(Room:|At) [^.]+\.)+$", "", text)
+
+
 @router.get("/moments/{moment_id}")
 def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Return one moment's frames, transcript and summaries for the timeline."""
@@ -69,7 +75,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
                 "start": fact["offset_seconds"],
                 "end": fact["end_offset_seconds"],
                 "title": titles.get(fact["id"]),
-                "text": fact["text"],
+                "text": without_place(fact["text"]),
             }
             for fact in summaries
         ],

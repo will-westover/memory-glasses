@@ -172,7 +172,7 @@ struct MomentRow: View {
 
     private var details: String {
         let time = moment.title == nil ? nil : moment.startedAt.formatted(date: .omitted, time: .shortened)
-        let parts = [time, moment.place, clock(moment.durationSeconds), "\(moment.frames) frames"]
+        let parts = [time, moment.place, spokenLength(moment.durationSeconds)]
 
         return parts.compactMap { $0 }.joined(separator: " · ")
     }

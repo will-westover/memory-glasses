@@ -10,8 +10,6 @@ struct GlassesView: View {
     @State private var serverReachable = false
     @State private var settingsLoaded = false
     @State private var savedRecording: Bool?
-    @State private var people: [Person] = []
-    @State private var places: [Place] = []
 
     private let link = GlassesLink.shared
     private static let presets: [(name: String, rate: Double)] = [("Light", 10), ("Normal", 30), ("Detailed", 60)]
@@ -28,28 +26,23 @@ struct GlassesView: View {
 
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 6) {
-                            Text(rateLabel)
-                                .font(.headline)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 6) {
+                                Text(rateLabel)
+                                    .font(.headline)
+                                    .lineLimit(1)
 
-                            Spacer(minLength: 4)
+                                Spacer(minLength: 4)
 
-                            ForEach(Self.presets, id: \.name) { preset in
-                                Button {
-                                    settings.framesPerMinute = preset.rate
-                                    Task { await save() }
-                                } label: {
-                                    Text(preset.name)
-                                        .font(.caption.weight(.medium))
-                                        .padding(.horizontal, 9)
-                                        .padding(.vertical, 4)
-                                        .background(settings.framesPerMinute == preset.rate ? Color.primary.opacity(0.14) : Color.primary.opacity(0.06),
-                                                    in: Capsule())
-                                        .foregroundStyle(settings.framesPerMinute == preset.rate ? Color.primary : Color.secondary)
-                                }
-                                .buttonStyle(.plain)
+                                presetButtons
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(rateLabel)
+                                    .font(.headline)
+                                    .fixedSize(horizontal: false, vertical: true)
+
+                                HStack(spacing: 6) { presetButtons }
                             }
                         }
 
@@ -61,7 +54,7 @@ struct GlassesView: View {
                     .redacted(reason: settingsLoaded ? [] : .placeholder)
                     .disabled(!serverReachable || !settingsLoaded)
                 } header: {
-                    InfoHeader(title: "Camera", text: "How often the glasses take a picture. More pictures remember more and cost more to describe. Pictures that look the same as the last one are skipped.")
+                    InfoHeader(title: "Camera", text: "How often the glasses take a photo. More photos remember more and cost more. Photos that look like the last one are skipped.")
                 }
 
                 Section {
@@ -92,22 +85,6 @@ struct GlassesView: View {
 
                 Section {
                     NavigationLink {
-                        PeopleView()
-                    } label: {
-                        LabeledContent { Text(peopleCount) } label: { Label("People", systemImage: "person.2") }
-                    }
-
-                    NavigationLink {
-                        PlacesView()
-                    } label: {
-                        LabeledContent { Text(placesCount) } label: { Label("Places and rooms", systemImage: "house") }
-                    }
-                } header: {
-                    InfoHeader(title: "People and places", text: "Name the people, places and rooms the glasses have seen, so answers can say who was there and where.")
-                }
-
-                Section {
-                    NavigationLink {
                         ServerSetup(address: $address, token: $token, message: serverMessage, reachable: serverReachable) { await load() }
                     } label: {
                         LabeledContent {
@@ -129,6 +106,26 @@ struct GlassesView: View {
         }
     }
 
+    private var presetButtons: some View {
+        ForEach(Self.presets, id: \.name) { preset in
+            Button {
+                settings.framesPerMinute = preset.rate
+                Task { await save() }
+            } label: {
+                Text(preset.name)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(settings.framesPerMinute == preset.rate ? Color.primary.opacity(0.14) : Color.primary.opacity(0.06),
+                                in: Capsule())
+                    .foregroundStyle(settings.framesPerMinute == preset.rate ? Color.primary : Color.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     private var activity: GlassesActivity {
         if let progress = link.updateProgress, progress < 1 { return .updating }
         if link.state != .connected && glassesStatus?.sending != true { return .disconnected }
@@ -142,14 +139,14 @@ struct GlassesView: View {
         case .updating:
             return "Keep the glasses close to the phone."
         case .recording:
-            return "\(Int(settings.framesPerMinute)) pictures a minute"
+            return "\(Int(settings.framesPerMinute)) photos a minute"
         case .waiting:
             return "Connected. Waiting for the first photo."
         case .paused:
             return "Turn recording on to start a new moment."
         case .disconnected:
             if let processing = glassesStatus?.processing, processing > 0 {
-                return processing == 1 ? "Processing a moment" : "Processing \(processing) moments"
+                return processing == 1 ? "Processing a recording" : "Processing \(processing) recordings"
             }
 
             return link.state.label
@@ -165,21 +162,11 @@ struct GlassesView: View {
 
         let text = link.glassesDisplayText.isEmpty ? (settings.recording ? "Rec \(photos)" : "Paused") : link.glassesDisplayText
 
-        return ["BT", text]
+        return [text]
     }
 
     private var rateLabel: String {
-        settings.framesPerMinute == 0 ? "No pictures" : "\(Int(settings.framesPerMinute)) pictures a minute"
-    }
-
-    private var peopleCount: String {
-        let named = people.filter { $0.name != nil }.count
-
-        return people.isEmpty ? "" : "\(named) of \(people.count) named"
-    }
-
-    private var placesCount: String {
-        places.isEmpty ? "" : "\(places.count)"
+        settings.framesPerMinute == 0 ? "No photos" : "\(Int(settings.framesPerMinute)) photos a minute"
     }
 
     private func watchGlasses() async {
@@ -201,9 +188,6 @@ struct GlassesView: View {
             serverMessage = error.localizedDescription
             return
         }
-
-        people = (try? await API.current.get("/people")) ?? []
-        places = (try? await API.current.get("/places")) ?? []
     }
 
     private func save() async {
@@ -257,7 +241,7 @@ struct DisplaySetup: View {
     var body: some View {
         Form {
             Section {
-                GlassesDisplayPreview(settings: settings, lines: settings.displayPattern ? ["Aa 0123"] : ["BT", "Rec 12"])
+                GlassesDisplayPreview(settings: settings, lines: settings.displayPattern ? ["Aa 0123"] : ["Rec 12"])
                     .frame(maxWidth: 220)
                     .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)

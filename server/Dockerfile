@@ -13,7 +13,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 MEMORY_DATA_DIR=/tmp/data PATH=/app/.venv/bin:$PATH

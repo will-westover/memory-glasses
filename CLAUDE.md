@@ -63,6 +63,8 @@ Everything else is your call.
 - There is no local server mode. The server runs on Cloud Run (project `memory-glasses-2611`, `us-west1`), the
   database is Neon and files are in Cloudflare R2; `data/` is a working copy that fills itself as files are needed.
   The Mac runs the command-line steps against the same database and bucket, so they act on real data.
+- The server runs in the owner's time zone (`TIME_ZONE` in `server/deploy/deploy.sh`, Mountain by default), so answers
+  give local times.
 - It is meant to cost $0 apart from OpenAI. Model prices are in `server/prices.json`; a model with no price there
   is refused before any call.
 - New tables go in a new numbered file in `server/migrations/`; they are applied on the next connection.

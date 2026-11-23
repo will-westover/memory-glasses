@@ -26,13 +26,13 @@ struct AddFramesControl: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionTitle("Frames per minute")
+            SectionTitle("Photos")
 
             Text("\(Int(currentRate)) a minute")
                 .font(.subheadline.weight(.medium))
 
             if !canAdd {
-                Text("This moment already has the most frames.")
+                Text("This recording already has the most photos.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else if let progressMessage {
@@ -40,7 +40,7 @@ struct AddFramesControl: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Add more frames to look closer. Frames already described are kept, so a moment can only go up.")
+                Text("Add more photos to look closer.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -56,7 +56,7 @@ struct AddFramesControl: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Button("Add frames: \(Int(rate)) a minute") { Task { await reprocess() } }
+                Button("Add photos: \(Int(rate)) a minute") { Task { await reprocess() } }
                     .buttonStyle(FilledButton())
             }
 
@@ -70,7 +70,7 @@ struct AddFramesControl: View {
     }
 
     private func summary(_ estimate: ReprocessEstimate) -> String {
-        "\(estimate.newFrames) new frames, about \(dollars(estimate.usd)). \(estimate.keptCaptions) kept."
+        "\(estimate.newFrames) new photos, about \(dollars(estimate.usd))."
     }
 
     private func loadEstimate() async {
@@ -113,7 +113,7 @@ struct AddFramesControl: View {
                 return
             case "failed":
                 progressMessage = nil
-                problem = upload.error ?? "Adding frames failed."
+                problem = upload.error ?? "Adding photos failed."
                 return
             default:
                 progressMessage = (upload.step ?? "Waiting") + "…"

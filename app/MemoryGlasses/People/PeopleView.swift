@@ -65,7 +65,7 @@ struct PeopleView: View {
                                     .font(.body.weight(.medium))
                                     .foregroundStyle(person.name == nil ? .secondary : .primary)
 
-                                Text("Seen \(person.faces) times · last \(person.lastSeen.formatted(.dateTime.weekday(.abbreviated).hour().minute()))")
+                                Text("\(seenCount(person.faces)) · last \(whenLast(person.lastSeen))")
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
@@ -125,7 +125,7 @@ struct PersonView: View {
             } header: {
                 Text("Name")
             } footer: {
-                Text(status ?? "Seen \(person.faces) times, from \(person.firstSeen.formatted(date: .abbreviated, time: .shortened)) to \(person.lastSeen.formatted(date: .abbreviated, time: .shortened)).")
+                Text(status ?? "\(seenCount(person.faces)), from \(person.firstSeen.formatted(date: .abbreviated, time: .shortened)) to \(person.lastSeen.formatted(date: .abbreviated, time: .shortened)).")
             }
 
             if !others.isEmpty {

@@ -5,6 +5,7 @@ PROJECT=${PROJECT:-memory-glasses-2611}
 REGION=${REGION:-us-west1}
 R2_ACCOUNT_ID=${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID}
 R2_BUCKET=${R2_BUCKET:-memory-glasses}
+TIME_ZONE=${TIME_ZONE:-America/Denver}
 SERVER_SERVICE=memory-server
 WORKER_JOB_NAME=memory-worker
 REPO=memory
@@ -13,7 +14,7 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/server:latest"
 SECRETS=(OPENAI_API_KEY API_TOKEN DATABASE_URL R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY)
 SECRET_FLAGS=$(for NAME in "${SECRETS[@]}"; do printf '%s=%s:latest,' "$NAME" "$NAME"; done)
 SECRET_FLAGS=${SECRET_FLAGS%,}
-ENV_VARS="R2_ACCOUNT_ID=${R2_ACCOUNT_ID},R2_BUCKET=${R2_BUCKET}"
+ENV_VARS="R2_ACCOUNT_ID=${R2_ACCOUNT_ID},R2_BUCKET=${R2_BUCKET},TZ=${TIME_ZONE}"
 
 cd "$(dirname "$0")/.."
 

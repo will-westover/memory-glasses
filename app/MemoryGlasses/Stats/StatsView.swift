@@ -5,14 +5,22 @@ struct StatsView: View {
     @State private var problem: String?
 
     private let stepNames = [
-        "caption": "Describing frames",
+        "caption": "Describing photos",
         "transcript": "Transcribing speech",
-        "summary": "Summaries",
-        "embed": "Embedding facts",
-        "embed-question": "Embedding questions",
+        "summary": "Describing scenes",
+        "link": "Matching things",
+        "activities": "Grouping activities",
+        "day": "Summing up days",
+        "overview": "Titling recordings",
+        "rooms": "Naming rooms",
+        "place": "Finding places",
+        "when": "Working out the time",
+        "embed": "Indexing",
+        "embed-question": "Reading questions",
         "agent": "Answering",
         "rag": "Plain search",
         "judge": "Grading tests",
+        "suggest": "Suggesting questions",
     ]
 
     var body: some View {
@@ -59,7 +67,7 @@ struct StatsView: View {
     private func stored(_ counts: Counts) -> some View {
         HStack(spacing: 12) {
             CountTile(value: counts.moments, label: "Recordings")
-            CountTile(value: counts.frames, label: "Frames")
+            CountTile(value: counts.frames, label: "Photos")
             CountTile(value: counts.facts, label: "Facts")
         }
     }

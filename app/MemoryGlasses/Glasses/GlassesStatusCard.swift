@@ -47,9 +47,15 @@ struct GlassesStatusCard: View {
 
     private let link = GlassesLink.shared
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
+        let stacked = typeSize.isAccessibilitySize
+        let header = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
+        let figures = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .top))
+
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
+            header {
                 Image(systemName: activity.symbol)
                     .font(.system(size: 18))
                     .foregroundStyle(activity.tint)
@@ -59,6 +65,7 @@ struct GlassesStatusCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(activity.title)
                         .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     Text(detail)
                         .font(.footnote)
@@ -68,12 +75,18 @@ struct GlassesStatusCard: View {
 
                 Spacer(minLength: 8)
 
-                Toggle("Recording", isOn: $recording)
-                    .labelsHidden()
-                    .disabled(!canRecord)
+                VStack(spacing: 4) {
+                    Toggle("Record", isOn: $recording)
+                        .labelsHidden()
+                        .disabled(!canRecord)
+
+                    Text("Record")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            HStack(alignment: .top) {
+            figures {
                 figure("Photos", "\(photos)")
                 figure("Last upload", lastUpload?.formatted(date: .omitted, time: .shortened) ?? "–")
                 figure("Firmware", link.glassesVersion.map(Self.shortVersion) ?? "–")

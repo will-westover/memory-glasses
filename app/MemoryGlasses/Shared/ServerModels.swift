@@ -54,6 +54,30 @@ struct SpokenLine: Decodable, Hashable {
     let text: String
 }
 
+extension Array where Element == SpokenLine {
+    var sentences: [SpokenLine] {
+        var joined: [SpokenLine] = []
+
+        for line in self {
+            if let last = joined.last, !last.text.endsWithSentence, line.start - last.end < 1.5 {
+                joined[joined.count - 1] = SpokenLine(start: last.start, end: line.end, speaker: nil, text: "\(last.text) \(line.text)")
+            } else {
+                joined.append(SpokenLine(start: line.start, end: line.end, speaker: nil, text: line.text))
+            }
+        }
+
+        return joined
+    }
+}
+
+private extension String {
+    var endsWithSentence: Bool {
+        guard let last = trimmingCharacters(in: .whitespaces).last else { return false }
+
+        return ".?!".contains(last)
+    }
+}
+
 struct Fact: Codable, Identifiable, Hashable {
     let id: Int
     let kind: String

@@ -29,3 +29,10 @@ def test_clip_stops_at_the_end_of_the_recording(tmp_path):
 
     assert clip_seconds(audio_clip(tmp_path / "a.wav", 8, 30)) == 2
     assert clip_seconds(audio_clip(tmp_path / "a.wav", 20, 30)) == 0
+
+
+def test_a_chapter_loses_the_room_and_place_the_search_index_adds():
+    from memory.api.moments import without_place
+
+    assert without_place("They ate edamame. Room: Dining Area. At Orem.") == "They ate edamame."
+    assert without_place("At noon they left.") == "At noon they left."
