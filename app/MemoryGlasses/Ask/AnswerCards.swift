@@ -52,48 +52,36 @@ struct CitedText: View {
 
 struct FeaturedSourceCard: View {
     let fact: Fact
-    let reason: String?
+    var number: Int? = nil
 
     @Environment(\.openSource) private var openSource
 
     var body: some View {
         Button { openSource(fact) } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                ZStack(alignment: .bottomLeading) {
-                    if fact.image != nil {
-                        FrameImage(path: fact.image)
-                    } else {
-                        Rectangle()
-                            .fill(Color(.secondarySystemBackground))
-                            .overlay(alignment: .topLeading) {
-                                Text(fact.isSpeech ? "“\(fact.text)”" : fact.text)
-                                    .font(.body)
-                                    .lineLimit(6)
-                                    .multilineTextAlignment(.leading)
-                                    .padding(16)
-                            }
-                    }
-
-                    Text(fact.at.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .padding(10)
+            ZStack(alignment: .bottomLeading) {
+                if fact.image != nil {
+                    FrameImage(path: fact.image)
+                } else {
+                    Rectangle()
+                        .fill(Color(.secondarySystemBackground))
+                        .overlay(alignment: .topLeading) {
+                            Text(fact.isSpeech ? "“\(fact.text)”" : fact.text)
+                                .font(.body)
+                                .lineLimit(6)
+                                .multilineTextAlignment(.leading)
+                                .padding(16)
+                        }
                 }
-                .frame(maxWidth: .infinity)
-                .aspectRatio(4 / 3, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
-                if let reason, !reason.isEmpty {
-                    Text(reason)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
+                SourceStamp(fact: fact, number: number)
+                    .padding(10)
             }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(4 / 3, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(fact.text)
     }
 }
 
@@ -122,10 +110,6 @@ struct LayoutCard: View {
 
             if !places.isEmpty {
                 PlaceCard(places: places)
-            }
-        case "timeline":
-            if sources.count > 1 {
-                TimelineStrip(sources: sources.sorted { $0.at < $1.at })
             }
         default:
             EmptyView()
@@ -244,53 +228,6 @@ struct PlaceCard: View {
         }
         .frame(height: 160)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-struct TimelineStrip: View {
-    let sources: [Fact]
-
-    @Environment(\.openSource) private var openSource
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 0) {
-                ForEach(Array(sources.enumerated()), id: \.element.id) { position, fact in
-                    Button { openSource(fact) } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(Color.primary)
-                                    .frame(width: 7, height: 7)
-
-                                Rectangle()
-                                    .fill(Color(.separator))
-                                    .frame(height: 1)
-                                    .opacity(position == sources.count - 1 ? 0 : 1)
-                            }
-
-                            Text(fact.at.formatted(.dateTime.hour().minute()))
-                                .font(.caption.weight(.semibold).monospacedDigit())
-
-                            if fact.image != nil {
-                                FrameImage(path: fact.image)
-                                    .frame(width: 110, height: 80)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            }
-
-                            Text(fact.text)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(3)
-                                .multilineTextAlignment(.leading)
-                        }
-                        .frame(width: 130, alignment: .leading)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .scrollClipDisabled()
     }
 }
 

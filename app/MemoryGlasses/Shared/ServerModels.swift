@@ -174,7 +174,7 @@ struct Answer: Codable {
     var nextSteps: [NextStep]? = nil
 
     var featuredSource: Fact? {
-        guard let highlight, sources.indices.contains(highlight) else { return nil }
+        guard let highlight, sources.indices.contains(highlight) else { return sources.first { $0.image != nil } }
 
         return sources[highlight]
     }

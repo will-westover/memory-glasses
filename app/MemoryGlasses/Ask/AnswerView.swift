@@ -102,7 +102,7 @@ struct AnswerView: View {
             }
 
             if let featured = answer.featuredSource {
-                FeaturedSourceCard(fact: featured, reason: answer.highlightReason)
+                FeaturedSourceCard(fact: featured, number: number(of: featured))
             }
 
             CitedText(text: answer.answer, sources: answer.sources, open: openSource)
@@ -111,7 +111,7 @@ struct AnswerView: View {
 
             if !remainingSources.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         ForEach(remainingSources) { SourceChip(fact: $0, number: number(of: $0)) }
                     }
                 }
@@ -155,7 +155,7 @@ struct AnswerView: View {
     }
 
     private var remainingSources: [Fact] {
-        answer.sources.enumerated().filter { $0.offset != answer.highlight }.map(\.element)
+        answer.sources.filter { $0 != answer.featuredSource }.sorted { $0.at < $1.at }
     }
 
     private func number(of fact: Fact) -> Int? {
@@ -171,49 +171,48 @@ struct SourceChip: View {
 
     var body: some View {
         Button { openSource(fact) } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                ZStack(alignment: .bottomLeading) {
-                    if fact.image != nil {
-                        FrameImage(path: fact.image)
-                    } else {
-                        Rectangle()
-                            .fill(Color(.secondarySystemBackground))
-                            .overlay(alignment: .topLeading) {
-                                Text(fact.isSpeech ? "“\(fact.text)”" : fact.text)
-                                    .font(.footnote)
-                                    .lineLimit(4)
-                                    .multilineTextAlignment(.leading)
-                                    .padding(12)
-                            }
-                    }
-
-                    HStack(spacing: 6) {
-                        if let number {
-                            Text("\(number)")
-                                .font(.caption2.weight(.bold).monospacedDigit())
-                        }
-
-                        Text(fact.at.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
-                            .font(.caption2.weight(.semibold))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(8)
-                }
-                .frame(width: 200, height: 120)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
+            ZStack(alignment: .bottomLeading) {
                 if fact.image != nil {
-                    Text(fact.text)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(width: 200, alignment: .leading)
+                    FrameImage(path: fact.image)
+                } else {
+                    Rectangle()
+                        .fill(Color(.secondarySystemBackground))
+                        .overlay(alignment: .topLeading) {
+                            Text(fact.isSpeech ? "“\(fact.text)”" : fact.text)
+                                .font(.caption)
+                                .lineLimit(4)
+                                .multilineTextAlignment(.leading)
+                                .padding(10)
+                        }
                 }
+
+                SourceStamp(fact: fact, number: number)
+                    .padding(6)
             }
+            .frame(width: 128, height: 96)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(fact.text)
+    }
+}
+
+struct SourceStamp: View {
+    let fact: Fact
+    var number: Int? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let number {
+                Text("\(number)")
+                    .font(.caption2.weight(.bold).monospacedDigit())
+            }
+
+            Text(fact.at.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
+                .font(.caption2.weight(.semibold))
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(.ultraThinMaterial, in: Capsule())
     }
 }
