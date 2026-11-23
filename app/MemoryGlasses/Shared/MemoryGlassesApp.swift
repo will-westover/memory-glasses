@@ -3,8 +3,11 @@ import SwiftUI
 @main
 struct MemoryGlassesApp: App {
     init() {
+        URLCache.shared = URLCache(memoryCapacity: 32 << 20, diskCapacity: 512 << 20)
         GlassesLink.shared.start()
     }
+
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var store = ConversationStore()
     @State private var router = Router()
@@ -37,6 +40,9 @@ struct MemoryGlassesApp: App {
             .environment(store)
             .environment(router)
             .onOpenURL { pairing = Pairing(url: $0) }
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                if phase == .active { Task { try? await API.current.wake() } }
+            }
             .alert("Connect to this server?", isPresented: Binding(get: { pairing != nil }, set: { if !$0 { pairing = nil } }),
                    presenting: pairing) { found in
                 Button("Connect") { found.save() }

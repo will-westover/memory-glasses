@@ -28,7 +28,7 @@ POOL_LOCK = threading.Lock()
 POOL_SIZE = 10
 
 
-POOL_IDLE_SECONDS = 120
+POOL_IDLE_SECONDS = 600
 
 
 def pool() -> ConnectionPool:

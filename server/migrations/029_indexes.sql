@@ -1,0 +1,14 @@
+create index if not exists frame_object_frame on frame_object (frame_id);
+create index if not exists frame_text_frame on frame_text (frame_id);
+create index if not exists fact_by_frame on fact (frame_id) where frame_id is not null;
+create index if not exists fact_entity on fact (entity_id) where entity_id is not null;
+create index if not exists fact_episode on fact (episode_id) where episode_id is not null;
+create index if not exists fact_at on fact (at);
+create index if not exists frame_room on frame (room_id) where room_id is not null;
+create index if not exists sighting_episode on sighting (episode_id);
+create index if not exists episode_level_start on episode (level, start_at);
+create index if not exists episode_parent on episode (parent_id) where parent_id is not null;
+create index if not exists entity_crop_frame on entity (crop_frame_id);
+create index if not exists entity_embedding on entity using hnsw (embedding vector_cosine_ops);
+create index if not exists model_call_message on model_call (message_id) where message_id is not null;
+create index if not exists model_call_frame on model_call (frame_id) where frame_id is not null;

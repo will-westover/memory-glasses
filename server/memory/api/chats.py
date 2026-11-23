@@ -126,7 +126,7 @@ def save_turn(conn: psycopg.Connection, conversation_id: UUID, messages: list[di
 
 def give_title(conversation_id: UUID, question: str, answer: str | None) -> None:
     """Name a conversation from its first question and answer, if it has no title yet."""
-    with db.connect() as conn:
+    with db.pool().connection() as conn:
         if db.conversation_title(conn, conversation_id) is None:
             db.set_title(conn, conversation_id, chat.make_title(conn, question, answer or "(no answer)"))
 
@@ -158,7 +158,7 @@ def sse_event(name: str, data: dict) -> str:
 
 def answer_stream(conversation_id: UUID, body: ChatQuestion, history: list, frame: dict | None, question_message: dict):
     """Yield each step and piece of the answer as server-sent events, then store the turn and send it."""
-    with db.connect() as conn:
+    with db.pool().connection() as conn:
         replies = None
 
         try:

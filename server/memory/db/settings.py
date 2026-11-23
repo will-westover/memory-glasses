@@ -16,3 +16,8 @@ def save_setting(conn: psycopg.Connection, name: str, value) -> None:
         "insert into user_settings (name, value) values (%s, %s) on conflict (name) do update set value = excluded.value",
         (name, str(value)),
     )
+
+
+def all_settings(conn: psycopg.Connection) -> dict[str, str]:
+    """Return every saved setting by name."""
+    return dict(conn.execute("select name, value from user_settings").fetchall())

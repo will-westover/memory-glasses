@@ -13,7 +13,7 @@ private struct PresignedFrameUpload: Decodable {
 }
 
 actor FrameUploader {
-    private static let maxQueuedFrames = 50
+    private static let spaceToLeaveFree: Int64 = 500 << 20
 
     private let folder: URL
     private var presignedUploads: [String: (url: URL, name: String)] = [:]
@@ -31,13 +31,17 @@ actor FrameUploader {
         let name = String(format: "%.3f-%06d-%@-%u.jpg", Date().timeIntervalSince1970, fileSequence, frame.recording, frame.number)
         try? frame.jpeg.write(to: folder.appendingPathComponent(name))
 
-        let waiting = queued()
+        var waiting = queued()
 
-        if waiting.count > Self.maxQueuedFrames {
-            for old in waiting.prefix(waiting.count - Self.maxQueuedFrames) {
-                try? FileManager.default.removeItem(at: old)
-            }
+        while freeSpace() < Self.spaceToLeaveFree, waiting.count > 1 {
+            try? FileManager.default.removeItem(at: waiting.removeFirst())
         }
+    }
+
+    private func freeSpace() -> Int64 {
+        let values = try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+
+        return values?.volumeAvailableCapacityForImportantUsage ?? .max
     }
 
     func waiting() -> Int {

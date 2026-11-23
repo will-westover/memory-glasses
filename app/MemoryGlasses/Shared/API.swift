@@ -98,6 +98,10 @@ struct API {
         return data
     }
 
+    func wake() async throws {
+        _ = try await data(for: request("/settings"))
+    }
+
     func get<Result: Decodable>(_ path: String) async throws -> Result {
         try API.decoder.decode(Result.self, from: await data(for: request(path)))
     }

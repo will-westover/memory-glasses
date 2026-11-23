@@ -1,9 +1,11 @@
 """Answer a question from what the glasses recorded."""
 
 import argparse
+import contextvars
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from typing import Literal
@@ -365,6 +367,26 @@ def run_tool(
     return fact_lines(facts), facts
 
 
+def run_tools(conn, requests: list[tuple[str, dict]], moments: list[str] | None, window: tuple) -> list[tuple]:
+    """Run one round's tool calls side by side, each on its own connection, and return (output, facts, call ids) in order."""
+
+    def one(name: str, arguments: dict, own_conn) -> tuple:
+        with llm.collect_call_ids() as call_ids:
+            output, facts = run_tool(own_conn, name, arguments, {}, moments, window)
+
+        return output, facts, call_ids
+
+    if len(requests) == 1:
+        return [one(*requests[0], conn)]
+
+    def pooled(request: tuple[str, dict]) -> tuple:
+        with db.pool().connection() as own_conn:
+            return one(*request, own_conn)
+
+    with ThreadPoolExecutor(len(requests)) as threads:
+        return list(threads.map(lambda request: contextvars.copy_context().run(pooled, request), requests))
+
+
 def fact_record(fact: dict) -> dict:
     """Return a fact as JSON a stored message can keep."""
     return {
@@ -517,14 +539,16 @@ def answer_events(
         round_input = []
         previous_id = response.id
 
-        for call in function_calls:
-            arguments = json.loads(call.arguments)
+        requests = [(call, json.loads(call.arguments)) for call in function_calls]
+
+        for call, arguments in requests:
             calls.append((call.name, arguments))
             yield step_event(call.name, step_text(call.name, arguments))
 
-            with llm.collect_call_ids() as call_ids:
-                output, facts = run_tool(conn, call.name, arguments, seen, moments, window)
+        results = run_tools(conn, [(call.name, arguments) for call, arguments in requests], moments, window)
 
+        for (call, arguments), (output, facts, call_ids) in zip(requests, results):
+            seen.update({fact["id"]: fact for fact in facts})
             yield step_event(call.name, step_text(call.name, arguments), facts)
 
             round_input.append({"type": "function_call_output", "call_id": call.call_id, "output": output})

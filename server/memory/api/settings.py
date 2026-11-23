@@ -1,6 +1,7 @@
 """Settings and stats."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 from fastapi import APIRouter, Depends, Header
@@ -28,14 +29,17 @@ def latest_eval() -> dict | None:
 @router.get("/stats")
 def stats(conn: psycopg.Connection = Depends(connection)) -> dict:
     """Return how much is stored, what it has cost, and the latest eval scores."""
-    costs = db.costs(conn)
+    with ThreadPoolExecutor(1) as background:
+        newest_eval = background.submit(latest_eval)
+        costs = db.costs(conn)
+        counts = db.counts(conn)
 
-    return {
-        "counts": db.counts(conn),
-        "costs": costs,
-        "total_usd": sum(cost["usd"] for cost in costs),
-        "eval": latest_eval(),
-    }
+        return {
+            "counts": counts,
+            "costs": costs,
+            "total_usd": sum(cost["usd"] for cost in costs),
+            "eval": newest_eval.result(),
+        }
 
 
 @router.get("/settings")

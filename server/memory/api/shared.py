@@ -175,9 +175,10 @@ class DirectUpload(BaseModel):
 def current_settings(conn: psycopg.Connection) -> Settings:
     """Return every glasses setting, saved or default."""
     values = {}
+    saved_settings = db.all_settings(conn)
 
     for name, field in Settings.model_fields.items():
-        saved = db.setting(conn, name, None)
+        saved = saved_settings.get(name)
 
         if saved is not None:
             values[name] = saved in ("True", "true", "1") if field.annotation is bool else float(saved)

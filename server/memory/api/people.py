@@ -102,4 +102,4 @@ def face(face_id: int, conn: psycopg.Connection = Depends(connection)) -> Respon
 
     _, jpeg = cv2.imencode(".jpg", image[top:bottom, left:right])
 
-    return Response(jpeg.tobytes(), media_type="image/jpeg")
+    return Response(jpeg.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})

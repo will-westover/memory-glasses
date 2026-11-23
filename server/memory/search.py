@@ -74,9 +74,10 @@ def search(
     start: datetime | None = None,
     end: datetime | None = None,
     moments: list[str] | None = None,
+    vector: str | None = None,
 ) -> list[dict]:
     """Return the facts that best match a question, best first, from only the given moments when some are named."""
-    vector = llm.embed(conn, [question], "embed-question")[0]
+    vector = vector or llm.embed(conn, [question], "embed-question")[0]
     query_params = {
         "vector": vector,
         "text": question,
@@ -110,14 +111,15 @@ def search(
 def search_within(conn, question: str, limit: int, window: tuple, moments: list[str] | None = None) -> list[dict]:
     """Search inside the question's time window first, and everywhere only if nothing there matches."""
     start, end = window
+    vector = llm.embed(conn, [question], "embed-question")[0]
 
     if start and end:
-        found = search(conn, question, limit, start, end, moments)
+        found = search(conn, question, limit, start, end, moments, vector)
 
         if found:
             return found
 
-    return search(conn, question, limit, moments=moments)
+    return search(conn, question, limit, moments=moments, vector=vector)
 
 
 def print_results(results: list[dict]) -> None:
