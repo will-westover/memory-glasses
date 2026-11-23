@@ -175,6 +175,23 @@ def seen_again(conn: psycopg.Connection, moment_id: str) -> list[tuple[dict, dic
     ]
 
 
+def last_seen(conn: psycopg.Connection, fact_id: int, moments: list[str] | None = None) -> dict | None:
+    """Return the latest sighting of the thing or person a fact is about, across its links: when, at which place and
+    in which room, where and how it looked."""
+    row = conn.execute(
+        "select s.at, p.name, r.name, s.place, s.details from sighting s join entity e on e.id = s.entity_id"
+        "  join frame f on f.id = s.frame_id left join room r on r.id = f.room_id"
+        "  left join frame_segment fs on fs.frame_id = f.id left join place p on p.id = fs.place_id"
+        " where coalesce(e.merged_into, e.id) = ("
+        "       select coalesce(t.merged_into, t.id) from fact x join entity t on t.id = x.entity_id where x.id = %(id)s)"
+        "   and (%(moments)s::text[] is null or f.moment_id = any(%(moments)s::text[]))"
+        " order by s.at desc limit 1",
+        {"id": fact_id, "moments": moments},
+    ).fetchone()
+
+    return dict(zip(("at", "place", "room", "where", "details"), row)) if row else None
+
+
 def coverage(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:
     """Return the recordings that overlap a time range, oldest first, each with its scenes, title and times."""
     rows = conn.execute(

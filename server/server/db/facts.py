@@ -138,7 +138,7 @@ def entity_facts(conn: psycopg.Connection, fact_id: int, limit: int = 30) -> lis
         conn.execute(
             f"{FACT_SELECT} where coalesce(thing.merged_into, fact.entity_id) = ("
             "    select coalesce(e.merged_into, e.id) from fact f join entity e on e.id = f.entity_id where f.id = %s)"
-            " and fact.kind in ('object', 'person') order by fact.at desc limit %s",
+            " and fact.kind in ('object', 'person', 'change') order by fact.at desc limit %s",
             (fact_id, limit),
         )
     )[::-1]

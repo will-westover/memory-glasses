@@ -108,10 +108,22 @@ def timeline(asking: Asking, arguments: dict) -> tuple[str, list[dict]]:
     return (f"{SUMMARISED}\n" if thinned else "") + fact_lines(facts), facts
 
 
+def now_line(seen: dict | None) -> str:
+    """Say where a thing or person was last seen, as the first line of the entity tool's answer."""
+    if seen is None:
+        return ""
+
+    room = seen["room"] if seen["room"] and seen["room"].lower() not in ("room", (seen["place"] or "").lower()) else None
+    where = ", ".join(part for part in (seen["place"], room and f"room: {room}", seen["where"]) if part)
+    details = f" ({seen['details']})" if seen["details"] else ""
+
+    return f"Last seen {seen['at'].astimezone():%a %d %b %Y %H:%M}: {where or 'place unknown'}{details}.\n"
+
+
 def entity(asking: Asking, arguments: dict) -> tuple[str, list[dict]]:
     facts = asking.only_asked(db.entity_facts(asking.conn, arguments["fact_id"]))
 
-    return fact_lines(facts), facts
+    return now_line(db.last_seen(asking.conn, arguments["fact_id"], asking.moments)) + fact_lines(facts), facts
 
 
 def nearby(asking: Asking, arguments: dict) -> tuple[str, list[dict]]:
@@ -163,8 +175,9 @@ TOOLS = [
     ),
     Tool(
         "entity",
-        "List every time the thing or person an object or person fact is about was seen, across all recordings, "
-        "oldest first. Use it for when something was last seen, whether it was there another time, or what changed.",
+        "Say where the thing or person an object or person fact is about was last seen, then list every time it was "
+        "seen and what changed about it, oldest first, across all recordings. Use it for where something is now, when "
+        "it was last seen, whether it was there another time, or what changed.",
         {"fact_id": ("integer", "The number of an object or person fact")},
         lambda arguments: "Looking at every time one thing was seen",
         entity,
