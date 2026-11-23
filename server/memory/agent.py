@@ -458,6 +458,17 @@ def step_text(name: str, arguments: dict) -> str:
     return "Looking at what was nearby"
 
 
+FIRST_SEARCH = "Searching the question found these facts. Answer from them if they are enough; otherwise use the tools."
+
+NOTHING_FOUND = "(nothing)"
+
+
+def embed_question(question: str) -> str:
+    """Embed a question on a connection of its own, so it can run beside other work."""
+    with db.pool().connection() as conn:
+        return llm.embed(conn, [question], "embed-question")[0]
+
+
 def step_event(kind: str, text: str, facts: list[dict] = ()) -> tuple[str, dict]:
     """Return a step event with up to four of the photos its facts came from."""
     images = list(dict.fromkeys(fact["image_path"] for fact in facts if fact["image_path"]))[:4]
@@ -482,16 +493,45 @@ def answer_events(
     seen: dict = {frame["id"]: frame} if frame else {}
     calls = []
 
-    window, usd = ((None, None), 0.0) if frame else question_window(conn, question, list(history))
+    if frame:
+        window, usd, found = (None, None), 0.0, []
+        asked = f"{question}\n\nThe question is about this frame:\n{fact_line(frame)}"
+    else:
+        with ThreadPoolExecutor(1) as background:
+            vector = background.submit(contextvars.copy_context().run, embed_question, question)
+            window, usd = question_window(conn, question, list(history))
 
-    if window[0]:
-        yield step_event("when", window_text(window))
+            if window[0]:
+                yield step_event("when", window_text(window))
 
-    asked = f"{question}\n\nThe question is about this frame:\n{fact_line(frame)}" if frame else question
+            yield step_event("search", step_text("search", {"query": question}))
+            found = search_within(conn, question, SEARCH_RESULTS, window, moments, vector.result())
+
+        seen.update({fact["id"]: fact for fact in found})
+        calls.append(("search", {"query": question}))
+        yield step_event("search", step_text("search", {"query": question}), found)
+        asked = f"{question}\n\n{FIRST_SEARCH}\n{fact_lines(found) if found else NOTHING_FOUND}"
+
     round_input = model_input(list(history), asked)
     previous_id = None
     tools = TOOLS if use_nearby else [tool for tool in TOOLS if tool["name"] != "nearby"]
     messages = []
+
+    if not frame:
+        messages.append(
+            {
+                "role": "tool",
+                "at": local_now(),
+                "calls": [],
+                "content": {
+                    "call_id": "first-search",
+                    "name": "search",
+                    "arguments": {"query": question},
+                    "output": fact_lines(found) if found else NOTHING_FOUND,
+                    "facts": [fact_record(fact) for fact in found],
+                },
+            }
+        )
 
     for round_number in range(MAX_TOOL_ROUNDS + 1):
         request = {
