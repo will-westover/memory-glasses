@@ -9,6 +9,7 @@ from server.shared import llm
 from server.shared.config import SUMMARY_MODEL, minutes_seconds, spoken_length
 from server.ingest.activities import write_activities
 from server.ingest.changes import write_changes
+from server.ingest.spots import place_things
 from server.ingest.link import link_moment
 from server.ingest.overview import write_overview
 from server.shared.gps import place_for
@@ -287,6 +288,8 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
         save_world(conn, moment_id, facts, known, thing_vectors)
         db.replace_facts(conn, moment_id, facts, frame_vectors + rest_vectors)
 
+    place_things(conn, moment_id)
+    conn.commit()
     link_moment(conn, moment_id)
     changes = write_changes(conn, moment_id)
 

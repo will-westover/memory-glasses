@@ -57,6 +57,8 @@ Inside `server/server/`, the same word means the same thing at every layer:
    undone: [ingest/link.py](server/server/ingest/link.py).
    Each thing seen again is compared with the last time it was seen; if it moved to other furniture or its state
    changed, that becomes a change fact: [ingest/changes.py](server/server/ingest/changes.py).
+   In phone recordings with a lidar mesh, each thing's box is traced from the camera onto the mesh to give its spot
+   in metres: [ingest/spots.py](server/server/ingest/spots.py).
 10. One call groups the scenes into activities and the speech into whole conversations, and the day's summary is
     rewritten from its activities: [ingest/activities.py](server/server/ingest/activities.py).
 11. Facts, the search index, are rebuilt from all of this: one per recording, activity, conversation, day, scene,

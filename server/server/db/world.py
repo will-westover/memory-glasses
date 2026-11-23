@@ -192,6 +192,44 @@ def last_seen(conn: psycopg.Connection, fact_id: int, moments: list[str] | None 
     return dict(zip(("at", "place", "room", "where", "details"), row)) if row else None
 
 
+def boxed_sightings_with_camera(conn: psycopg.Connection, moment_id: str) -> list[tuple]:
+    """Return (sighting, camera view, box) for every boxed sighting in a moment whose photo has the camera's view."""
+    return conn.execute(
+        "select s.id, f.camera, s.box from sighting s join frame f on f.id = s.frame_id"
+        " where f.moment_id = %s and f.camera is not null and s.box is not null",
+        (moment_id,),
+    ).fetchall()
+
+
+def save_spots(conn: psycopg.Connection, spots: dict[int, list[float]]) -> None:
+    """Store each sighting's spot, then give each thing the middle of its sightings' spots."""
+    with conn.cursor() as cursor:
+        cursor.executemany("update sighting set spot = %s where id = %s", [(xyz, sid) for sid, xyz in spots.items()])
+
+    conn.execute(
+        "update entity e set spot = array[m.x, m.y, m.z] from ("
+        "  select entity_id, percentile_cont(0.5) within group (order by spot[1]) as x,"
+        "         percentile_cont(0.5) within group (order by spot[2]) as y,"
+        "         percentile_cont(0.5) within group (order by spot[3]) as z"
+        "    from sighting where spot is not null and id = any(%s) group by entity_id) m"
+        " where m.entity_id = e.id",
+        (list(spots),),
+    )
+
+
+def spot_spread(conn: psycopg.Connection, moment_id: str) -> list[tuple]:
+    """Return, for each thing with several spots in a moment, its name, how far its spots lie from its middle on
+    average, and how many there are."""
+    return conn.execute(
+        "select e.name, avg(sqrt(power(s.spot[1] - e.spot[1], 2) + power(s.spot[2] - e.spot[2], 2)"
+        "                        + power(s.spot[3] - e.spot[3], 2))), count(*)"
+        "  from sighting s join entity e on e.id = s.entity_id join frame f on f.id = s.frame_id"
+        " where f.moment_id = %s and s.spot is not null and e.spot is not null"
+        " group by e.id, e.name having count(*) > 1 order by 2",
+        (moment_id,),
+    ).fetchall()
+
+
 def coverage(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:
     """Return the recordings that overlap a time range, oldest first, each with its scenes, title and times."""
     rows = conn.execute(
