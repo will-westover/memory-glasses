@@ -1,7 +1,7 @@
 import wave
 
 from server.api.moments import audio_clip
-from server.storage import read_range
+from server.shared.storage import read_range
 
 
 def reader(path):

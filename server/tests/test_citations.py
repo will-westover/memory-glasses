@@ -1,4 +1,4 @@
-from server.citations import partial_string, renumber, shown_so_far
+from server.agent.citations import partial_string, renumber, shown_so_far
 
 
 def test_fact_numbers_become_positions_in_order_of_first_use():

@@ -5,7 +5,7 @@ import sys
 
 from server import db
 from server.agent import ask_agent, ask_plain
-from server.config import AGENT_MODEL, minutes_seconds
+from server.shared.config import AGENT_MODEL, minutes_seconds
 
 
 def print_result(result: dict) -> None:

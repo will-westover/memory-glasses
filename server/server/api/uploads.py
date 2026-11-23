@@ -5,8 +5,10 @@ from uuid import UUID
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 
-from server import db, jobs, storage
-from server.jobs import UPLOADS_DIR, upload_task
+from server import db
+from server.jobs import jobs
+from server.shared import storage
+from server.jobs.jobs import UPLOADS_DIR, upload_task
 from server.api.shared import DirectUpload, EXTRA_FILES, connection
 
 router = APIRouter()

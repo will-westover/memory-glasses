@@ -5,7 +5,7 @@ import threading
 import psycopg
 from psycopg_pool import ConnectionPool
 
-from server.config import SERVER_DIR, require_env
+from server.shared.config import SERVER_DIR, require_env
 
 
 MIGRATIONS_DIR = SERVER_DIR / "migrations"

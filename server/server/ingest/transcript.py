@@ -13,8 +13,9 @@ from pathlib import Path
 
 import numpy as np
 
-from server import db, llm, storage
-from server.config import DATA_DIR, TRANSCRIBE_MODEL, minutes_seconds, PARALLEL_CALLS
+from server import db
+from server.shared import llm, storage
+from server.shared.config import DATA_DIR, TRANSCRIBE_MODEL, minutes_seconds, PARALLEL_CALLS
 from server.ingest import speech
 
 DIARIZE_MODEL = "gpt-4o-transcribe-diarize"

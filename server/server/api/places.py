@@ -4,11 +4,13 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
-from server import db, places, renames, storage
-from server.config import DATA_DIR
+from server import db, names
+from server.ingest import places
+from server.shared import storage
+from server.shared.config import DATA_DIR
 from server.ingest.poses import load_poses, thin
-from server.jobs import start_rebuild
-from server.moment_files import MOMENTS_DIR
+from server.jobs.jobs import start_rebuild
+from server.shared.files import MOMENTS_DIR
 from server.api.shared import NewName, connection, frame_json, image_url, redirect_to_stored
 
 router = APIRouter()
@@ -94,7 +96,7 @@ def rename_place(place_id: int, body: NewName, conn: psycopg.Connection = Depend
         raise HTTPException(404, "no such place")
 
     if old and name and old != name:
-        renames.rename_place(conn, db.place_moments(conn, place_id), old, name)
+        names.rename_place(conn, db.place_moments(conn, place_id), old, name)
         conn.commit()
     elif old != name:
         conn.commit()
@@ -118,7 +120,7 @@ def rename_room(room_id: int, body: NewName, conn: psycopg.Connection = Depends(
         raise HTTPException(404, "no such room")
 
     if old and old != name:
-        renames.rename_room(conn, room_id, old, name)
+        names.rename_room(conn, room_id, old, name)
         conn.commit()
     elif old != name:
         conn.commit()

@@ -6,7 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 import psycopg
 from fastapi import APIRouter, Depends, Header
 
-from server import db, glasses, storage
+from server import db
+from server.ingest import glasses
+from server.shared import storage
 from server.evals import RUNS_DIR
 from server.api.shared import RECORDING_ID_PATTERN, Settings, SettingsChange, connection, current_settings
 

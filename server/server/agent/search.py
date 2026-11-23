@@ -4,8 +4,9 @@ import argparse
 import sys
 from datetime import datetime
 
-from server import db, llm
-from server.config import minutes_seconds
+from server import db
+from server.shared import llm
+from server.shared.config import minutes_seconds
 
 CANDIDATES_PER_RANKING = 20
 

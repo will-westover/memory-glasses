@@ -1,8 +1,8 @@
 """Places (an apartment, a lecture hall) and the rooms inside them, for every frame.
 
-uv run python -m server.places list
-uv run python -m server.places label <moment id>
-uv run python -m server.places rebuild
+uv run python -m server.ingest.places list
+uv run python -m server.ingest.places label <moment id>
+uv run python -m server.ingest.places rebuild
 """
 
 import argparse
@@ -15,11 +15,12 @@ from pathlib import Path
 import numpy as np
 from pydantic import BaseModel, Field
 
-from server import db, llm, storage
-from server.config import DATA_DIR, SUMMARY_MODEL
+from server import db
+from server.shared import llm, storage
+from server.shared.config import DATA_DIR, SUMMARY_MODEL
 from server.ingest.facts import build_facts
 from server.ingest.poses import load_poses
-from server.gps import distance_m
+from server.shared.gps import distance_m
 
 MAPS_DIR = DATA_DIR / "places"
 MOMENTS_DIR = DATA_DIR / "moments"

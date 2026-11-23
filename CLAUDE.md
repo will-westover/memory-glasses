@@ -84,7 +84,7 @@ Everything else is your call.
   embedding at least 0.75); for now each moment is one segment. Rooms come from one model call per moment, then a
   vote of frames within 1.5 m.
 - Renaming a person, room or place swaps the name in the stored text and embeds what changed again
-  (`server/renames.py`); only naming someone or somewhere for the first time rebuilds facts.
+  (`server/server/names.py`); only naming someone or somewhere for the first time rebuilds facts.
 - A moment can be reprocessed at another frames per minute from its kept video; frames are named by their time,
   so ones that already exist keep their captions.
 - Recording in the app needs a real iPhone; the Simulator has no camera tracking.

@@ -9,8 +9,8 @@ import psycopg
 from openai import OpenAI
 from psycopg.types.json import Jsonb
 
-from server import config
-from server.config import EMBED_MODEL, SERVER_DIR
+from server.shared import config
+from server.shared.config import EMBED_MODEL, SERVER_DIR
 
 PRICES_FILE = SERVER_DIR / "prices.json"
 PRICES = json.loads(PRICES_FILE.read_text())["usd_per_million_tokens"]

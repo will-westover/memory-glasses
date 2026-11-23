@@ -4,8 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from server import llm
-from server.config import AGENT_MODEL
+from server.shared import llm
+from server.shared.config import AGENT_MODEL
 
 INSTRUCTIONS = """\
 You read one question someone asks about what their camera glasses recorded, and say which stretch of time it is

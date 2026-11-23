@@ -6,15 +6,16 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from server import db, llm
+from server import db
+from server.shared import llm
 from server.agent.answer import NO_ANSWER, Answer, answer_result
 from server.agent.prompt import instructions, tool_notes
 from server.agent.reading import fact_line, fact_lines, fact_record, spoken_time
 from server.agent.tools import SEARCH_RESULTS, TOOLS, Asking, read_arguments, run_tool, step_text
-from server.citations import partial_string, shown_so_far
-from server.config import AGENT_MODEL
-from server.search import search_within
-from server.when import question_window
+from server.agent.citations import partial_string, shown_so_far
+from server.shared.config import AGENT_MODEL
+from server.agent.search import search_within
+from server.agent.when import question_window
 
 MAX_TOOL_ROUNDS = 5
 

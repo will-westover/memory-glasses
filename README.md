@@ -18,13 +18,13 @@ Inside `server/server/`, the same word means the same thing at every layer:
 
 | Idea | The work | Its routes | Its tables |
 | --- | --- | --- | --- |
-| Moments | [pipeline.py](server/server/pipeline.py), [ingest/](server/server/ingest/) | [api/moments.py](server/server/api/moments.py) | [db/moments.py](server/server/db/moments.py), [db/facts.py](server/server/db/facts.py) |
-| Asking | [agent/](server/server/agent/), [search.py](server/server/search.py), [chat.py](server/server/chat.py) | [api/chats.py](server/server/api/chats.py) | [db/chats.py](server/server/db/chats.py), [db/costs.py](server/server/db/costs.py) |
-| Glasses | [glasses.py](server/server/glasses.py) | [api/glasses.py](server/server/api/glasses.py) | [db/recordings.py](server/server/db/recordings.py) |
-| Slow work | [jobs.py](server/server/jobs.py), [worker.py](server/server/worker.py) | [api/uploads.py](server/server/api/uploads.py) | [db/jobs.py](server/server/db/jobs.py) |
-| Places and rooms | [places.py](server/server/places.py), [gps.py](server/server/gps.py) | [api/places.py](server/server/api/places.py) | [db/places.py](server/server/db/places.py) |
-| People | [people.py](server/server/people.py), [ingest/faces.py](server/server/ingest/faces.py) | [api/people.py](server/server/api/people.py) | [db/people.py](server/server/db/people.py) |
-| Files | [storage.py](server/server/storage.py), [moment_files.py](server/server/moment_files.py) | | Cloudflare R2 |
+| Moments | [ingest/pipeline.py](server/server/ingest/pipeline.py), [ingest/](server/server/ingest/) | [api/moments.py](server/server/api/moments.py) | [db/moments.py](server/server/db/moments.py), [db/facts.py](server/server/db/facts.py) |
+| Asking | [agent/](server/server/agent/), [agent/search.py](server/server/agent/search.py), [agent/chat.py](server/server/agent/chat.py) | [api/chats.py](server/server/api/chats.py) | [db/chats.py](server/server/db/chats.py), [db/costs.py](server/server/db/costs.py) |
+| Glasses | [ingest/glasses.py](server/server/ingest/glasses.py) | [api/glasses.py](server/server/api/glasses.py) | [db/recordings.py](server/server/db/recordings.py) |
+| Slow work | [jobs/jobs.py](server/server/jobs/jobs.py), [jobs/worker.py](server/server/jobs/worker.py) | [api/uploads.py](server/server/api/uploads.py) | [db/jobs.py](server/server/db/jobs.py) |
+| Places and rooms | [ingest/places.py](server/server/ingest/places.py), [shared/gps.py](server/server/shared/gps.py) | [api/places.py](server/server/api/places.py) | [db/places.py](server/server/db/places.py) |
+| People | [names.py](server/server/names.py), [ingest/faces.py](server/server/ingest/faces.py) | [api/people.py](server/server/api/people.py) | [db/people.py](server/server/db/people.py) |
+| Files | [shared/storage.py](server/server/shared/storage.py), [shared/files.py](server/server/shared/files.py) | | Cloudflare R2 |
 | Evals | [evals.py](server/server/evals.py), [evals/questions.json](server/evals/questions.json) | [api/settings.py](server/server/api/settings.py) (stats) | |
 
 ## What happens to a photo
@@ -35,11 +35,11 @@ Inside `server/server/`, the same word means the same thing at every layer:
 3. The phone uploads it to storage and tells the server:
    [FrameUploader.swift](app/MemoryGlasses/Glasses/FrameUploader.swift) to `POST /glasses/frames` in
    [api/glasses.py](server/server/api/glasses.py).
-4. The server counts it in the `recording` table: [glasses.py](server/server/glasses.py).
+4. The server counts it in the `recording` table: [ingest/glasses.py](server/server/ingest/glasses.py).
 5. When the recording ends, a worker job joins the photos into a video: `process_glasses` in
-   [jobs.py](server/server/jobs.py).
-6. The pipeline keeps the sharp frames, each with a small copy for lists ([thumbs.py](server/server/thumbs.py)), transcribes the speech, captions each frame (with the words spoken around
-   it), finds faces and rooms, and builds the world model: [pipeline.py](server/server/pipeline.py). The result is a
+   [jobs/jobs.py](server/server/jobs/jobs.py).
+6. The pipeline keeps the sharp frames, each with a small copy for lists ([ingest/thumbs.py](server/server/ingest/thumbs.py)), transcribes the speech, captions each frame (with the words spoken around
+   it), finds faces and rooms, and builds the world model: [ingest/pipeline.py](server/server/ingest/pipeline.py). The result is a
    moment.
 7. The audio becomes timed lines, each with a voiceprint: [ingest/transcript.py](server/server/ingest/transcript.py).
    With `TRANSCRIBE_MODEL=gpt-transcribe`, Silero VAD finds the runs of speech, each run is transcribed on its own
@@ -70,7 +70,7 @@ A recording made in the app skips steps 1 to 5: it uploads the video straight to
    to `POST /conversations/{id}/ask/stream` in [api/chats.py](server/server/api/chats.py).
 3. The question is searched straight away: its time is worked out while it is embedded, then search looks in that
    time first, finds facts by meaning and by keyword, merges the two, and keeps one fact per thing per scene:
-   [search.py](server/server/search.py), [when.py](server/server/when.py).
+   [agent/search.py](server/server/agent/search.py), [agent/when.py](server/server/agent/when.py).
 4. The agent answers from those facts, or calls tools (search, timeline, coverage, entity, nearby) until it can;
    every fact it reads names its recording. The prompt is in [agent/prompt.py](server/server/agent/prompt.py), the
    tools in [agent/tools.py](server/server/agent/tools.py) and the loop in [agent/loop.py](server/server/agent/loop.py).
@@ -95,8 +95,8 @@ Run `make` to list them.
 | `make deploy` | Build the server and deploy it to Cloud Run |
 
 Everything else on the server runs from `server/` as `uv run python -m server.<module>`, for example
-`server.agent "what did the sign say?"`, `server.search "sign"`, `server.pipeline video.mov`,
-`server.places list`, `server.people list`. `--help` lists each one's options.
+`server.agent "what did the sign say?"`, `server.agent.search "sign"`, `server.ingest.pipeline video.mov`,
+`server.ingest.places list`, `server.names list`. `--help` lists each one's options.
 
 ## More
 

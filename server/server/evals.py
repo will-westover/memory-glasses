@@ -13,10 +13,11 @@ from typing import Literal
 import psycopg
 from pydantic import BaseModel, Field
 
-from server import db, llm, storage
+from server import db
+from server.shared import llm, storage
 
 from server.agent import ask_agent, ask_plain
-from server.config import AGENT_MODEL, DATA_DIR, JUDGE_MODEL, SERVER_DIR, PARALLEL_CALLS
+from server.shared.config import AGENT_MODEL, DATA_DIR, JUDGE_MODEL, SERVER_DIR, PARALLEL_CALLS
 
 QUESTION_FILES = (SERVER_DIR / "evals" / "questions.json", DATA_DIR / "evals" / "questions.json")
 RUNS_DIR = DATA_DIR / "evals" / "runs"

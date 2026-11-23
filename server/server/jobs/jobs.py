@@ -7,10 +7,12 @@ import urllib.request
 
 import psycopg
 
-from server import db, glasses, pipeline, storage
-from server.config import DATA_DIR, FRAMES_PER_MINUTE
+from server import db
+from server.ingest import glasses, pipeline
+from server.shared import storage
+from server.shared.config import DATA_DIR, FRAMES_PER_MINUTE
 from server.ingest.facts import build_facts
-from server.moment_files import current_extras, video_path
+from server.shared.files import current_extras, video_path
 
 UPLOADS_DIR = DATA_DIR / "uploads"
 METADATA_URL = "http://metadata.google.internal/computeMetadata/v1/"

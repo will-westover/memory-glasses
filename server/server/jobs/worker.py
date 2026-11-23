@@ -2,7 +2,8 @@
 
 import sys
 
-from server import db, jobs
+from server import db
+from server.jobs import jobs
 
 
 def run(job_id: str) -> None:
@@ -25,7 +26,7 @@ def run(job_id: str) -> None:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: python -m server.worker <job id>")
+        print("usage: python -m server.jobs.worker <job id>")
         return 2
 
     run(sys.argv[1])

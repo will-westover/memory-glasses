@@ -4,8 +4,9 @@ from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 
-from server import db, llm
-from server.config import SUMMARY_MODEL
+from server import db
+from server.shared import llm
+from server.shared.config import SUMMARY_MODEL
 
 ACTIVITY_INSTRUCTIONS = """\
 You are given one recording from someone's camera glasses: its scenes in order, each with its times, a title, what

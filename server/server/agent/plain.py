@@ -2,13 +2,13 @@
 
 import time
 
-from server import llm
+from server.shared import llm
 from server.agent.answer import Answer, answer_result
 from server.agent.prompt import PLAIN_NOTES, instructions
 from server.agent.reading import fact_lines
-from server.config import AGENT_MODEL
-from server.search import search_within
-from server.when import question_window
+from server.shared.config import AGENT_MODEL
+from server.agent.search import search_within
+from server.agent.when import question_window
 
 PLAIN_RESULTS = 10
 

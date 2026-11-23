@@ -6,8 +6,11 @@ import pathlib
 import psycopg
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
-from server import db, glasses, jobs, storage
-from server.config import DATA_DIR
+from server import db
+from server.ingest import glasses
+from server.jobs import jobs
+from server.shared import storage
+from server.shared.config import DATA_DIR
 from server.api.shared import RECORDING_ID_PATTERN, connection, current_settings
 
 router = APIRouter()

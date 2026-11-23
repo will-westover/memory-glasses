@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from server.citations import renumber
+from server.agent.citations import renumber
 
 
 class NextStep(BaseModel):

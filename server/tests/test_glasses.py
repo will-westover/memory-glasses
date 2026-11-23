@@ -1,4 +1,4 @@
-from server import glasses
+from server.ingest import glasses
 
 
 def test_each_frame_lasts_until_the_next():
@@ -18,7 +18,7 @@ def test_a_frame_taken_before_the_first_is_named_zero():
 
 
 def test_a_long_gap_without_photos_starts_a_new_part():
-    from server.glasses import PART_GAP_SECONDS, parts
+    from server.ingest.glasses import PART_GAP_SECONDS, parts
 
     gap_ms = (PART_GAP_SECONDS + 1) * 1000
     names = ["00000000.jpg", "00002000.jpg", f"{2000 + gap_ms:08d}.jpg", f"{4000 + gap_ms:08d}.jpg"]
@@ -27,6 +27,6 @@ def test_a_long_gap_without_photos_starts_a_new_part():
 
 
 def test_photos_close_together_stay_one_part():
-    from server.glasses import parts
+    from server.ingest.glasses import parts
 
     assert parts(["00004000.jpg", "00000000.jpg"]) == [["00000000.jpg", "00004000.jpg"]]

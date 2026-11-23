@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from server.config import spoken_length
+from server.shared.config import spoken_length
 
 NOTHING_FOUND = "Nothing was recorded that matches."
 

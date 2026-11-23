@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-SERVER_DIR = Path(__file__).resolve().parents[1]
+SERVER_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = SERVER_DIR.parent
 
 

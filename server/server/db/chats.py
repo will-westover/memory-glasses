@@ -5,7 +5,7 @@ from datetime import datetime
 import psycopg
 from psycopg.types.json import Jsonb
 
-from server.citations import renumber
+from server.agent.citations import renumber
 
 
 def conversations(conn: psycopg.Connection, query: str | None = None) -> list[dict]:

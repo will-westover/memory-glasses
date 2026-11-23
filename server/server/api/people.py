@@ -5,9 +5,10 @@ import cv2
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
-from server import db, renames, storage
-from server.config import DATA_DIR
-from server.jobs import start_rebuild
+from server import db, names
+from server.shared import storage
+from server.shared.config import DATA_DIR
+from server.jobs.jobs import start_rebuild
 from server.api.shared import Merge, PersonName, connection, image_url
 
 router = APIRouter()
@@ -55,7 +56,7 @@ def name_person(person_id: int, body: PersonName, conn: psycopg.Connection = Dep
     db.name_person(conn, person_id, name)
 
     if old and name and old != name:
-        renames.rename_person(conn, db.person_moments(conn, person_id), person_id, old, name)
+        names.rename_person(conn, db.person_moments(conn, person_id), person_id, old, name)
         conn.commit()
     elif old != name:
         conn.commit()
@@ -73,11 +74,11 @@ def merge_person(person_id: int, body: Merge, conn: psycopg.Connection = Depends
     (_, name), (_, into_name) = db.person_name(conn, person_id), db.person_name(conn, body.into)
     moments, into_moments = db.person_moments(conn, person_id), db.person_moments(conn, body.into)
 
-    renames.move_person_entity(conn, person_id, body.into)
+    names.move_person_entity(conn, person_id, body.into)
     db.merge_people(conn, person_id, body.into)
 
     if name and into_name and name != into_name:
-        renames.rename_person(conn, moments, body.into, name, into_name)
+        names.rename_person(conn, moments, body.into, name, into_name)
 
     conn.commit()
 

@@ -2,7 +2,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from server import storage
+from server.shared import storage
 
 
 @pytest.fixture(autouse=True)

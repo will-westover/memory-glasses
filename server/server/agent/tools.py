@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from server import db
 from server.agent.reading import NOTHING_FOUND, coverage_text, fact_lines, parse_time, spoken_time
-from server.search import search_within
+from server.agent.search import search_within
 
 SEARCH_RESULTS = 12
 

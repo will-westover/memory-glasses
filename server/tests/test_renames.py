@@ -1,4 +1,4 @@
-from server.renames import replaced
+from server.names import replaced
 
 
 def test_a_name_is_swapped_only_as_a_whole_word():

@@ -5,8 +5,9 @@ import sys
 
 from pydantic import BaseModel, Field
 
-from server import db, llm
-from server.config import SUMMARY_MODEL
+from server import db
+from server.shared import llm
+from server.shared.config import SUMMARY_MODEL
 
 INSTRUCTIONS = """\
 You are given the summaries of one recording from someone's camera glasses, one per stretch of it, in order.

@@ -7,8 +7,9 @@ from pathlib import Path
 
 import cv2
 
-from server import db, storage
-from server.config import DATA_DIR, PARALLEL_CALLS
+from server import db
+from server.shared import storage
+from server.shared.config import DATA_DIR, PARALLEL_CALLS
 
 THUMB_PIXELS = 400
 

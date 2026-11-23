@@ -1,6 +1,6 @@
 import pytest
 
-from server.gps import distance_m, parse_location, place_for
+from server.shared.gps import distance_m, parse_location, place_for
 
 HOME = ("Home", 40.2518, -111.6493, 75)
 LIBRARY = ("Library", 40.2488, -111.6494, 120)

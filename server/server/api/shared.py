@@ -9,8 +9,9 @@ from fastapi import Header, HTTPException
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from server import db, storage
-from server.config import FRAMES_PER_MINUTE
+from server import db
+from server.shared import storage
+from server.shared.config import FRAMES_PER_MINUTE
 from server.ingest.facts import first_sentence
 from server.ingest.recording import MAX_FRAMES_PER_MINUTE
 

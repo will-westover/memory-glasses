@@ -11,12 +11,13 @@ from pathlib import Path
 
 import psycopg
 
-from server import db, storage
-from server.config import DATA_DIR, FRAMES_PER_MINUTE
+from server import db
+from server.shared import storage
+from server.shared.config import DATA_DIR, FRAMES_PER_MINUTE
 from server.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
 from server.ingest.poses import load_poses, nearest_pose
-from server.gps import parse_location
-from server.thumbs import make_thumbs
+from server.shared.gps import parse_location
+from server.ingest.thumbs import make_thumbs
 from server.ingest.fingerprint import (
     DEFAULT_MAX_DISTANCE,
     THUMB_BYTES,

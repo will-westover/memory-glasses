@@ -9,8 +9,9 @@ import sys
 import cv2
 import numpy as np
 
-from server import db, storage
-from server.config import DATA_DIR, SERVER_DIR
+from server import db
+from server.shared import storage
+from server.shared.config import DATA_DIR, SERVER_DIR
 
 MODELS_DIR = SERVER_DIR / "models"
 DETECTOR_MODEL = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
@@ -185,7 +186,7 @@ def main() -> int:
         f"Found {counts['faces']} faces in {counts['frames']} frames; {counts['new_people']} new people;"
         f" {counts['skipped']} side views matched no one and were left out."
     )
-    print("Name them with: uv run python -m server.people list")
+    print("Name them with: uv run python -m server.names list")
 
     return 0
 

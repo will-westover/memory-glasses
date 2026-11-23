@@ -4,7 +4,7 @@ from datetime import datetime
 
 from server import db
 from server.agent.reading import recording_line
-from server.gps import place_for
+from server.shared.gps import place_for
 
 RECORDINGS_CHARACTERS = 4_000
 

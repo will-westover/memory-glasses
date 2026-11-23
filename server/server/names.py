@@ -1,10 +1,20 @@
-"""Rename people and rooms in the facts already written, without asking a model to write them again."""
+"""Names of people, rooms and places: swapping a new name into what is already written, without asking a model to
+write it again, and a command line to list, name, merge and forget people.
 
+uv run python -m server.names list
+uv run python -m server.names name <id> "Sam"
+uv run python -m server.names merge <id> <into id>
+uv run python -m server.names forget <id>
+"""
+
+import argparse
 import re
+import sys
 
 import psycopg
 
-from server import llm
+from server import db
+from server.shared import llm
 
 
 def replaced(text: str | None, old: str, new: str) -> str | None:
@@ -116,3 +126,49 @@ def rename_place(conn: psycopg.Connection, moment_ids: list[str], old: str, new:
     facts = conn.execute("select id, text, title from fact where moment_id = any(%s)", (moment_ids,)).fetchall()
 
     return rename_in_facts(conn, facts, f"At {old}", f"At {new}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Name, merge and forget people.")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    commands.add_parser("list")
+
+    name = commands.add_parser("name")
+    name.add_argument("person_id", type=int)
+    name.add_argument("name")
+
+    merge = commands.add_parser("merge")
+    merge.add_argument("person_id", type=int)
+    merge.add_argument("into", type=int)
+
+    forget = commands.add_parser("forget")
+    forget.add_argument("person_id", type=int)
+    args = parser.parse_args()
+
+    with db.connect() as conn:
+        if args.command == "name":
+            _, old = db.person_name(conn, args.person_id)
+            db.name_person(conn, args.person_id, args.name)
+
+            if old:
+                rename_person(conn, db.person_moments(conn, args.person_id), args.person_id, old, args.name)
+        elif args.command == "merge":
+            move_person_entity(conn, args.person_id, args.into)
+            db.merge_people(conn, args.person_id, args.into)
+        elif args.command == "forget":
+            db.forget_person(conn, args.person_id)
+
+        conn.commit()
+
+        for person in db.list_people(conn):
+            print(
+                f"{person['id']:>4}  {person['name'] or '(unnamed)':<20} {person['faces']:>4} faces"
+                f"  last seen {person['last_seen'].astimezone():%a %d %b %H:%M}"
+            )
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

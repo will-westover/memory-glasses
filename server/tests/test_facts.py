@@ -3,17 +3,8 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pytest
 
-from server.ingest.facts import (
-    Said,
-    Stretch,
-    Thing,
-    frame_fact,
-    group_frames,
-    group_passages,
-    said_facts,
-    stretch_facts,
-    stretches,
-)
+from server.ingest.facts import frame_fact, said_facts, stretch_facts
+from server.ingest.scenes import Said, Stretch, Thing, group_frames, group_passages, stretches
 
 ZONE = timezone(timedelta(hours=-7))
 EVENING = datetime(2026, 11, 10, 19, 54, tzinfo=ZONE)
@@ -60,7 +51,7 @@ def test_a_box_is_kept_inside_the_picture():
 
 
 def test_a_renamed_thing_still_gets_the_box_of_the_object_it_was_said_to_be():
-    from server.ingest.facts import object_boxes
+    from server.ingest.scenes import object_boxes
 
     photo = frame(5, 0.0)
     photo["objects"] = [{"name": "green bean pods", "location": "in a bowl", "box": [0, 0.5, 0.25, 0.25]}]
@@ -69,7 +60,7 @@ def test_a_renamed_thing_still_gets_the_box_of_the_object_it_was_said_to_be():
 
 
 def test_an_object_fact_keeps_each_captions_own_place():
-    from server.ingest.facts import places_seen
+    from server.ingest.scenes import places_seen
 
     first, second = frame(1, 0.0), frame(2, 6.0)
     first["objects"] = [{"name": "water bottle", "location": "on the left side of the island"}]
@@ -225,7 +216,7 @@ def test_speech_summaries_go_to_the_passage_they_name():
 
 
 def test_a_scene_is_shown_things_from_its_rooms_and_the_scene_before():
-    from server.ingest.facts import relevant
+    from server.ingest.scenes import relevant
 
     kitchen, hall, bedroom = frame(1, 0.0, room="Kitchen"), frame(2, 40.0, room="Hall"), frame(3, 80.0, room="Bedroom")
     mug = {"label": "K1", "sightings": [(kitchen, "", "", "seen", 0, None)]}

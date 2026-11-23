@@ -9,9 +9,10 @@ from fastapi.encoders import jsonable_encoder
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from server import chat, db
+from server import db
+from server.agent import chat
 from server.agent import answer_events, ask_agent, fact_record
-from server.search import search
+from server.agent.search import search
 from server.api.shared import ChatQuestion, connection, fact_json, image_url
 
 router = APIRouter()

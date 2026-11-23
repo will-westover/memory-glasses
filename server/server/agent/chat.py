@@ -4,9 +4,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from server import db, llm
+from server import db
+from server.shared import llm
 from server.agent import fact_line
-from server.config import SUMMARY_MODEL
+from server.shared.config import SUMMARY_MODEL
 
 TITLE_INSTRUCTIONS = """\
 Write a title of two to five words for a conversation that starts with this question and answer, the way a chat app

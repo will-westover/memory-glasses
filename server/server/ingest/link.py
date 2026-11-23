@@ -7,8 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 import cv2
 from pydantic import BaseModel, Field
 
-from server import db, llm, storage
-from server.config import CAPTION_MODEL, DATA_DIR, SUMMARY_MODEL, PARALLEL_CALLS
+from server import db
+from server.shared import llm, storage
+from server.shared.config import CAPTION_MODEL, DATA_DIR, SUMMARY_MODEL, PARALLEL_CALLS
 
 CANDIDATES = 3
 CROP_PIXELS = 384

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from server.config import SERVER_DIR
+from server.shared.config import SERVER_DIR
 
 MODELS_DIR = SERVER_DIR / "models"
 VAD_MODEL = MODELS_DIR / "silero_vad.onnx"

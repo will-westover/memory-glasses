@@ -6,8 +6,8 @@ from pathlib import Path
 
 import psycopg
 
-from server import storage
-from server.config import DATA_DIR, minutes_seconds
+from server.shared import storage
+from server.shared.config import DATA_DIR, minutes_seconds
 from server.db.core import connect
 from server.db.moments import delete_moment, list_moments, save_moment
 from server.db.places import drop_unused_rooms_and_places

@@ -10,12 +10,14 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
-from server import db, jobs, storage
+from server import db
+from server.jobs import jobs
+from server.shared import storage
 from server.ingest.poses import load_poses, thin
 from server.ingest.recording import MAX_FRAMES_PER_MINUTE
-from server.gps import place_for
-from server.moment_files import MOMENTS_DIR, manifest_of, video_path
-from server.thumbs import thumb_path
+from server.shared.gps import place_for
+from server.shared.files import MOMENTS_DIR, manifest_of, video_path
+from server.ingest.thumbs import thumb_path
 from server.api.shared import (
     MAX_CLIP_SECONDS,
     Rate,

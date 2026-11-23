@@ -1,6 +1,6 @@
 """Run every step on a recording: frames, captions, transcript, faces, rooms and facts.
 
-uv run python -m server.pipeline path/to/video.mov --frames-per-minute 30
+uv run python -m server.ingest.pipeline path/to/video.mov --frames-per-minute 30
 """
 
 import argparse
@@ -9,8 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from server import db
-from server.config import FRAMES_PER_MINUTE
-from server import places
+from server.shared.config import FRAMES_PER_MINUTE
+from server.ingest import places
 from server.ingest import captions, faces, facts, recording, transcript
 
 STEPS = ("Picking frames", "Transcribing", "Describing frames", "Finding faces", "Finding rooms", "Building facts")

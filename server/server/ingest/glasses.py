@@ -7,8 +7,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from server import db, storage
-from server.config import DATA_DIR
+from server import db
+from server.shared import storage
+from server.shared.config import DATA_DIR
 
 GLASSES_DIR = DATA_DIR / "glasses"
 MAX_FRAME_BYTES = 2_000_000

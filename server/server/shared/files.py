@@ -2,8 +2,8 @@
 
 import json
 
-from server import storage
-from server.config import DATA_DIR
+from server.shared import storage
+from server.shared.config import DATA_DIR
 
 MOMENTS_DIR = (DATA_DIR / "moments").resolve()
 

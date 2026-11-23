@@ -1,7 +1,7 @@
 """Keep the data folder in a Cloudflare R2 bucket, with the local folder as a working copy.
 
-uv run python -m server.storage sync
-uv run python -m server.storage check
+uv run python -m server.shared.storage sync
+uv run python -m server.shared.storage check
 """
 
 import argparse
@@ -10,7 +10,7 @@ import sys
 from functools import cache
 from pathlib import Path
 
-from server.config import DATA_DIR, require_env
+from server.shared.config import DATA_DIR, require_env
 
 SYNCED_FOLDERS = ("moments", "places", "glasses", "uploads", "evals")
 
