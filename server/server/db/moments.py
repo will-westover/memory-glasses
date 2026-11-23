@@ -287,16 +287,18 @@ def transcript(conn: psycopg.Connection, moment_id: str) -> list[tuple]:
 
 
 def transcript_lines(conn: psycopg.Connection, moment_id: str) -> list[dict]:
-    """Return the transcript lines with start and end offsets."""
+    """Return the transcript lines with start and end offsets, each spoken by a named person when the voice is known."""
     rows = conn.execute(
-        "select start_at, offset_seconds, offset_seconds + extract(epoch from end_at - start_at), speaker, text"
-        " from audio_segment where moment_id = %s order by start_at",
+        "select a.id, a.start_at, a.offset_seconds, a.offset_seconds + extract(epoch from a.end_at - a.start_at),"
+        "       coalesce(p.name, a.speaker), a.text, a.person_id"
+        "  from audio_segment a left join person p on p.id = a.person_id where a.moment_id = %s order by a.start_at",
         (moment_id,),
     ).fetchall()
 
     return [
-        {"at": start_at, "start": float(start), "end": float(end), "speaker": speaker, "text": text}
-        for start_at, start, end, speaker, text in rows
+        {"id": line_id, "at": start_at, "start": float(start), "end": float(end), "speaker": speaker, "text": text,
+         "person_id": person_id}
+        for line_id, start_at, start, end, speaker, text, person_id in rows
     ]
 
 

@@ -13,6 +13,7 @@ struct MomentView: View {
     @State private var playingFrom: Double?
     @State private var path: [[Double]] = []
     @State private var showingRoom = false
+    @State private var people: [Person] = []
 
     var body: some View {
         Group {
@@ -246,8 +247,27 @@ struct MomentView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
 
-            Text(KeywordMatch.emphasize(line.text, spoken ? router.focusWords : []))
-                .font(.subheadline)
+            VStack(alignment: .leading, spacing: 2) {
+                if let speaker = line.speaker {
+                    Text(speaker)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(KeywordMatch.emphasize(line.text, spoken ? router.focusWords : []))
+                    .font(.subheadline)
+            }
+        }
+        .contextMenu {
+            if !line.ids.isEmpty {
+                Menu("Who said this?") {
+                    ForEach(people) { person in
+                        Button(person.label) { Task { await nameSpeaker(of: line, person.id) } }
+                    }
+
+                    Button("Not sure") { Task { await nameSpeaker(of: line, nil) } }
+                }
+            }
         }
         .padding(spoken ? 8 : 0)
         .background(spoken ? Color.yellow.opacity(0.18) : .clear,
@@ -390,9 +410,16 @@ struct MomentView: View {
         }
     }
 
+    private func nameSpeaker(of line: SpokenLine, _ personId: Int?) async {
+        let _: EmptyReply? = try? await API.current.send("/transcript/speaker", method: "POST",
+                                                          body: SpeakerChoice(lineIds: line.ids, personId: personId))
+        await load()
+    }
+
     private func load() async {
         do {
             async let walked: WalkedPath? = try? API.current.get("/moments/\(link.id)/path")
+            async let known: [Person]? = try? API.current.get("/people")
             let loaded: MomentDetail = try await API.current.get("/moments/\(link.id)")
 
             if let focus = link.focus {
@@ -403,6 +430,7 @@ struct MomentView: View {
 
             detail = loaded
             path = await walked?.points ?? []
+            people = await known ?? people
             problem = nil
         } catch {
             problem = error.localizedDescription

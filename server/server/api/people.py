@@ -1,11 +1,12 @@
 """People and their faces."""
 
 import psycopg
+from pydantic import BaseModel
 import cv2
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
-from server import db, names
+from server import db, names, voices
 from server.shared import storage
 from server.shared.config import DATA_DIR
 from server.jobs.jobs import start_rebuild
@@ -102,6 +103,22 @@ def forget_person(person_id: int, conn: psycopg.Connection = Depends(connection)
     start_rebuild(conn, moments)
 
     return {"forgotten": person_id}
+
+
+class Speaker(BaseModel):
+    line_ids: list[int]
+    person_id: int | None = None
+
+
+@router.post("/transcript/speaker")
+def name_speaker(body: Speaker, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Say who spoke some transcript lines; lines with a voice like theirs get the same name."""
+    moments = voices.name_lines(conn, body.line_ids, body.person_id)
+
+    if not moments:
+        raise HTTPException(404, "no such line")
+
+    return {"lines": body.line_ids, "person_id": body.person_id, "moments": moments}
 
 
 @router.get("/faces/{face_id}")

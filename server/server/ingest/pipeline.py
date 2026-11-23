@@ -8,7 +8,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from server import db
+from server import db, voices
 from server.shared.config import FRAMES_PER_MINUTE
 from server.ingest import places
 from server.ingest import captions, faces, facts, recording, transcript
@@ -45,6 +45,7 @@ def process(
 
         on_step(STEPS[1])
         transcript.transcribe_moment(conn, moment_id)
+        voices.spread_names(conn, moment_id)
         conn.commit()
 
         on_step(STEPS[2])

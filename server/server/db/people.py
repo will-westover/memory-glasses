@@ -62,10 +62,11 @@ def list_people(conn: psycopg.Connection, person_id: int | None = None) -> list[
 
 
 def person_moments(conn: psycopg.Connection, person_id: int) -> list[str]:
-    """Return the moments a person appears in."""
+    """Return the moments a person appears in or is heard in."""
     rows = conn.execute(
-        "select distinct fr.moment_id from face f join frame fr on fr.id = f.frame_id where f.person_id = %s",
-        (person_id,),
+        "select fr.moment_id from face f join frame fr on fr.id = f.frame_id where f.person_id = %(id)s"
+        " union select moment_id from audio_segment where person_id = %(id)s",
+        {"id": person_id},
     )
 
     return [moment_id for (moment_id,) in rows]

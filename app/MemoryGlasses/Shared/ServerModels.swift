@@ -52,6 +52,11 @@ struct SpokenLine: Decodable, Hashable {
     let end: Double
     let speaker: String?
     let text: String
+    var id: Int? = nil
+    var personId: Int? = nil
+    var lineIds: [Int]? = nil
+
+    var ids: [Int] { lineIds ?? id.map { [$0] } ?? [] }
 }
 
 extension Array where Element == SpokenLine {
@@ -59,10 +64,15 @@ extension Array where Element == SpokenLine {
         var joined: [SpokenLine] = []
 
         for line in self {
-            if let last = joined.last, !last.text.endsWithSentence, line.start - last.end < 1.5 {
-                joined[joined.count - 1] = SpokenLine(start: last.start, end: line.end, speaker: nil, text: "\(last.text) \(line.text)")
+            let speaker = line.personId == nil ? nil : line.speaker
+
+            if let last = joined.last, !last.text.endsWithSentence, line.start - last.end < 1.5, last.personId == line.personId {
+                joined[joined.count - 1] = SpokenLine(start: last.start, end: line.end, speaker: speaker,
+                                                      text: "\(last.text) \(line.text)", personId: line.personId,
+                                                      lineIds: last.ids + line.ids)
             } else {
-                joined.append(SpokenLine(start: line.start, end: line.end, speaker: nil, text: line.text))
+                joined.append(SpokenLine(start: line.start, end: line.end, speaker: speaker, text: line.text,
+                                         personId: line.personId, lineIds: line.ids))
             }
         }
 
@@ -313,4 +323,9 @@ struct PlaceScene: Decodable {
 
 struct SearchHits: Decodable {
     let results: [Fact]
+}
+
+struct SpeakerChoice: Encodable {
+    let lineIds: [Int]
+    let personId: Int?
 }

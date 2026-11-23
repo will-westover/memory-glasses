@@ -258,6 +258,18 @@ def moment_stretches(conn, moment_id: str) -> tuple:
     return place, frames, frame_list, frame_vectors, passages
 
 
+def refresh_speech_facts(conn, moment_id: str) -> int:
+    """Write a moment's speech facts again from its transcript, so they show who spoke. Return how many there are."""
+    _, lat, lon = db.moment_start_and_location(conn, moment_id)
+    place = place_for(lat, lon, db.gps_places(conn))
+    passages = group_passages(db.transcript_lines(conn, moment_id))
+    facts = [speech_fact(passage, place, "speech", spoken(passage)) for passage in passages]
+    vectors = llm.embed(conn, [fact["text"] for fact in facts], "embed") if facts else []
+    db.add_facts(conn, moment_id, "speech", facts, vectors)
+
+    return len(facts)
+
+
 def build_facts(conn, moment_id: str) -> dict[str, int]:
     """Rebuild and embed every fact for a moment. Return how many of each kind were made."""
     llm.require_price(SUMMARY_MODEL)
