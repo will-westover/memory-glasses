@@ -65,10 +65,6 @@ struct WorldView: View {
                     NavigationLink { PeopleView() } label: {
                         Label("People", systemImage: "person.2")
                     }
-
-                    NavigationLink { LinksView() } label: {
-                        Label("Seen again", systemImage: "square.on.square")
-                    }
                 }
 
                 Section {

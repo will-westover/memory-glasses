@@ -11,8 +11,7 @@ def lock_moment(conn: psycopg.Connection, moment_id: str) -> None:
 
 
 def forget_world(conn: psycopg.Connection, moment_id: str) -> None:
-    """Delete a moment's scenes and sightings, and the things it saw that are no longer seen anywhere and nobody
-    confirmed."""
+    """Delete a moment's scenes and sightings, and the things it saw that are no longer seen anywhere."""
     seen = [
         entity_id
         for (entity_id,) in conn.execute(
@@ -22,7 +21,7 @@ def forget_world(conn: psycopg.Connection, moment_id: str) -> None:
     ]
     conn.execute("delete from episode where moment_id = %s", (moment_id,))
     conn.execute(
-        "delete from entity e where e.id = any(%s) and e.person_id is null and not e.confirmed"
+        "delete from entity e where e.id = any(%s) and e.person_id is null"
         " and not exists (select 1 from sighting s where s.entity_id = e.id)",
         (list(set(seen)),),
     )
@@ -105,8 +104,6 @@ LINK_CANDIDATES_SQL = """
        and e.embedding is not null and e.crop_box is not null and f.moment_id <> %(moment)s
        and (%(place)s::bigint is null or exists (select 1 from sighting s join frame_segment fs on fs.frame_id = s.frame_id
                                                 where s.entity_id = e.id and fs.place_id = %(place)s))
-       and not exists (select 1 from not_same x where (x.frame_id, x.other_frame_id) in
-                       ((n.crop_frame_id, e.crop_frame_id), (e.crop_frame_id, n.crop_frame_id)))
      order by e.embedding <=> n.embedding
      limit %(limit)s
 """
@@ -116,7 +113,7 @@ def link_candidates(
     conn: psycopg.Connection, entity_id: int, moment_id: str, place_id: int | None, limit: int
 ) -> list[dict]:
     """Return the earlier things from other moments whose name and details read most alike: only those seen at the same
-    place when the place is known, leaving out any pair you said are not the same."""
+    place when the place is known."""
     conn.execute("set local hnsw.iterative_scan = relaxed_order")
     rows = conn.execute(
         LINK_CANDIDATES_SQL, {"id": entity_id, "moment": moment_id, "place": place_id, "limit": limit}
@@ -128,14 +125,6 @@ def link_candidates(
     ]
 
 
-def thing_photo(conn: psycopg.Connection, entity_id: int) -> tuple[str, list | None] | None:
-    """Return the photo and box that show a thing best, or None if there is no such thing with a photo."""
-    return conn.execute(
-        "select f.image_path, e.crop_box from entity e join frame f on f.id = e.crop_frame_id where e.id = %s",
-        (entity_id,),
-    ).fetchone()
-
-
 def link_things(conn: psycopg.Connection, entity_id: int, same_as: int, reason: str) -> None:
     """Record that a thing is the same as an earlier one; the link can be undone, nothing is moved."""
     conn.execute("update entity set merged_into = %s, merge_reason = %s where id = %s", (same_as, reason, entity_id))
@@ -144,60 +133,6 @@ def link_things(conn: psycopg.Connection, entity_id: int, same_as: int, reason: 
         " last_seen = greatest(last_seen, (select last_seen from entity where id = %(new)s)) where id = %(root)s",
         {"new": entity_id, "root": same_as},
     )
-
-
-def unlink_thing(conn: psycopg.Connection, entity_id: int) -> bool:
-    """Undo a link, so the thing stands on its own again, and remember that the two photos show different things."""
-    conn.execute(
-        "insert into not_same (frame_id, other_frame_id)"
-        " select e.crop_frame_id, r.crop_frame_id from entity e join entity r on r.id = e.merged_into"
-        " where e.id = %s and e.crop_frame_id is not null and r.crop_frame_id is not null on conflict do nothing",
-        (entity_id,),
-    )
-
-    return (
-        conn.execute(
-            "update entity set merged_into = null, merge_reason = null, confirmed = true"
-            " where id = %s and merged_into is not null",
-            (entity_id,),
-        ).rowcount
-        > 0
-    )
-
-
-def confirm_link(conn: psycopg.Connection, entity_id: int) -> bool:
-    """Mark a link as checked by you."""
-    return (
-        conn.execute(
-            "update entity set confirmed = true where id = %s and merged_into is not null", (entity_id,)
-        ).rowcount
-        > 0
-    )
-
-
-def recent_links(conn: psycopg.Connection, limit: int, before: int | None = None) -> list[dict]:
-    """Return links between things newest first, a page at a time, with each side's name and photo, for you to check."""
-    rows = conn.execute(
-        "select e.id, e.name, fe.image_path, e.crop_box, r.id, r.name, fr.image_path, r.crop_box, e.merge_reason, e.confirmed"
-        "  from entity e join entity r on r.id = e.merged_into"
-        "  left join frame fe on fe.id = e.crop_frame_id left join frame fr on fr.id = r.crop_frame_id"
-        " where %(before)s::bigint is null or e.id < %(before)s::bigint"
-        " order by e.id desc limit %(limit)s",
-        {"before": before, "limit": limit},
-    )
-
-    return [
-        {
-            "id": entity_id,
-            "name": name,
-            "image_path": image_path,
-            "box": box,
-            "same_as": {"id": root_id, "name": root_name, "image_path": root_image, "box": root_box},
-            "reason": reason,
-            "confirmed": confirmed,
-        }
-        for entity_id, name, image_path, box, root_id, root_name, root_image, root_box, reason, confirmed in rows
-    ]
 
 
 def coverage(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:

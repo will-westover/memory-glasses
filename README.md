@@ -53,8 +53,8 @@ Inside `server/server/`, the same word means the same thing at every layer:
    [ingest/facts.py](server/server/ingest/facts.py), [db/world.py](server/server/db/world.py).
 9. One text call picks the new things that are a particular object, not a surface or a vague shape. Each of those is
    compared with the closest-reading earlier things at the same place (anywhere, if the place is unknown) by a vision
-   check of the two photo crops. It links only when certain and no other candidate could be it; a link can be undone
-   (World, Seen again), and "not the same" is remembered: [ingest/link.py](server/server/ingest/link.py).
+   check of the two photo crops. It links only when certain and no other candidate could be it; a link never moves anything, so it can be
+   undone: [ingest/link.py](server/server/ingest/link.py).
 10. One call groups the scenes into activities and the speech into whole conversations, and the day's summary is
     rewritten from its activities: [ingest/activities.py](server/server/ingest/activities.py).
 11. Facts, the search index, are rebuilt from all of this: one per recording, activity, conversation, day, scene,
