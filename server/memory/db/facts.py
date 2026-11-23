@@ -11,7 +11,7 @@ def replace_facts(conn: psycopg.Connection, moment_id: str, facts: list[dict], v
     with conn.cursor() as cursor:
         cursor.executemany(
             "insert into fact (moment_id, frame_id, kind, at, offset_seconds, end_offset_seconds, text, title, embedding,"
-            " entity_id, episode_id) values (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s) returning id",
+            " entity_id, episode_id) values (%s, %s, %s, %s, %s, %s, %s, %s, %s::halfvec, %s, %s) returning id",
             [
                 (
                     moment_id,
@@ -169,7 +169,7 @@ def add_facts(conn: psycopg.Connection, moment_id: str, kind: str, facts: list[d
     for fact, vector in zip(facts, vectors):
         fact_id = conn.execute(
             "insert into fact (moment_id, kind, at, offset_seconds, end_offset_seconds, text, title, embedding, episode_id)"
-            " values (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s) returning id",
+            " values (%s, %s, %s, %s, %s, %s, %s, %s::halfvec, %s) returning id",
             (
                 moment_id,
                 kind,

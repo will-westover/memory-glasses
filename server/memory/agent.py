@@ -525,7 +525,7 @@ def answer_events(
         received = response.model_dump(mode="json")
 
         with llm.collect_call_ids() as call_ids:
-            usd += llm.log_cost(conn, "agent", model, response.usage, request=request, response=received)
+            usd += llm.log_cost(conn, "agent", model, response.usage)
 
         messages.append(
             {"role": "assistant", "at": local_now(), "content": {"output": received["output"]}, "calls": call_ids}
@@ -605,7 +605,7 @@ def ask_plain(conn, question: str, model: str = AGENT_MODEL, moments: list[str] 
         "input": f"Question: {question}\n\nFacts:\n{fact_lines(facts)}",
     }
     response = llm.client().responses.parse(**request, text_format=Answer, reasoning={"effort": "low"})
-    usd = llm.log_cost(conn, "rag", model, response.usage, request=request, response=response.model_dump(mode="json"))
+    usd = llm.log_cost(conn, "rag", model, response.usage)
 
     return answer_result(response.output_parsed, seen, [], usd + when_usd, 2, started)
 

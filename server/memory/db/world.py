@@ -69,7 +69,7 @@ def save_thing_vectors(conn: psycopg.Connection, vectors: dict[int, str]) -> Non
     """Store the embedding of each thing's name and details."""
     with conn.cursor() as cursor:
         cursor.executemany(
-            "update entity set embedding = %s::vector where id = %s",
+            "update entity set embedding = %s::halfvec where id = %s",
             [(vector, entity_id) for entity_id, vector in vectors.items()],
         )
 

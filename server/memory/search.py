@@ -23,7 +23,7 @@ IN_RANGE_SQL = """
 BY_MEANING_SQL = f"""
     select id from fact
      where embedding is not null and {IN_RANGE_SQL}
-     order by embedding <=> %(vector)s::vector
+     order by embedding <=> %(vector)s::halfvec
      limit %(limit)s
 """
 
