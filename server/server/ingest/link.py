@@ -1,4 +1,5 @@
-"""Link things seen in a moment to the same things seen at the same place before, by comparing their photos."""
+"""Link things seen in a moment to the same things seen at the same place before, by comparing their photos. Only things
+that could be recognised again are compared."""
 
 import base64
 from concurrent.futures import ThreadPoolExecutor
@@ -7,7 +8,7 @@ import cv2
 from pydantic import BaseModel, Field
 
 from server import db, llm, storage
-from server.config import CAPTION_MODEL, DATA_DIR
+from server.config import CAPTION_MODEL, DATA_DIR, SUMMARY_MODEL
 
 CANDIDATES = 3
 CROP_PIXELS = 384
@@ -23,6 +24,37 @@ pattern, wear, writing and what it sits on. Two things of the same kind that dif
 Say none when anything conflicts, when a crop is too small or blurred to compare, when the match rests only on
 the setting rather than on the object itself, or when more than one candidate could be it. Say how sure you are.
 A wrong match is worse than a missed one."""
+
+
+DISTINCT_INSTRUCTIONS = """\
+Below are things someone's camera glasses saw, each with a number, a name and details. Say which are a particular
+object that could be found again in a later photo: furniture, appliances, fixtures, plants, pictures, devices,
+clothes, containers and the like, even plain ones (a desk, a TV stand, blinds, a sofa). Leave out what is not one
+object or is too vague to find again: bare surfaces and materials (a wall, a floor, a wooden panel, a patch of
+fabric), parts of something, light, shadows, and shapes described only by colour or outline."""
+
+
+class Distinct(BaseModel):
+    numbers: list[int] = Field(description="Numbers of the things that could be recognised again as the same one")
+
+
+def distinct_things(conn, things: list[dict]) -> list[dict]:
+    """Ask a text model which things could be recognised again as the very same object, and return those."""
+    if not things:
+        return []
+
+    listed = "\n".join(f"{number}. {label(thing)}" for number, thing in enumerate(things, start=1))
+    response = llm.client().responses.parse(
+        model=SUMMARY_MODEL,
+        instructions=DISTINCT_INSTRUCTIONS,
+        input=listed,
+        text_format=Distinct,
+        reasoning={"effort": "low"},
+    )
+    llm.log_cost(conn, "link-distinct", SUMMARY_MODEL, response.usage)
+    chosen = set(response.output_parsed.numbers) if response.output_parsed else set()
+
+    return [thing for number, thing in enumerate(things, start=1) if number in chosen]
 
 
 class Match(BaseModel):
@@ -102,9 +134,10 @@ def link_moment(conn, moment_id: str) -> dict[str, int]:
         return {"things": 0, "compared": 0, "linked": 0}
 
     llm.require_price(LINK_MODEL)
+    llm.require_price(SUMMARY_MODEL)
     pairs = [
         (thing, candidates)
-        for thing in things
+        for thing in distinct_things(conn, things)
         if (candidates := db.link_candidates(conn, thing["id"], moment_id, place["id"] if place else None, CANDIDATES))
     ]
 

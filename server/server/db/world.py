@@ -89,28 +89,33 @@ def moment_things(conn: psycopg.Connection, moment_id: str) -> list[dict]:
     ]
 
 
+LINK_CANDIDATES_SQL = """
+    select e.id, e.name, e.details, f.image_path, e.crop_box, 1 - (e.embedding <=> n.embedding) as similarity
+      from entity n, entity e join frame f on f.id = e.crop_frame_id
+     where n.id = %(id)s and e.id <> n.id and e.kind = 'object' and e.merged_into is null
+       and e.embedding is not null and e.crop_box is not null and f.moment_id <> %(moment)s
+       and (%(place)s::bigint is null or exists (select 1 from sighting s join frame_segment fs on fs.frame_id = s.frame_id
+                                                where s.entity_id = e.id and fs.place_id = %(place)s))
+       and not exists (select 1 from not_same x where (x.frame_id, x.other_frame_id) in
+                       ((n.crop_frame_id, e.crop_frame_id), (e.crop_frame_id, n.crop_frame_id)))
+     order by e.embedding <=> n.embedding
+     limit %(limit)s
+"""
+
+
 def link_candidates(
     conn: psycopg.Connection, entity_id: int, moment_id: str, place_id: int | None, limit: int
 ) -> list[dict]:
-    """Return earlier things from other moments whose name and details read most alike, those at the same place first,
-    leaving out any pair you said are not the same."""
+    """Return the earlier things from other moments whose name and details read most alike: only those seen at the same
+    place when the place is known, leaving out any pair you said are not the same."""
+    conn.execute("set local hnsw.iterative_scan = relaxed_order")
     rows = conn.execute(
-        "select e.id, e.name, e.details, f.image_path, e.crop_box, 1 - (e.embedding <=> n.embedding)"
-        "  from entity n, entity e join frame f on f.id = e.crop_frame_id"
-        " where n.id = %(id)s and e.id <> n.id and e.kind = 'object' and e.merged_into is null"
-        "   and e.embedding is not null and e.crop_box is not null and f.moment_id <> %(moment)s"
-        "   and not exists (select 1 from not_same x where (x.frame_id, x.other_frame_id) in"
-        "                   ((n.crop_frame_id, e.crop_frame_id), (e.crop_frame_id, n.crop_frame_id)))"
-        " order by exists (select 1 from sighting s join frame_segment fs on fs.frame_id = s.frame_id"
-        "                  where s.entity_id = e.id and fs.place_id = %(place)s) desc,"
-        "          e.embedding <=> n.embedding"
-        " limit %(limit)s",
-        {"id": entity_id, "moment": moment_id, "place": place_id, "limit": limit},
-    )
+        LINK_CANDIDATES_SQL, {"id": entity_id, "moment": moment_id, "place": place_id, "limit": limit}
+    ).fetchall()
 
     return [
         {"id": other, "name": name, "details": details, "image_path": image_path, "box": box, "similarity": similarity}
-        for other, name, details, image_path, box, similarity in rows
+        for other, name, details, image_path, box, similarity in sorted(rows, key=lambda row: -row[5])
     ]
 
 
