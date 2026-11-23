@@ -17,7 +17,7 @@ Words: a **moment** is one recording, start to finish; a **frame** is one photo 
 what the model wrote about it; a **stretch** is a run of frames that are one scene, and its **summary** is what the
 model wrote about it, titled as a **chapter**; a **fact** is one searchable line with a start, an end and the frames it
 covers; an **entity** is one thing or person, and each time it is seen is a **sighting**; a **scene** is stored as
-an **episode**; a **segment** is the part of a moment at one **place**, or on the move; a **room** is a part of a place. Chats are stored as raw
+an **episode**; scenes are grouped into **activities**, and activities into a **day**; a **segment** is the part of a moment at one **place**, or on the move; a **room** is a part of a place. Chats are stored as raw
 **messages**; every model call is a **model_call**, linked to the message or frame it was for.
 
 Where things live, what happens to a photo and to a question, and the commands (`make`) are in `README.md`. Keep

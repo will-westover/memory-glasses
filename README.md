@@ -38,22 +38,26 @@ Inside `server/memory/`, the same word means the same thing at every layer:
 4. The server counts it in the `recording` table: [glasses.py](server/memory/glasses.py).
 5. When the recording ends, a worker job joins the photos into a video: `process_glasses` in
    [jobs.py](server/memory/jobs.py).
-6. The pipeline keeps the sharp frames, captions them, finds faces and rooms, and writes facts with embeddings:
-   [pipeline.py](server/memory/pipeline.py). The result is a moment.
-7. Frames are grouped into scenes where the room changes, the photos stop looking alike, there is a gap or two
-   minutes pass. One call per scene sees its photos, captions, people and speech, and records each thing seen as a
-   sighting of a thing already known in the recording or a new one; people come from faces. Facts, the search
-   index, are rebuilt from the scenes, things, people, text and speech: [ingest/facts.py](server/memory/ingest/facts.py),
-   [db/world.py](server/memory/db/world.py).
-8. Each new thing is compared with things seen at the same place in earlier recordings: up to three whose name and
-   details read alike, then a vision check of the two photo crops. A match is a link that can be undone
-   (`/things/links`): [ingest/link.py](server/memory/ingest/link.py).
-8. The audio becomes timed lines, each with a voiceprint: [ingest/transcript.py](server/memory/ingest/transcript.py).
+6. The pipeline keeps the sharp frames, transcribes the speech, captions each frame (with the words spoken around
+   it), finds faces and rooms, and builds the world model: [pipeline.py](server/memory/pipeline.py). The result is a
+   moment.
+7. The audio becomes timed lines, each with a voiceprint: [ingest/transcript.py](server/memory/ingest/transcript.py).
    With `TRANSCRIBE_MODEL=gpt-transcribe`, Silero VAD finds the runs of speech, each run is transcribed on its own
    (with `gpt-live-transcribe` when that hears nothing), and WeSpeaker gives each line a voiceprint:
    [ingest/speech.py](server/memory/ingest/speech.py). The model files go in the ignored `server/models/`:
    `silero_vad.onnx` from github.com/snakers4/silero-vad and `voxceleb_resnet34_LM.onnx` from
    huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM.
+8. Frames are grouped into scenes where the room changes, the photos stop looking alike, there is a gap or two
+   minutes pass. One call per scene sees its photos, captions, people and speech, and records each thing seen as a
+   sighting of a thing already known in the recording or a new one; people come from faces:
+   [ingest/facts.py](server/memory/ingest/facts.py), [db/world.py](server/memory/db/world.py).
+9. Each new thing is compared with the closest-reading earlier things, those at the same place first, by a vision
+   check of the two photo crops. It links only when certain and no other candidate could be it; a link can be undone
+   (`/things/links`), and "not the same" is remembered: [ingest/link.py](server/memory/ingest/link.py).
+10. One call groups the scenes into activities and the speech into whole conversations, and the day's summary is
+    rewritten from its activities: [ingest/activities.py](server/memory/ingest/activities.py).
+11. Facts, the search index, are rebuilt from all of this: one per recording, activity, conversation, day, scene,
+    thing, person, text and passage, each pointing at its photos.
 
 A recording made in the app skips steps 1 to 5: it uploads the video straight to storage
 ([MomentUpload.swift](app/MemoryGlasses/Record/MomentUpload.swift)) and the pipeline runs on it.
@@ -63,7 +67,8 @@ A recording made in the app skips steps 1 to 5: it uploads the video straight to
 1. You type it in the app: [ChatView.swift](app/MemoryGlasses/Ask/ChatView.swift).
 2. The app posts it and reads the answer as it streams: [ConversationStore.swift](app/MemoryGlasses/Ask/ConversationStore.swift)
    to `POST /conversations/{id}/ask/stream` in [api/chats.py](server/memory/api/chats.py).
-3. The agent decides what to look up, with four tools (search, timeline, entity, nearby): [agent.py](server/memory/agent.py).
+3. The agent decides what to look up, with five tools (search, timeline, coverage, entity, nearby); every fact it
+   reads names its recording: [agent.py](server/memory/agent.py).
 4. Search works out which time the question is about and looks there first, finds facts by meaning and by
    keyword, merges the two, and keeps one fact per thing per scene: [search.py](server/memory/search.py),
    [when.py](server/memory/when.py).
