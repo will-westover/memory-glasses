@@ -13,7 +13,7 @@ from memory.config import FRAMES_PER_MINUTE
 from memory import places
 from memory.ingest import captions, faces, facts, recording, transcript
 
-STEPS = ("Picking frames", "Describing frames", "Transcribing", "Finding faces", "Finding rooms", "Building facts")
+STEPS = ("Picking frames", "Transcribing", "Describing frames", "Finding faces", "Finding rooms", "Building facts")
 
 
 def process(
@@ -43,11 +43,11 @@ def process(
         conn.commit()
 
         on_step(STEPS[1])
-        captions.caption_moment(conn, moment_id)
+        transcript.transcribe_moment(conn, moment_id)
         conn.commit()
 
         on_step(STEPS[2])
-        transcript.transcribe_moment(conn, moment_id)
+        captions.caption_moment(conn, moment_id)
         conn.commit()
 
         on_step(STEPS[3])

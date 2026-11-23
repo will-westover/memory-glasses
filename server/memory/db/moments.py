@@ -104,9 +104,11 @@ def moment_start_and_location(conn: psycopg.Connection, moment_id: str) -> tuple
 
 
 def frames_without_caption(conn: psycopg.Connection, moment_id: str, limit: int | None = None) -> list[tuple]:
-    """Return (frame id, image path) for frames with no caption."""
+    """Return (frame id, image path, seconds into the moment) for frames with no caption."""
     return conn.execute(
-        "select id, image_path from frame where moment_id = %s and captioned_at is null order by captured_at limit %s",
+        "select f.id, f.image_path, extract(epoch from f.captured_at - m.started_at) from frame f"
+        " join moment m on m.id = f.moment_id where f.moment_id = %s and f.captioned_at is null"
+        " order by f.captured_at limit %s",
         (moment_id, limit),
     ).fetchall()
 

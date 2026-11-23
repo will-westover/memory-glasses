@@ -15,6 +15,7 @@ from memory.config import CAPTION_MODEL, DATA_DIR
 
 IMAGE_WIDTH = 1080
 PARALLEL_CALLS = 8
+SPOKEN_WINDOW_SECONDS = 30
 
 INSTRUCTIONS = """\
 You are looking at one frame from a camera worn on someone's glasses, so the view is what the wearer sees.
@@ -26,6 +27,13 @@ one as specifically as you can tell from the picture: the kind of plant, food, a
 model when it is readable. Skip walls, floors and built-in furniture. For each, say where it is in a short phrase of
 your own, give the details that would tell it apart from a similar thing (colour, material, pattern, size, wear,
 any writing on it), and mark the box around it.
+
+Readable text: copy it exactly. When words spoken around this moment are given, they can help read blurry text (a
+slide that says "dendrogram" while the speaker says "dendrogram"), but never report text that is not visible.
+
+The glasses are not always worn. If the view is fixed, very low or tilted, or a person faces the camera from close by,
+the glasses have probably been set down; say so in the summary, and remember that the person facing them may be the
+wearer.
 
 Report only what is visible. Do not guess the names of people."""
 
@@ -84,9 +92,21 @@ def image_link(path: Path) -> str:
     return f"data:image/jpeg;base64,{base64.b64encode(small_jpeg(path)).decode()}"
 
 
-def caption_image(path: Path, model: str = CAPTION_MODEL):
-    """Ask the model to describe one image. Return (Caption, usage)."""
+def spoken_near(lines: list[dict], offset: float) -> str:
+    """Return what was said in the transcript lines that overlap the minute around a frame."""
+    near = [
+        line
+        for line in lines
+        if line["start"] <= offset + SPOKEN_WINDOW_SECONDS and line["end"] >= offset - SPOKEN_WINDOW_SECONDS
+    ]
+
+    return " ".join(line["text"] for line in near)
+
+
+def caption_image(path: Path, model: str = CAPTION_MODEL, spoken: str = ""):
+    """Ask the model to describe one image, with what was said around it if anything. Return (Caption, usage)."""
     image_url = image_link(path)
+    said = [{"type": "input_text", "text": f"Said around this moment: {spoken}"}] if spoken else []
 
     response = llm.client().responses.parse(
         model=model,
@@ -94,7 +114,7 @@ def caption_image(path: Path, model: str = CAPTION_MODEL):
         input=[
             {
                 "role": "user",
-                "content": [{"type": "input_image", "image_url": image_url}],
+                "content": said + [{"type": "input_image", "image_url": image_url}],
             }
         ],
         text_format=Caption,
@@ -121,11 +141,15 @@ def caption_moment(conn, moment_id: str, limit: int | None = None, model: str = 
     storage.fetch_folder(DATA_DIR / "moments" / moment_id)
 
     frames = db.frames_without_caption(conn, moment_id, limit)
+    lines = db.transcript_lines(conn, moment_id)
     started = time.monotonic()
     totals = {"frames": 0, "failed": 0, "usd": 0.0, "input_tokens": 0, "output_tokens": 0}
 
     with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
-        jobs = {pool.submit(caption_image, DATA_DIR / path, model): (frame_id, path) for frame_id, path in frames}
+        jobs = {
+            pool.submit(caption_image, DATA_DIR / path, model, spoken_near(lines, float(offset))): (frame_id, path)
+            for frame_id, path, offset in frames
+        }
 
         for job in as_completed(jobs):
             frame_id, path = jobs[job]
