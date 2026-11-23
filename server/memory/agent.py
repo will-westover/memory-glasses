@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import math
 import sys
 import time
 from datetime import datetime, timedelta
@@ -31,8 +30,8 @@ INSTRUCTIONS = """\
 You answer questions for someone who wears camera glasses. The glasses record what the wearer sees and hears,
 and that record is kept as facts, each naming the recording it comes from; a recording fact gives a whole
 recording's title, overview, start, end and length: frames (what was happening in each photo), objects and where each one was, text that was
-readable, speech, summaries of what happened and what was said, and which people the wearer has named
-were in view. Summaries, objects, text and people each cover a stretch of time, one fact per stretch, not one per
+readable, speech, summaries of each scene, activities (what the wearer was doing, across scenes), whole
+conversations, one summary per day, and which people the wearer has named were in view. Summaries, objects, text and people each cover a stretch of time, one fact per stretch, not one per
 photo. Each fact starts with its number in [brackets] and the time it was recorded, or the times it covers. "I" and "me"
 in a question mean the wearer. Speakers are labelled with letters, not names.
 
@@ -225,16 +224,24 @@ def parse_time(text: str | None) -> datetime | None:
     return at if at.tzinfo else at.astimezone()
 
 
+OVERVIEW_KINDS = ("day", "recording", "activity", "summary")
+
+
 def fit_timeline(facts: list[dict], limit: int = TIMELINE_MAX_FACTS) -> list[dict]:
-    """Return the frames and speech if they fit in `limit`, otherwise the summaries of that stretch."""
+    """Return everything but scene summaries if it fits in `limit`; otherwise only the broadest overviews that fit:
+    days, recordings, activities and scene summaries, then fewer of those kinds."""
     detail = [fact for fact in facts if fact["kind"] != "summary"]
 
     if len(detail) <= limit:
         return detail
 
-    overview = [fact for fact in facts if fact["kind"] == "summary"] or detail
+    for kinds in (OVERVIEW_KINDS, OVERVIEW_KINDS[:3], OVERVIEW_KINDS[:2]):
+        broad = [fact for fact in facts if fact["kind"] in kinds]
 
-    return overview[:: math.ceil(len(overview) / limit)]
+        if len(broad) <= limit:
+            return broad
+
+    return [fact for fact in facts if fact["kind"] == "day"][:limit]
 
 
 def recording_note(fact: dict) -> str:
@@ -352,7 +359,7 @@ def run_tool(
 
     seen.update({fact["id"]: fact for fact in facts})
 
-    if name == "timeline" and facts and facts[0]["kind"] == "summary":
+    if name == "timeline" and facts and all(fact["kind"] in OVERVIEW_KINDS for fact in facts):
         return f"{LONG_STRETCH}\n{fact_lines(facts)}", facts
 
     return fact_lines(facts), facts

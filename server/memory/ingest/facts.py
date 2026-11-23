@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from memory import db, llm
 from memory.config import DATA_DIR, SUMMARY_MODEL, minutes_seconds, spoken_length
 from memory.ingest.captions import image_link
+from memory.ingest.activities import write_activities
 from memory.ingest.link import link_moment
 from memory.overview import write_overview
 from memory.gps import place_for
@@ -24,7 +25,7 @@ STRETCH_MAX_SECONDS = 120.0
 STRETCH_GAP_SECONDS = 30.0
 STRETCH_SIMILARITY = 0.6
 
-KINDS = ("frame", "person", "object", "text", "speech", "said", "summary", "recording")
+KINDS = ("frame", "person", "object", "text", "speech", "said", "summary", "recording", "activity", "conversation")
 
 SCENE_PHOTOS = 6
 
@@ -596,8 +597,9 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
 
     write_overview(conn, moment_id)
     add_recording_fact(conn, moment_id, place)
+    grouped = write_activities(conn, moment_id, passages)
 
-    return count_kinds(facts) | {"recording": 1}
+    return count_kinds(facts) | {"recording": 1} | grouped
 
 
 def print_stretches(conn, moment_id: str) -> None:

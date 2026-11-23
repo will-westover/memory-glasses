@@ -154,7 +154,7 @@ def timeline(conn: psycopg.Connection, start, end, moments: list[str] | None = N
     return fact_rows(
         conn.execute(
             f"{FACT_SELECT} where fact.at <= %(end)s and {ENDS_AT} >= %(start)s"
-            " and fact.kind in ('frame', 'speech', 'summary', 'recording')"
+            " and fact.kind in ('frame', 'speech', 'summary', 'recording', 'activity', 'conversation', 'day')"
             " and (%(moments)s::text[] is null or fact.moment_id = any(%(moments)s::text[]))"
             " order by fact.at, fact.id",
             {"start": start, "end": end, "moments": moments},
@@ -162,14 +162,37 @@ def timeline(conn: psycopg.Connection, start, end, moments: list[str] | None = N
     )
 
 
+def add_facts(conn: psycopg.Connection, moment_id: str, kind: str, facts: list[dict], vectors: list[str]) -> None:
+    """Store a moment's facts of one kind, with the frames each covers, replacing any earlier facts of that kind."""
+    conn.execute("delete from fact where moment_id = %s and kind = %s", (moment_id, kind))
+
+    for fact, vector in zip(facts, vectors):
+        fact_id = conn.execute(
+            "insert into fact (moment_id, kind, at, offset_seconds, end_offset_seconds, text, title, embedding, episode_id)"
+            " values (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s) returning id",
+            (
+                moment_id,
+                kind,
+                fact["at"],
+                fact.get("offset_seconds", 0),
+                fact["end_offset_seconds"],
+                fact["text"],
+                fact.get("title"),
+                vector,
+                fact.get("episode_id"),
+            ),
+        ).fetchone()[0]
+
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                "insert into fact_frame (fact_id, frame_id) values (%s, %s)",
+                [(fact_id, frame_id) for frame_id in fact.get("frame_ids", [])],
+            )
+
+
 def add_fact(conn: psycopg.Connection, moment_id: str, fact: dict, vector: str) -> None:
     """Store one more fact for a moment, replacing any earlier fact of the same kind."""
-    conn.execute("delete from fact where moment_id = %s and kind = %s", (moment_id, fact["kind"]))
-    conn.execute(
-        "insert into fact (moment_id, kind, at, offset_seconds, end_offset_seconds, text, title, embedding)"
-        " values (%s, %s, %s, %s, %s, %s, %s, %s::vector)",
-        (moment_id, fact["kind"], fact["at"], 0, fact["end_offset_seconds"], fact["text"], fact.get("title"), vector),
-    )
+    add_facts(conn, moment_id, fact["kind"], [fact], [vector])
 
 
 def moment_length(conn: psycopg.Connection, moment_id: str) -> float:

@@ -183,3 +183,74 @@ def coverage(conn: psycopg.Connection, start, end, moments: list[str] | None = N
         {"id": moment_id, "title": title, "overview": overview, "start": began, "end": ended, "scenes": scenes}
         for moment_id, title, overview, began, ended, scenes in rows
     ]
+
+
+def moment_scenes(conn: psycopg.Connection, moment_id: str) -> list[dict]:
+    """Return a moment's scenes in order, each with its times, title, summary, people and frames."""
+    rows = conn.execute(
+        "select e.id, e.start_at, e.end_at, e.title, e.summary,"
+        "       coalesce((select array_agg(distinct en.name) from sighting s join entity en on en.id = s.entity_id"
+        "                  where s.episode_id = e.id and en.kind = 'person'), '{}'),"
+        "       coalesce((select array_agg(distinct s.frame_id) from sighting s where s.episode_id = e.id), '{}')"
+        "  from episode e where e.moment_id = %s and e.level = 'scene' order by e.start_at",
+        (moment_id,),
+    )
+
+    return [
+        {
+            "id": scene_id,
+            "start": start,
+            "end": end,
+            "title": title,
+            "summary": summary,
+            "people": people,
+            "frames": frames,
+        }
+        for scene_id, start, end, title, summary, people, frames in rows
+    ]
+
+
+def save_activity(
+    conn: psycopg.Connection, moment_id: str, start, end, title: str, summary: str, scene_ids: list[int]
+) -> int:
+    """Store one activity of a moment, make its scenes part of it, and return its id."""
+    activity_id = conn.execute(
+        "insert into episode (moment_id, level, start_at, end_at, title, summary) values (%s, 'activity', %s, %s, %s, %s)"
+        " returning id",
+        (moment_id, start, end, title, summary),
+    ).fetchone()[0]
+    conn.execute("update episode set parent_id = %s where id = any(%s)", (activity_id, scene_ids))
+
+    return activity_id
+
+
+def forget_activities(conn: psycopg.Connection, moment_id: str) -> None:
+    """Delete a moment's activities, keeping its scenes."""
+    conn.execute("update episode set parent_id = null where moment_id = %s and level = 'scene'", (moment_id,))
+    conn.execute("delete from episode where moment_id = %s and level = 'activity'", (moment_id,))
+
+
+def day_activities(conn: psycopg.Connection, start, end) -> list[dict]:
+    """Return every activity that starts between two times, in order, with the moment it belongs to."""
+    rows = conn.execute(
+        "select moment_id, start_at, end_at, title, summary from episode"
+        " where level = 'activity' and start_at >= %s and start_at < %s order by start_at",
+        (start, end),
+    )
+
+    return [{"moment_id": m, "start": s, "end": e, "title": t, "summary": su} for m, s, e, t, su in rows]
+
+
+def save_day(conn: psycopg.Connection, day, start, end, title: str, summary: str) -> int:
+    """Store the summary of a day, replacing any earlier one, and return its id."""
+    conn.execute("delete from episode where level = 'day' and day = %s", (day,))
+
+    return conn.execute(
+        "insert into episode (level, day, start_at, end_at, title, summary) values ('day', %s, %s, %s, %s, %s) returning id",
+        (day, start, end, title, summary),
+    ).fetchone()[0]
+
+
+def forget_day_facts(conn: psycopg.Connection, moment_ids: list[str]) -> None:
+    """Delete the day facts stored on any of these moments."""
+    conn.execute("delete from fact where kind = 'day' and moment_id = any(%s)", (moment_ids,))
