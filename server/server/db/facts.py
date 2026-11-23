@@ -277,11 +277,12 @@ def source_details(conn: psycopg.Connection, facts: list[dict]) -> dict:
     }
 
 
-def recent_facts(conn: psycopg.Connection, limit: int = 40) -> list[dict]:
-    """Return the newest summaries, speech, text and people facts, newest first."""
+def recent_facts(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
+    """Return the newest overviews (days, recordings, activities and conversations), newest first."""
     return fact_rows(
         conn.execute(
-            f"{FACT_SELECT} where fact.kind in ('summary', 'said', 'text', 'person') order by fact.at desc limit %s",
+            f"{FACT_SELECT} where fact.kind in ('day', 'recording', 'activity', 'conversation')"
+            " order by fact.at desc limit %s",
             (limit,),
         )
     )

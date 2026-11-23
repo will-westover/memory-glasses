@@ -1,5 +1,7 @@
 """Short model calls around a chat: a title for each conversation and questions to suggest."""
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 from server import db, llm
@@ -11,10 +13,14 @@ Write a title of two to five words for a conversation that starts with this ques
 names a thread. No quotation marks and no full stop."""
 
 SUGGEST_INSTRUCTIONS = """\
-Someone wears camera glasses that record what they see and hear. Below is the newest of what was recorded. Write
-three or four short questions they could ask about it, in their own voice, each answerable from these records.
-Vary them across what was seen, what was said, who was there, where they were and when things happened. Keep each
-under ten words, and make them specific to what is here."""
+Someone wears camera glasses that record their day. Below is an overview of what was recorded most recently. Write
+three very simple questions they might ask to remember it, like "What did I do this morning?", "What did we talk
+about at dinner?" or "Who was I with on Friday?". Each under seven words, in plain everyday words, as if they had
+forgotten. Never put the answer or a detail of it in the question. Use times the way people say them (today,
+yesterday, this morning, Friday), counted from now, never clock times or dates. Make the three about different
+things: what they did, what was said, and who they were with or where.
+
+It is now {now}."""
 
 
 class Title(BaseModel):
@@ -22,7 +28,7 @@ class Title(BaseModel):
 
 
 class Suggestions(BaseModel):
-    questions: list[str] = Field(description="Three or four short questions")
+    questions: list[str] = Field(description="Three very simple questions")
 
 
 def make_title(conn, question: str, answer: str) -> str:
@@ -50,7 +56,7 @@ def suggest(conn) -> list[str]:
     llm.require_price(SUMMARY_MODEL)
     request = {
         "model": SUMMARY_MODEL,
-        "instructions": SUGGEST_INSTRUCTIONS,
+        "instructions": SUGGEST_INSTRUCTIONS.format(now=f"{datetime.now().astimezone():%A %d %B %Y, %H:%M}"),
         "input": "\n".join(fact_line(fact) for fact in reversed(facts)),
     }
 
@@ -58,4 +64,4 @@ def suggest(conn) -> list[str]:
     llm.log_cost(conn, "suggest", SUMMARY_MODEL, response.usage)
     conn.commit()
 
-    return response.output_parsed.questions[:4] if response.output_parsed else []
+    return response.output_parsed.questions[:3] if response.output_parsed else []
