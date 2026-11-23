@@ -63,3 +63,104 @@ def save_sightings(conn: psycopg.Connection, rows: list[tuple]) -> None:
         " where s.entity_id = e.id and e.id = any(%s)",
         (list({row[0] for row in rows}),),
     )
+
+
+def save_thing_vectors(conn: psycopg.Connection, vectors: dict[int, str]) -> None:
+    """Store the embedding of each thing's name and details."""
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "update entity set embedding = %s::vector where id = %s",
+            [(vector, entity_id) for entity_id, vector in vectors.items()],
+        )
+
+
+def moment_things(conn: psycopg.Connection, moment_id: str) -> list[dict]:
+    """Return the things first recorded in a moment that have a photo crop, with that photo."""
+    rows = conn.execute(
+        "select distinct e.id, e.name, e.details, f.image_path, e.crop_box from entity e"
+        " join frame f on f.id = e.crop_frame_id"
+        " where e.kind = 'object' and e.merged_into is null and e.crop_box is not null and f.moment_id = %s",
+        (moment_id,),
+    )
+
+    return [
+        {"id": entity_id, "name": name, "details": details, "image_path": image_path, "box": box}
+        for entity_id, name, details, image_path, box in rows
+    ]
+
+
+def link_candidates(
+    conn: psycopg.Connection, entity_id: int, moment_id: str, place_id: int, least: float, limit: int
+) -> list[dict]:
+    """Return things seen at the same place in other moments whose name and details read alike, closest first."""
+    rows = conn.execute(
+        "select e.id, e.name, e.details, f.image_path, e.crop_box, 1 - (e.embedding <=> n.embedding)"
+        "  from entity n, entity e join frame f on f.id = e.crop_frame_id"
+        " where n.id = %(id)s and e.id <> n.id and e.kind = 'object' and e.merged_into is null"
+        "   and e.embedding is not null and e.crop_box is not null and f.moment_id <> %(moment)s"
+        "   and 1 - (e.embedding <=> n.embedding) >= %(least)s"
+        "   and exists (select 1 from sighting s join frame_segment fs on fs.frame_id = s.frame_id"
+        "                where s.entity_id = e.id and fs.place_id = %(place)s)"
+        " order by e.embedding <=> n.embedding limit %(limit)s",
+        {"id": entity_id, "moment": moment_id, "least": least, "place": place_id, "limit": limit},
+    )
+
+    return [
+        {"id": other, "name": name, "details": details, "image_path": image_path, "box": box, "similarity": similarity}
+        for other, name, details, image_path, box, similarity in rows
+    ]
+
+
+def link_things(conn: psycopg.Connection, entity_id: int, same_as: int, reason: str) -> None:
+    """Record that a thing is the same as an earlier one; the link can be undone, nothing is moved."""
+    conn.execute("update entity set merged_into = %s, merge_reason = %s where id = %s", (same_as, reason, entity_id))
+    conn.execute(
+        "update entity set first_seen = least(first_seen, (select first_seen from entity where id = %(new)s)),"
+        " last_seen = greatest(last_seen, (select last_seen from entity where id = %(new)s)) where id = %(root)s",
+        {"new": entity_id, "root": same_as},
+    )
+
+
+def unlink_thing(conn: psycopg.Connection, entity_id: int) -> bool:
+    """Undo a link, so the thing stands on its own again; it is then marked as checked by you."""
+    return (
+        conn.execute(
+            "update entity set merged_into = null, merge_reason = null, confirmed = true where id = %s and merged_into is not null",
+            (entity_id,),
+        ).rowcount
+        > 0
+    )
+
+
+def confirm_link(conn: psycopg.Connection, entity_id: int) -> bool:
+    """Mark a link as checked by you."""
+    return (
+        conn.execute(
+            "update entity set confirmed = true where id = %s and merged_into is not null", (entity_id,)
+        ).rowcount
+        > 0
+    )
+
+
+def recent_links(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
+    """Return the newest links between things, with each side's name and photo, for you to check."""
+    rows = conn.execute(
+        "select e.id, e.name, fe.image_path, e.crop_box, r.id, r.name, fr.image_path, r.crop_box, e.merge_reason, e.confirmed"
+        "  from entity e join entity r on r.id = e.merged_into"
+        "  left join frame fe on fe.id = e.crop_frame_id left join frame fr on fr.id = r.crop_frame_id"
+        " order by e.id desc limit %s",
+        (limit,),
+    )
+
+    return [
+        {
+            "id": entity_id,
+            "name": name,
+            "image_path": image_path,
+            "box": box,
+            "same_as": {"id": root_id, "name": root_name, "image_path": root_image, "box": root_box},
+            "reason": reason,
+            "confirmed": confirmed,
+        }
+        for entity_id, name, image_path, box, root_id, root_name, root_image, root_box, reason, confirmed in rows
+    ]

@@ -45,6 +45,9 @@ Inside `server/memory/`, the same word means the same thing at every layer:
    sighting of a thing already known in the recording or a new one; people come from faces. Facts, the search
    index, are rebuilt from the scenes, things, people, text and speech: [ingest/facts.py](server/memory/ingest/facts.py),
    [db/world.py](server/memory/db/world.py).
+8. Each new thing is compared with things seen at the same place in earlier recordings: up to three whose name and
+   details read alike, then a vision check of the two photo crops. A match is a link that can be undone
+   (`/things/links`): [ingest/link.py](server/memory/ingest/link.py).
 8. The audio becomes timed lines, each with a voiceprint: [ingest/transcript.py](server/memory/ingest/transcript.py).
    With `TRANSCRIBE_MODEL=gpt-transcribe`, Silero VAD finds the runs of speech, each run is transcribed on its own
    (with `gpt-live-transcribe` when that hears nothing), and WeSpeaker gives each line a voiceprint:

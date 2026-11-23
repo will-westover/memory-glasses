@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from memory import db, llm
 from memory.config import DATA_DIR, SUMMARY_MODEL, minutes_seconds
 from memory.ingest.captions import image_link
+from memory.ingest.link import link_moment
 from memory.overview import write_overview
 from memory.gps import place_for
 
@@ -414,7 +415,7 @@ def all_stretch_facts(conn, groups: list[tuple[list, list]], place: str | None, 
     return facts
 
 
-def save_world(conn, moment_id: str, facts: list[dict], known: list[dict]) -> None:
+def save_world(conn, moment_id: str, facts: list[dict], known: list[dict], thing_vectors: list[str]) -> None:
     """Store the moment's scenes, things and sightings, and point each fact at its scene and thing or person."""
     db.forget_world(conn, moment_id)
 
@@ -429,6 +430,7 @@ def save_world(conn, moment_id: str, facts: list[dict], known: list[dict]) -> No
         )
         for item in known
     }
+    db.save_thing_vectors(conn, {things[item["label"]]: vector for item, vector in zip(known, thing_vectors)})
     people = {
         fact["person_id"]: db.person_entity(conn, fact["person_id"], fact["person_name"])
         for fact in facts
@@ -506,13 +508,17 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     ]
     rest += all_stretch_facts(conn, groups, place, known)
     rest_vectors = llm.embed(conn, [fact["text"] for fact in rest], "embed") if rest else []
+    thing_texts = [f"{item['name']}: {item['details'] or ''}" for item in known]
+    thing_vectors = llm.embed(conn, thing_texts, "embed") if thing_texts else []
 
     facts = frame_list + rest
 
     with conn.transaction():
         db.lock_moment(conn, moment_id)
-        save_world(conn, moment_id, facts, known)
+        save_world(conn, moment_id, facts, known, thing_vectors)
         db.replace_facts(conn, moment_id, facts, frame_vectors + rest_vectors)
+
+    link_moment(conn, moment_id)
 
     write_overview(conn, moment_id)
 

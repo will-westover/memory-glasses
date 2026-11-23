@@ -48,8 +48,8 @@ FACT_SELECT = (
     "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds,"
     "       coalesce(fact.end_offset_seconds, fact.offset_seconds), fact.text,"
     "       coalesce(frame.image_path, best.image_path, closest.image_path), frame.x, frame.z, room.name,"
-    "       fact.frame_id, fact.entity_id, fact.episode_id"
-    "  from fact left join frame on frame.id = fact.frame_id"
+    "       fact.frame_id, coalesce(thing.merged_into, fact.entity_id), fact.episode_id"
+    "  from fact left join frame on frame.id = fact.frame_id left join entity thing on thing.id = fact.entity_id"
     "  join moment on moment.id = fact.moment_id left join room on room.id = frame.room_id"
     "  left join lateral ("
     "    select seen.image_path from fact_frame covered join frame seen on seen.id = covered.frame_id"
@@ -114,7 +114,8 @@ def entity_facts(conn: psycopg.Connection, fact_id: int, limit: int = 30) -> lis
     """Return the facts about the same thing or person as one fact, across every moment, oldest first."""
     return fact_rows(
         conn.execute(
-            f"{FACT_SELECT} where fact.entity_id = (select entity_id from fact where id = %s)"
+            f"{FACT_SELECT} where coalesce(thing.merged_into, fact.entity_id) = ("
+            "    select coalesce(e.merged_into, e.id) from fact f join entity e on e.id = f.entity_id where f.id = %s)"
             " and fact.kind in ('object', 'person') order by fact.at desc limit %s",
             (fact_id, limit),
         )

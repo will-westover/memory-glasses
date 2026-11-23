@@ -73,6 +73,8 @@ Everything else is your call.
   arrive later start a new part. Photos are filed by when they were taken, not when they arrived.
 - Facts cover a stretch of a moment (`fact.end_offset_seconds`, and `fact_frame` for the photos), split by code where
   the room changes, the photos stop looking alike, there is a 30 s gap or two minutes pass.
+- A thing seen again at the same place is linked to the earlier one (`entity.merged_into`), never moved, so a link can
+  be undone. Rebuilding a moment's facts makes its things again and links them afresh.
 - A moment is filed at the place the phone's map recognised, else the place whose frames look most alike (average
   embedding at least 0.75); for now each moment is one segment. Rooms come from one model call per moment, then a
   vote of frames within 1.5 m.
