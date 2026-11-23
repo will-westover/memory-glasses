@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import pathlib
+import random
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -83,6 +85,18 @@ def found_photo(conn, photos: list[str], shown: list[dict]) -> bool:
     return bool(set(photos) & (paths | {path for (path,) in covered}))
 
 
+def failed_stage(verdict: str, evidence: list[str] | None, result: dict) -> str | None:
+    """Return where a wrong or partial answer went wrong: search never found the evidence, the agent found it but
+    didn't use it, or it used it and still answered wrongly; None when right or there is no evidence to check."""
+    if verdict == "correct" or not evidence:
+        return None
+
+    if not mentions_evidence(evidence, result["shown"]):
+        return "search"
+
+    return "reading" if not mentions_evidence(evidence, result["sources"]) else "answer"
+
+
 def grade(conn, question: dict, result: dict) -> Grade:
     """Ask the judge model to grade one answer."""
     cited = "\n".join(f"- {fact['text']}" for fact in result["sources"]) or "(none)"
@@ -122,6 +136,7 @@ def run_question(conn, question: dict, mode: str, model: str) -> dict:
         "cited": mentions_evidence(evidence, result["sources"]) if evidence else None,
         "photo_found": found_photo(conn, photos, result["shown"]) if photos else None,
         "found_right": result["found"] == bool(question["expected"]),
+        "stage": failed_stage(graded.verdict, evidence, result),
         "model_calls": result["model_calls"],
         "seconds": result["seconds"],
         "usd": result["usd"],
@@ -221,6 +236,74 @@ def print_report(rows: list[dict], judge_usd: float) -> None:
     )
 
 
+def question_points(rows: list[dict], mode: str) -> dict[str, list[float]]:
+    """Return each question's points in one mode, one entry per repeat."""
+    points: dict[str, list[float]] = {}
+
+    for row in rows:
+        if row["mode"] == mode:
+            points.setdefault(row["question"], []).append(VERDICT_POINTS[row["verdict"]])
+
+    return points
+
+
+def paired(before: dict[str, list[float]], after: dict[str, list[float]], draws: int = 10000) -> dict:
+    """Compare two runs question by question: the mean change, a 95% bootstrap range for it, and what moved."""
+    shared = sorted(set(before) & set(after))
+    changes = [average(after[question]) - average(before[question]) for question in shared]
+    rng = random.Random(0)
+    means = sorted(average([rng.choice(changes) for _ in changes]) for _ in range(draws)) if changes else [0.0]
+
+    return {
+        "questions": len(shared),
+        "change": average(changes),
+        "low": means[int(0.025 * len(means))],
+        "high": means[int(0.975 * len(means)) - 1],
+        "better": [question for question, change in zip(shared, changes) if change > 0],
+        "worse": [question for question, change in zip(shared, changes) if change < 0],
+    }
+
+
+def unstable(rows: list[dict], mode: str) -> list[str]:
+    """Return the questions whose verdict differed between repeats of the same run."""
+    return [question for question, points in question_points(rows, mode).items() if len(set(points)) > 1]
+
+
+def print_comparison(before_rows: list[dict], after_rows: list[dict]) -> None:
+    for mode in dict.fromkeys(row["mode"] for row in after_rows):
+        result = paired(question_points(before_rows, mode), question_points(after_rows, mode))
+        verdict = "better" if result["low"] > 0 else "worse" if result["high"] < 0 else "no clear change"
+
+        print(
+            f"\n{mode}: {result['change']:+.1%} per question over {result['questions']} questions"
+            f" (95% range {result['low']:+.1%} to {result['high']:+.1%}): {verdict}."
+            f" {len(result['better'])} better, {len(result['worse'])} worse."
+        )
+
+        for question in result["worse"]:
+            print(f"  worse: {question}")
+
+        flaky = unstable(after_rows, mode)
+
+        if flaky:
+            print(f"  {len(flaky)} questions changed verdict between repeats of this run")
+
+    stages = [row["stage"] for row in after_rows if row.get("stage")]
+
+    if stages:
+        print(
+            "\nWhere wrong answers went wrong: "
+            + ", ".join(f"{stage} {stages.count(stage)}" for stage in dict.fromkeys(stages))
+        )
+
+
+def load_run(name: str) -> list[dict]:
+    """Return the rows of a saved run, by file name or path."""
+    path = RUNS_DIR / name if not name.startswith("/") else pathlib.Path(name)
+
+    return json.loads(path.read_text())["rows"]
+
+
 def save_run(rows: list[dict], model: str, judge_usd: float) -> None:
     """Write the run's rows and scores to a dated file in data/evals/runs, and keep a copy in storage."""
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -275,7 +358,13 @@ def main() -> int:
     parser.add_argument("--set", choices=SETS, default="dev", help="dev while working; test only before a decision")
     parser.add_argument("--kind", action="append", help="ask only questions of these kinds")
     parser.add_argument("--parallel", type=int, default=DEFAULT_PARALLEL, help="how many questions to ask at once")
+    parser.add_argument("--against", help="a saved run to compare this run with, question by question")
+    parser.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"), help="only compare two saved runs")
     args = parser.parse_args()
+
+    if args.compare:
+        print_comparison(load_run(args.compare[0]), load_run(args.compare[1]))
+        return 0
 
     llm.require_price(JUDGE_MODEL)
     questions = [
@@ -306,6 +395,9 @@ def main() -> int:
 
     print_report(rows, judge_usd)
     save_run(rows, args.model, judge_usd)
+
+    if args.against:
+        print_comparison(load_run(args.against), rows)
 
     return 0
 
