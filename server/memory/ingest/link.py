@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 from memory import db, llm, storage
 from memory.config import CAPTION_MODEL, DATA_DIR
 
-MIN_SIMILARITY = 0.6
 CANDIDATES = 3
 CROP_PIXELS = 384
 CROP_MARGIN = 0.15
@@ -21,12 +20,14 @@ You compare photos of things seen by someone's camera glasses at the same place 
 is a thing just seen; each later image is a candidate seen before. Decide whether the first is the very same object
 as one of the candidates (the same mug, the same plant), not just the same kind of thing. Look at colour, shape,
 pattern, wear, writing and what it sits on. Two things of the same kind that differ in any of these are different.
-Say none when anything conflicts, when a crop is too small or blurred to compare, or when the match rests only on
-the setting rather than on the object itself. A wrong match is worse than a missed one."""
+Say none when anything conflicts, when a crop is too small or blurred to compare, when the match rests only on
+the setting rather than on the object itself, or when more than one candidate could be it. Say how sure you are.
+A wrong match is worse than a missed one."""
 
 
 class Match(BaseModel):
     same_as: int | None = Field(description="The number of the candidate that is the very same object, or null")
+    certain: bool = Field(description="True only if the photos leave no real doubt")
     reason: str = Field(description="One short sentence on what decided it")
 
 
@@ -97,27 +98,33 @@ def link_moment(conn, moment_id: str) -> dict[str, int]:
     place = db.moment_place(conn, moment_id)
     things = db.moment_things(conn, moment_id)
 
-    if place is None or not things:
-        return {"things": len(things), "compared": 0, "linked": 0}
+    if not things:
+        return {"things": 0, "compared": 0, "linked": 0}
 
     llm.require_price(LINK_MODEL)
     pairs = [
         (thing, candidates)
         for thing in things
-        if (candidates := db.link_candidates(conn, thing["id"], moment_id, place["id"], MIN_SIMILARITY, CANDIDATES))
+        if (candidates := db.link_candidates(conn, thing["id"], moment_id, place["id"] if place else None, CANDIDATES))
     ]
 
     with ThreadPoolExecutor(PARALLEL_CALLS) as pool:
         results = list(pool.map(lambda pair: compare(*pair), pairs))
 
-    linked = 0
+    chosen: dict[int, list[tuple]] = {}
 
     for (thing, candidates), (match, usage) in zip(pairs, results):
         if usage is not None:
             llm.log_cost(conn, "link", LINK_MODEL, usage)
 
-        if match and match.same_as and 0 < match.same_as <= len(candidates):
-            db.link_things(conn, thing["id"], candidates[match.same_as - 1]["id"], match.reason)
+        if match and match.certain and match.same_as and 0 < match.same_as <= len(candidates):
+            chosen.setdefault(candidates[match.same_as - 1]["id"], []).append((thing["id"], match.reason))
+
+    linked = 0
+
+    for earlier, claims in chosen.items():
+        if len(claims) == 1:
+            db.link_things(conn, claims[0][0], earlier, claims[0][1])
             linked += 1
 
     conn.commit()

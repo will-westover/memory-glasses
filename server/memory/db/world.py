@@ -90,19 +90,22 @@ def moment_things(conn: psycopg.Connection, moment_id: str) -> list[dict]:
 
 
 def link_candidates(
-    conn: psycopg.Connection, entity_id: int, moment_id: str, place_id: int, least: float, limit: int
+    conn: psycopg.Connection, entity_id: int, moment_id: str, place_id: int | None, limit: int
 ) -> list[dict]:
-    """Return things seen at the same place in other moments whose name and details read alike, closest first."""
+    """Return earlier things from other moments whose name and details read most alike, those at the same place first,
+    leaving out any pair you said are not the same."""
     rows = conn.execute(
         "select e.id, e.name, e.details, f.image_path, e.crop_box, 1 - (e.embedding <=> n.embedding)"
         "  from entity n, entity e join frame f on f.id = e.crop_frame_id"
         " where n.id = %(id)s and e.id <> n.id and e.kind = 'object' and e.merged_into is null"
         "   and e.embedding is not null and e.crop_box is not null and f.moment_id <> %(moment)s"
-        "   and 1 - (e.embedding <=> n.embedding) >= %(least)s"
-        "   and exists (select 1 from sighting s join frame_segment fs on fs.frame_id = s.frame_id"
-        "                where s.entity_id = e.id and fs.place_id = %(place)s)"
-        " order by e.embedding <=> n.embedding limit %(limit)s",
-        {"id": entity_id, "moment": moment_id, "least": least, "place": place_id, "limit": limit},
+        "   and not exists (select 1 from not_same x where (x.frame_id, x.other_frame_id) in"
+        "                   ((n.crop_frame_id, e.crop_frame_id), (e.crop_frame_id, n.crop_frame_id)))"
+        " order by exists (select 1 from sighting s join frame_segment fs on fs.frame_id = s.frame_id"
+        "                  where s.entity_id = e.id and fs.place_id = %(place)s) desc,"
+        "          e.embedding <=> n.embedding"
+        " limit %(limit)s",
+        {"id": entity_id, "moment": moment_id, "place": place_id, "limit": limit},
     )
 
     return [
@@ -122,10 +125,18 @@ def link_things(conn: psycopg.Connection, entity_id: int, same_as: int, reason: 
 
 
 def unlink_thing(conn: psycopg.Connection, entity_id: int) -> bool:
-    """Undo a link, so the thing stands on its own again; it is then marked as checked by you."""
+    """Undo a link, so the thing stands on its own again, and remember that the two photos show different things."""
+    conn.execute(
+        "insert into not_same (frame_id, other_frame_id)"
+        " select e.crop_frame_id, r.crop_frame_id from entity e join entity r on r.id = e.merged_into"
+        " where e.id = %s and e.crop_frame_id is not null and r.crop_frame_id is not null on conflict do nothing",
+        (entity_id,),
+    )
+
     return (
         conn.execute(
-            "update entity set merged_into = null, merge_reason = null, confirmed = true where id = %s and merged_into is not null",
+            "update entity set merged_into = null, merge_reason = null, confirmed = true"
+            " where id = %s and merged_into is not null",
             (entity_id,),
         ).rowcount
         > 0
