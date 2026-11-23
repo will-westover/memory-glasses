@@ -48,7 +48,8 @@ FACT_SELECT = (
     "select fact.id, fact.kind, fact.at, fact.moment_id, fact.offset_seconds,"
     "       coalesce(fact.end_offset_seconds, fact.offset_seconds), fact.text,"
     "       coalesce(frame.image_path, best.image_path, closest.image_path), frame.x, frame.z, room.name,"
-    "       fact.frame_id, coalesce(thing.merged_into, fact.entity_id), fact.episode_id"
+    "       fact.frame_id, coalesce(thing.merged_into, fact.entity_id), fact.episode_id,"
+    "       moment.title, moment.started_at, moment.duration_seconds"
     "  from fact left join frame on frame.id = fact.frame_id left join entity thing on thing.id = fact.entity_id"
     "  join moment on moment.id = fact.moment_id left join room on room.id = frame.room_id"
     "  left join lateral ("
@@ -86,8 +87,29 @@ def fact_rows(rows) -> list[dict]:
             "frame_id": frame_id,
             "entity_id": entity_id,
             "episode_id": episode_id,
+            "moment_title": moment_title,
+            "moment_start": moment_start,
+            "moment_seconds": float(moment_seconds or 0),
         }
-        for fact_id, kind, at, moment_id, offset, end, text, image_path, x, z, room, frame_id, entity_id, episode_id in rows
+        for (
+            fact_id,
+            kind,
+            at,
+            moment_id,
+            offset,
+            end,
+            text,
+            image_path,
+            x,
+            z,
+            room,
+            frame_id,
+            entity_id,
+            episode_id,
+            moment_title,
+            moment_start,
+            moment_seconds,
+        ) in rows
     ]
 
 
@@ -132,12 +154,27 @@ def timeline(conn: psycopg.Connection, start, end, moments: list[str] | None = N
     return fact_rows(
         conn.execute(
             f"{FACT_SELECT} where fact.at <= %(end)s and {ENDS_AT} >= %(start)s"
-            " and fact.kind in ('frame', 'speech', 'summary')"
+            " and fact.kind in ('frame', 'speech', 'summary', 'recording')"
             " and (%(moments)s::text[] is null or fact.moment_id = any(%(moments)s::text[]))"
             " order by fact.at, fact.id",
             {"start": start, "end": end, "moments": moments},
         )
     )
+
+
+def add_fact(conn: psycopg.Connection, moment_id: str, fact: dict, vector: str) -> None:
+    """Store one more fact for a moment, replacing any earlier fact of the same kind."""
+    conn.execute("delete from fact where moment_id = %s and kind = %s", (moment_id, fact["kind"]))
+    conn.execute(
+        "insert into fact (moment_id, kind, at, offset_seconds, end_offset_seconds, text, title, embedding)"
+        " values (%s, %s, %s, %s, %s, %s, %s, %s::vector)",
+        (moment_id, fact["kind"], fact["at"], 0, fact["end_offset_seconds"], fact["text"], fact.get("title"), vector),
+    )
+
+
+def moment_length(conn: psycopg.Connection, moment_id: str) -> float:
+    """Return how long a moment's recording ran, in seconds."""
+    return float(conn.execute("select duration_seconds from moment where id = %s", (moment_id,)).fetchone()[0] or 0)
 
 
 def save_overview(conn: psycopg.Connection, moment_id: str, title: str, overview: str) -> None:

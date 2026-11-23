@@ -51,3 +51,19 @@ def require_env(name: str) -> str:
         raise SystemExit(f"error: {name} is not set. Add it to {SERVER_DIR / '.env'}")
 
     return value
+
+
+def spoken_length(seconds: float) -> str:
+    """Return a length of time the way a person would say it, e.g. '2 minutes' or '1 hour 5 minutes'."""
+    seconds = round(seconds)
+
+    if seconds < 90:
+        return f"{seconds} seconds"
+
+    hours, minutes = divmod(round(seconds / 60), 60)
+
+    return " ".join(
+        part
+        for part in (f"{hours} hour{'s' * (hours != 1)}" if hours else "", f"{minutes} minutes" if minutes else "")
+        if part
+    )

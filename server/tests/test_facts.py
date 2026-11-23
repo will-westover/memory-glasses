@@ -68,6 +68,19 @@ def test_a_renamed_thing_still_gets_the_box_of_the_object_it_was_said_to_be():
     assert object_boxes([photo], ["1.1", "1.9", "x"]) == {5: [0.0, 0.5, 0.25, 0.25]}
 
 
+def test_an_object_fact_keeps_each_captions_own_place():
+    from memory.ingest.facts import places_seen
+
+    first, second = frame(1, 0.0), frame(2, 6.0)
+    first["objects"] = [{"name": "water bottle", "location": "on the left side of the island"}]
+    second["objects"] = [{"name": "bottle", "location": "on the kitchen counter"}]
+
+    assert places_seen([first, second], ["1.1", "2.1"], "by the stools") == (
+        "on the left side of the island; on the kitchen counter"
+    )
+    assert places_seen([first, second], [], "by the stools") == "by the stools"
+
+
 def test_a_frame_fact_names_the_people_and_room():
     fact = frame_fact(frame(1, 0.0, room="Kitchen", people=["Friend 1"]), "Home")
 

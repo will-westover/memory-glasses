@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from memory import db, llm
 from memory.citations import partial_string, renumber, shown_so_far
-from memory.config import AGENT_MODEL, minutes_seconds
+from memory.config import AGENT_MODEL, minutes_seconds, spoken_length
 from memory.gps import place_for
 from memory.search import search_within
 from memory.when import question_window
@@ -29,7 +29,8 @@ MOMENTS_IN_PROMPT = 20
 
 INSTRUCTIONS = """\
 You answer questions for someone who wears camera glasses. The glasses record what the wearer sees and hears,
-and that record is kept as facts: frames (what was happening in each photo), objects and where each one was, text that was
+and that record is kept as facts, each naming the recording it comes from; a recording fact gives a whole
+recording's title, overview, start, end and length: frames (what was happening in each photo), objects and where each one was, text that was
 readable, speech, summaries of what happened and what was said, and which people the wearer has named
 were in view. Summaries, objects, text and people each cover a stretch of time, one fact per stretch, not one per
 photo. Each fact starts with its number in [brackets] and the time it was recorded, or the times it covers. "I" and "me"
@@ -178,13 +179,17 @@ def fill_instructions(conn, notes: str, moments: list[str] | None = None) -> str
     moment_rows = [row for row in db.list_moments(conn) if moments is None or row[0] in moments]
     lines = []
 
-    for _id, _source, started_at, duration, _frames, _has_sound, lat, lon, _title in moment_rows[:MOMENTS_IN_PROMPT]:
+    for _id, _source, started_at, duration, _frames, _has_sound, lat, lon, title in moment_rows[:MOMENTS_IN_PROMPT]:
         place = place_for(lat, lon, places)
 
         start = started_at.astimezone()
         end = start + timedelta(seconds=duration)
+        named = f'"{title}", ' if title else ""
 
-        lines.append(f"- {start:%a %d %b %Y %H:%M:%S} to {end:%H:%M:%S}" + (f", at {place}" if place else ""))
+        lines.append(
+            f"- {named}{start:%a %d %b %Y %H:%M:%S} to {end:%H:%M:%S} ({spoken_length(duration)})"
+            + (f", at {place}" if place else "")
+        )
 
     now = datetime.now().astimezone()
 
@@ -213,6 +218,17 @@ def fit_timeline(facts: list[dict], limit: int = TIMELINE_MAX_FACTS) -> list[dic
     return overview[:: math.ceil(len(overview) / limit)]
 
 
+def recording_note(fact: dict) -> str:
+    """Name the recording a fact comes from, with when it ran, so facts from different recordings stay apart."""
+    if not fact.get("moment_start") or fact["kind"] == "recording":
+        return ""
+
+    start = fact["moment_start"].astimezone()
+    end = start + timedelta(seconds=fact["moment_seconds"])
+
+    return f'  [recording "{fact.get("moment_title") or "untitled"}", {start:%H:%M}-{end:%H:%M}]'
+
+
 def fact_line(fact: dict) -> str:
     """Return a fact as the one line the model reads."""
     where = ""
@@ -225,7 +241,7 @@ def fact_line(fact: dict) -> str:
     seconds = fact.get("end_offset_seconds", fact["offset_seconds"]) - fact["offset_seconds"]
     until = f" to {start + timedelta(seconds=seconds):%H:%M:%S}" if seconds >= 1 else ""
 
-    return f"[{fact['id']}] {start:%a %d %b %Y %H:%M:%S}{until}  {fact['kind']}: {fact['text']}{where}"
+    return f"[{fact['id']}] {start:%a %d %b %Y %H:%M:%S}{until}  {fact['kind']}: {fact['text']}{where}{recording_note(fact)}"
 
 
 def fact_lines(facts: list[dict]) -> str:

@@ -3,13 +3,14 @@
 import argparse
 import json
 import sys
+from datetime import timedelta
 from bisect import bisect_right
 
 import numpy as np
 from pydantic import BaseModel, Field
 
 from memory import db, llm
-from memory.config import DATA_DIR, SUMMARY_MODEL, minutes_seconds
+from memory.config import DATA_DIR, SUMMARY_MODEL, minutes_seconds, spoken_length
 from memory.ingest.captions import image_link
 from memory.ingest.link import link_moment
 from memory.overview import write_overview
@@ -23,7 +24,7 @@ STRETCH_MAX_SECONDS = 120.0
 STRETCH_GAP_SECONDS = 30.0
 STRETCH_SIMILARITY = 0.6
 
-KINDS = ("frame", "person", "object", "text", "speech", "said", "summary")
+KINDS = ("frame", "person", "object", "text", "speech", "said", "summary", "recording")
 
 SCENE_PHOTOS = 6
 
@@ -351,9 +352,9 @@ def matching_box(frame: dict, name: str) -> list | None:
     return None
 
 
-def object_boxes(frames: list[dict], references: list[str]) -> dict[int, list[float]]:
-    """Return the box of each listed object a thing was said to be, by frame id; references look like '3.2'."""
-    boxes = {}
+def listed_objects(frames: list[dict], references: list[str]) -> dict[int, dict]:
+    """Return the caption object a thing was said to be in each frame, by frame id; references look like '3.2'."""
+    found = {}
 
     for reference in references:
         photo, _, number = reference.partition(".")
@@ -362,15 +363,37 @@ def object_boxes(frames: list[dict], references: list[str]) -> dict[int, list[fl
             continue
 
         frame = frames[int(photo) - 1]
-        objects = frame["objects"]
 
-        if 0 < int(number) <= len(objects) and objects[int(number) - 1].get("box"):
-            boxes.setdefault(frame["id"], [float(value) for value in objects[int(number) - 1]["box"]])
+        if 0 < int(number) <= len(frame["objects"]):
+            found.setdefault(frame["id"], frame["objects"][int(number) - 1])
 
-    return boxes
+    return found
 
 
-def remember(known: list[dict], thing: Thing, shown: list[dict], scene: int, boxes: dict | None = None) -> dict:
+def object_boxes(frames: list[dict], references: list[str]) -> dict[int, list[float]]:
+    """Return the box of each listed object a thing was said to be, by frame id."""
+    return {
+        frame_id: [float(value) for value in item["box"]]
+        for frame_id, item in listed_objects(frames, references).items()
+        if item.get("box")
+    }
+
+
+def places_seen(frames: list[dict], references: list[str], merged: str) -> str:
+    """Return where a thing was, in the captions' own words for each photo, or the merged place if none was listed."""
+    places = list(
+        dict.fromkeys(item["location"] for item in listed_objects(frames, references).values() if item.get("location"))
+    )
+
+    return "; ".join(places) if places else merged
+
+
+def box_of(item: dict | None) -> list[float] | None:
+    """Return a caption object's box as numbers, if it has one."""
+    return [float(value) for value in item["box"]] if item and item.get("box") else None
+
+
+def remember(known: list[dict], thing: Thing, shown: list[dict], scene: int, listed: dict | None = None) -> dict:
     """Add a thing's sightings to the one it is the same as, or to a new one, and return that one."""
     item = next((entry for entry in known if thing.same_as and entry["label"] == thing.same_as), None)
 
@@ -379,9 +402,16 @@ def remember(known: list[dict], thing: Thing, shown: list[dict], scene: int, box
         known.append(item)
 
     source = "screen" if thing.on_screen else "seen"
-    boxes = boxes or {}
+    listed = listed or {}
     item["sightings"] += [
-        (frame, thing.where, thing.details, source, scene, boxes.get(frame["id"]) or matching_box(frame, thing.name))
+        (
+            frame,
+            listed.get(frame["id"], {}).get("location") or thing.where,
+            thing.details,
+            source,
+            scene,
+            box_of(listed.get(frame["id"])) or matching_box(frame, thing.name),
+        )
         for frame in shown
     ]
 
@@ -404,10 +434,11 @@ def stretch_facts(
         shown = [frames[number - 1] for number in sorted(set(thing.photos)) if 0 < number <= len(frames)]
 
         if shown:
-            item = remember(known, thing, shown, scene, object_boxes(frames, thing.objects))
+            item = remember(known, thing, shown, scene, listed_objects(frames, thing.objects))
             details = f" {thing.details.rstrip('.')}." if thing.details else ""
             screen = " Seen on a screen." if thing.on_screen else ""
-            fact = covering("object", f"{thing.name}: {thing.where}.{details}{screen}{where} {context}", shown)
+            seen_at = places_seen(frames, thing.objects, thing.where)
+            fact = covering("object", f"{thing.name}: {seen_at}.{details}{screen}{where} {context}", shown)
             facts.append({**fact, "thing": item["label"]})
 
     people = grouped_by(
@@ -490,6 +521,23 @@ def save_world(conn, moment_id: str, facts: list[dict], known: list[dict], thing
         fact["entity_id"] = things.get(fact.get("thing")) or people.get(fact.get("person_id"))
 
 
+def add_recording_fact(conn, moment_id: str, place: str | None) -> None:
+    """Store one fact for the whole recording: its title, overview, when it ran and for how long."""
+    title, overview = db.moment_overview(conn, moment_id)
+    started_at = db.moment_start_and_location(conn, moment_id)[0]
+    seconds = db.moment_length(conn, moment_id)
+    start = started_at.astimezone()
+    end = start + timedelta(seconds=seconds)
+    text = (
+        f'Recording "{title or "untitled"}": {overview or "no overview"} It ran from {start:%a %d %b %H:%M:%S}'
+        f" to {end:%H:%M:%S}, {spoken_length(seconds)} long.{at_place(place)}"
+    )
+    fact = {"kind": "recording", "at": started_at, "end_offset_seconds": seconds, "text": text, "title": title}
+
+    db.add_fact(conn, moment_id, fact, llm.embed(conn, [text], "embed")[0])
+    conn.commit()
+
+
 def count_kinds(facts: list[dict]) -> dict[str, int]:
     """Return how many facts there are of each kind."""
     counts: dict[str, int] = {}
@@ -547,8 +595,9 @@ def build_facts(conn, moment_id: str) -> dict[str, int]:
     link_moment(conn, moment_id)
 
     write_overview(conn, moment_id)
+    add_recording_fact(conn, moment_id, place)
 
-    return count_kinds(facts)
+    return count_kinds(facts) | {"recording": 1}
 
 
 def print_stretches(conn, moment_id: str) -> None:
