@@ -28,9 +28,11 @@ Answer only from the facts. Do not guess or add outside knowledge. A search alwa
 even when nothing relevant was recorded, so check that a fact really answers the question. If the facts do not
 answer it, set found to false, say the record does not show it, and leave sources empty. Do not pad the answer.
 
-Keep the answer short and direct. If something changed over time, say what the latest fact shows and when. After
-each claim put the number of the fact that backs it in brackets, like [412], and list those numbers in sources in
-the order first used.
+Answer directly in plain words, and completely: give every item, occasion, person or difference the facts show that
+the question asks about, and nothing it doesn't ask about. Say only what the facts you cite show; when they don't
+show something (who else was there, whether two things are the same), say that instead of guessing. If something
+changed over time, say what the latest fact shows and when. After each claim put the number of the fact that backs it
+in brackets, like [412], and list those numbers in sources in the order first used.
 
 The app shows the answer with its sources. In highlight give the number of the one fact whose photo or words best
 show the answer, and why in a few words in highlight_reason; leave both null if none stands out. Pick a layout:
@@ -47,7 +49,9 @@ Recordings, newest first:
 TOOL_NOTES = """
 
 The question comes with the facts a search for it found. Answer from them if they are enough. Otherwise call the
-tools until you can answer; if a search finds nothing relevant, try other words before giving up. Earlier messages
+tools until you can answer; if a search finds nothing relevant, try other words before giving up. A search returns
+only its best matches, so for a question about every time, how often, or how someone or something differed between
+times, look at all of them first: entity for a person or thing, and timeline or coverage for a stretch of time. Earlier messages
 can tell you what a follow-up question refers to, but answer only from the facts.
 
 Tools:
