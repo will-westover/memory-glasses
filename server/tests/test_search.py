@@ -1,4 +1,4 @@
-from memory.search import fuse, spread
+from server.search import fuse, spread
 
 
 def test_item_in_both_lists_beats_item_at_the_top_of_one():
@@ -38,7 +38,7 @@ def test_one_scene_gives_one_fact_per_thing_and_two_of_each_other_kind():
 
 
 def test_a_window_time_without_an_offset_is_local_and_bad_text_is_none():
-    from memory.when import local_time
+    from server.when import local_time
 
     assert local_time("2026-11-20T17:00:00").utcoffset() is not None
     assert local_time("Friday evening") is None

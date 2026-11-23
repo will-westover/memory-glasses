@@ -1,4 +1,4 @@
-from memory.evals import by_kind, mentions_evidence, mode_scores
+from server.evals import by_kind, mentions_evidence, mode_scores
 
 
 def row(verdict, expected="Four.", supported=True, hit=True):

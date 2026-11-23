@@ -1,6 +1,6 @@
 import pytest
 
-from memory.ingest.fingerprint import THUMB_BYTES, distance, fingerprint, indexes_to_keep
+from server.ingest.fingerprint import THUMB_BYTES, distance, fingerprint, indexes_to_keep
 
 
 def test_fingerprint_marks_pixels_brighter_than_their_right_neighbour():

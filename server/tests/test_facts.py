@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pytest
 
-from memory.ingest.facts import (
+from server.ingest.facts import (
     Said,
     Stretch,
     Thing,
@@ -53,14 +53,14 @@ def test_a_long_pause_starts_a_new_passage():
 
 
 def test_a_box_is_kept_inside_the_picture():
-    from memory.db.moments import clean_box
+    from server.db.moments import clean_box
 
     assert clean_box([0.9, -0.1, 0.5, 0.3]) == [0.9, 0.0, pytest.approx(0.1), 0.3]
     assert clean_box([0.1, 0.2]) is None
 
 
 def test_a_renamed_thing_still_gets_the_box_of_the_object_it_was_said_to_be():
-    from memory.ingest.facts import object_boxes
+    from server.ingest.facts import object_boxes
 
     photo = frame(5, 0.0)
     photo["objects"] = [{"name": "green bean pods", "location": "in a bowl", "box": [0, 0.5, 0.25, 0.25]}]
@@ -69,7 +69,7 @@ def test_a_renamed_thing_still_gets_the_box_of_the_object_it_was_said_to_be():
 
 
 def test_an_object_fact_keeps_each_captions_own_place():
-    from memory.ingest.facts import places_seen
+    from server.ingest.facts import places_seen
 
     first, second = frame(1, 0.0), frame(2, 6.0)
     first["objects"] = [{"name": "water bottle", "location": "on the left side of the island"}]

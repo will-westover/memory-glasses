@@ -21,10 +21,10 @@ ENV PYTHONUNBUFFERED=1 MEMORY_DATA_DIR=/tmp/data PATH=/app/.venv/bin:$PATH
 WORKDIR /app
 
 COPY --from=build /app/.venv .venv
-COPY memory memory
+COPY server server
 COPY migrations migrations
 COPY models models
 COPY evals evals
 COPY prices.json ./
 
-CMD ["sh", "-c", "exec uvicorn memory.api:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["sh", "-c", "exec uvicorn server.api:app --host 0.0.0.0 --port ${PORT:-8080}"]

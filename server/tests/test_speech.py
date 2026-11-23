@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from memory.ingest import speech
-from memory.ingest.transcript import voice_letters
+from server.ingest import speech
+from server.ingest.transcript import voice_letters
 
 WINDOW = 0.1
 

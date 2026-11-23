@@ -1,4 +1,4 @@
-from memory.ingest.blur import blur_scores, sharpest_per_slot
+from server.ingest.blur import blur_scores, sharpest_per_slot
 
 
 def test_score_is_the_share_of_detail_left_after_blurring():

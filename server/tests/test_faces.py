@@ -1,6 +1,6 @@
 import numpy as np
 
-from memory.ingest.faces import best_match
+from server.ingest.faces import best_match
 
 
 def unit(*values):
@@ -25,7 +25,7 @@ def test_an_empty_list_matches_nobody():
 
 
 def test_a_face_whose_eyes_reach_the_edge_is_cut_off():
-    from memory.ingest.faces import cut_off
+    from server.ingest.faces import cut_off
 
     whole = [(0.4, 0.3), (0.5, 0.3), (0.45, 0.35), (0.42, 0.4), (0.48, 0.4)]
 
@@ -37,7 +37,7 @@ def test_a_face_whose_eyes_reach_the_edge_is_cut_off():
 def test_a_flat_face_is_not_sharp():
     import numpy as np
 
-    from memory.ingest.faces import sharpness
+    from server.ingest.faces import sharpness
 
     flat = np.full((200, 200, 3), 128, np.uint8)
     noisy = np.random.default_rng(0).integers(0, 255, (200, 200, 3), dtype=np.uint8)

@@ -1,6 +1,6 @@
 import pytest
 
-from memory.llm import MINUTE_PRICES, PRICES, cost_usd, require_price
+from server.llm import MINUTE_PRICES, PRICES, cost_usd, require_price
 
 
 def test_cost_adds_input_and_output_at_their_own_prices():

@@ -17,6 +17,6 @@ STORAGE_KEY="firmware/glasses-$VERSION.bin"
 printf '{"version": "%s", "size": %s, "crc32": %s, "key": "%s"}\n' "$VERSION" "$SIZE" "$CRC" "$STORAGE_KEY" > "$WORK_DIR/latest.json"
 
 cd ../../server
-uv run python -m memory.storage put "$IMAGE" "$STORAGE_KEY"
-uv run python -m memory.storage put "$WORK_DIR/latest.json" firmware/latest.json
+uv run python -m server.storage put "$IMAGE" "$STORAGE_KEY"
+uv run python -m server.storage put "$WORK_DIR/latest.json" firmware/latest.json
 cat "$WORK_DIR/latest.json"

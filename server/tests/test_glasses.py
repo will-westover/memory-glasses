@@ -1,4 +1,4 @@
-from memory import glasses
+from server import glasses
 
 
 def test_each_frame_lasts_until_the_next():

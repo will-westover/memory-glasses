@@ -1,4 +1,4 @@
-from memory import glasses, storage
+from server import glasses, storage
 
 
 def test_a_mirrored_folder_comes_back_into_an_empty_data_folder(r2, tmp_path):

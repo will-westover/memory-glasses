@@ -35,7 +35,7 @@ Each part runs by itself and ends with something to look at.
 6. **Agent** (done): an answer with its sources, from three tools (search, timeline, nearby). `--plain` is one
    search and one call, the baseline the evals compare it with.
 7. **Evals** (done): every test question in each mode, graded by a judge model, scored per kind of question.
-8. **API** (done): FastAPI in `memory/api/`, one file per area. Answers stream as server-sent events.
+8. **API** (done): FastAPI in `server/api/`, one file per area. Answers stream as server-sent events.
 9. **iPhone app** (done): Ask, Timeline, Glasses, Places, People, Record and Stats.
 10. **Glasses firmware** (photos work, audio next): photos go to the phone over Bluetooth, with Wi-Fi as the
     fallback; firmware updates arrive over Bluetooth. They run on USB-C power; the battery isn't working yet.

@@ -5,10 +5,10 @@ test: ## Run the server tests
 	cd server && uv run pytest -q
 
 evals: ## Ask every test question and grade the answers
-	cd server && uv run python -m memory.evals --mode agent --mode plain $(ARGS)
+	cd server && uv run python -m server.evals --mode agent --mode plain $(ARGS)
 
 moments: ## List the recorded moments
-	cd server && uv run python -m memory.db list
+	cd server && uv run python -m server.db list
 
 deploy: ## Build the server and deploy it to Cloud Run
 	R2_ACCOUNT_ID=$$(grep "^R2_ACCOUNT_ID=" server/.env | cut -d= -f2) server/deploy/deploy.sh

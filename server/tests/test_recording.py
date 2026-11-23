@@ -2,7 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from memory.ingest.recording import ingest
+from server.ingest.recording import ingest
 
 
 def make_video(path: Path) -> None:
@@ -63,7 +63,7 @@ def test_two_scenes_become_two_frames(tmp_path):
 
 
 def test_frames_are_named_by_their_time_so_a_new_rate_finds_the_same_names():
-    from memory.ingest.recording import frame_name, frame_offset
+    from server.ingest.recording import frame_name, frame_offset
 
     at_30 = frame_name(frame_offset(4, 2.0))
     at_60 = frame_name(frame_offset(8, 1.0))
@@ -74,7 +74,7 @@ def test_frames_are_named_by_their_time_so_a_new_rate_finds_the_same_names():
 def test_a_frame_already_kept_inside_a_slot_is_reused():
     from pathlib import Path
 
-    from memory.ingest.recording import slot_picks
+    from server.ingest.recording import slot_picks
 
     reusable_frames = [
         {"offset_seconds": 0.5, "path": Path("/old/00000500.jpg"), "fingerprint": "00000000000000ff", "blur": 0.3}

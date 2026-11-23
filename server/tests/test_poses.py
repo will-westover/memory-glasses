@@ -1,4 +1,4 @@
-from memory.ingest.poses import nearest_pose, thin
+from server.ingest.poses import nearest_pose, thin
 
 POSES = [[0.0, 0, 0, 0, 0], [0.1, 1, 0, 0, 0], [0.2, 2, 0, 0, 0], [5.0, 3, 0, 0, 0]]
 

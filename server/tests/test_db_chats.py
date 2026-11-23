@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from memory.db import turns_from
+from server.db import turns_from
 
 START = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
 
