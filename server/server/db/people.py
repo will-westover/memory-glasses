@@ -69,6 +69,13 @@ def person_moments(conn: psycopg.Connection, person_id: int) -> list[str]:
     return [moment_id for (moment_id,) in rows]
 
 
+def person_name(conn: psycopg.Connection, person_id: int) -> tuple[bool, str | None]:
+    """Return whether a person exists and their name, if they have one."""
+    row = conn.execute("select name from person where id = %s", (person_id,)).fetchone()
+
+    return (row is not None, row[0] if row else None)
+
+
 def name_person(conn: psycopg.Connection, person_id: int, name: str | None) -> bool:
     """Set or clear a person's name. Return whether they exist."""
     return conn.execute("update person set name = %s where id = %s", (name, person_id)).rowcount > 0

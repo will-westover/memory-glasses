@@ -5,7 +5,7 @@ import cv2
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
-from server import db, storage
+from server import db, renames, storage
 from server.config import DATA_DIR
 from server.jobs import start_rebuild
 from server.api.shared import Merge, PersonName, connection, image_url
@@ -47,12 +47,19 @@ def person(person_id: int, conn: psycopg.Connection = Depends(connection)) -> di
 def name_person(person_id: int, body: PersonName, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Name or rename a person, then rebuild the facts they appear in."""
     name = body.name.strip() if body.name and body.name.strip() else None
+    exists, old = db.person_name(conn, person_id)
 
-    if not db.name_person(conn, person_id, name):
+    if not exists:
         raise HTTPException(404, "no such person")
 
-    conn.commit()
-    start_rebuild(conn, db.person_moments(conn, person_id))
+    db.name_person(conn, person_id, name)
+
+    if old and name and old != name:
+        renames.rename_person(conn, db.person_moments(conn, person_id), person_id, old, name)
+        conn.commit()
+    elif old != name:
+        conn.commit()
+        start_rebuild(conn, db.person_moments(conn, person_id))
 
     return {"id": person_id, "name": name}
 
@@ -63,10 +70,21 @@ def merge_person(person_id: int, body: Merge, conn: psycopg.Connection = Depends
     if person_id == body.into or not db.person_moments(conn, body.into):
         raise HTTPException(422, "merge into a different person who exists")
 
-    moments = db.person_moments(conn, person_id)
+    (_, name), (_, into_name) = db.person_name(conn, person_id), db.person_name(conn, body.into)
+    moments, into_moments = db.person_moments(conn, person_id), db.person_moments(conn, body.into)
+
+    renames.move_person_entity(conn, person_id, body.into)
     db.merge_people(conn, person_id, body.into)
+
+    if name and into_name and name != into_name:
+        renames.rename_person(conn, moments, body.into, name, into_name)
+
     conn.commit()
-    start_rebuild(conn, moments)
+
+    if name and not into_name:
+        start_rebuild(conn, into_moments)
+    elif into_name and not name:
+        start_rebuild(conn, moments)
 
     return {"merged": person_id, "into": body.into}
 

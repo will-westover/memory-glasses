@@ -4,7 +4,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
-from server import db, places, storage
+from server import db, places, renames, storage
 from server.config import DATA_DIR
 from server.ingest.poses import load_poses, thin
 from server.jobs import start_rebuild
@@ -88,9 +88,17 @@ def place_map_file(place_id: int, conn: psycopg.Connection = Depends(connection)
 def rename_place(place_id: int, body: NewName, conn: psycopg.Connection = Depends(connection)) -> dict:
     """Name or rename a place."""
     name = body.name.strip() if body.name and body.name.strip() else None
+    old = db.place_name(conn, place_id)
 
     if not db.name_place(conn, place_id, name, by_user=True):
         raise HTTPException(404, "no such place")
+
+    if old and name and old != name:
+        renames.rename_place(conn, db.place_moments(conn, place_id), old, name)
+        conn.commit()
+    elif old != name:
+        conn.commit()
+        start_rebuild(conn, db.place_moments(conn, place_id))
 
     return {"id": place_id, "name": name}
 
@@ -103,12 +111,17 @@ def rename_room(room_id: int, body: NewName, conn: psycopg.Connection = Depends(
     if name is None:
         raise HTTPException(422, "a room needs a name")
 
+    old = db.room_name(conn, room_id)
     place_id = db.name_room(conn, room_id, name)
 
     if place_id is None:
         raise HTTPException(404, "no such room")
 
-    conn.commit()
-    start_rebuild(conn, db.place_moments(conn, place_id))
+    if old and old != name:
+        renames.rename_room(conn, room_id, old, name)
+        conn.commit()
+    elif old != name:
+        conn.commit()
+        start_rebuild(conn, db.place_moments(conn, place_id))
 
     return {"id": room_id, "name": name}

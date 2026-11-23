@@ -223,6 +223,20 @@ def drop_unused_rooms_and_places(conn: psycopg.Connection) -> None:
     )
 
 
+def room_name(conn: psycopg.Connection, room_id: int) -> str | None:
+    """Return a room's name, if it has one."""
+    row = conn.execute("select name from room where id = %s", (room_id,)).fetchone()
+
+    return row[0] if row else None
+
+
+def place_name(conn: psycopg.Connection, place_id: int) -> str | None:
+    """Return a place's name, if it has one."""
+    row = conn.execute("select name from place where id = %s", (place_id,)).fetchone()
+
+    return row[0] if row else None
+
+
 def name_room(conn: psycopg.Connection, room_id: int, name: str) -> int | None:
     """Rename a room as the user asked. Return its place's id, or None if there is no such room."""
     row = conn.execute(
