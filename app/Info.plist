@@ -27,13 +27,14 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
+		<string>location</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Records moments with the camera, like the glasses would.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connects to your Memory Glasses server on this network.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Notes where each moment was recorded.</string>
+	<string>Notes where each moment was recorded, by the phone or by the glasses while they're connected.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Turns what you say into a question when you hold the microphone button.</string>
 	<key>NSMicrophoneUsageDescription</key>

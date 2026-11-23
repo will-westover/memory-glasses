@@ -80,6 +80,8 @@ Everything else is your call.
   the room changes, the photos stop looking alike, there is a 30 s gap or two minutes pass.
 - A thing seen again at the same place is linked to the earlier one (`entity.merged_into`), never moved, so a link can
   be undone. Rebuilding a moment's facts makes its things again and links them afresh.
+- While the glasses are connected, the phone sends its location (place-level, and once a minute while still) to
+  `phone_location`; a recording with no location of its own takes the points from while it ran.
 - A moment is filed at the place the phone's map recognised, else the place whose frames look most alike (average
   embedding at least 0.75); for now each moment is one segment. Rooms come from one model call per moment, then a
   vote of frames within 1.5 m.

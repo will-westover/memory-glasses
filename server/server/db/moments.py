@@ -126,6 +126,26 @@ def list_moments(conn: psycopg.Connection, before=None, limit: int | None = None
     ).fetchall()
 
 
+def save_phone_locations(conn: psycopg.Connection, points: list[tuple]) -> None:
+    """Store where the phone was, as (at, lat, lon, accuracy in metres), keeping any already stored."""
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "insert into phone_location (at, lat, lon, accuracy_m) values (%s, %s, %s, %s) on conflict (at) do nothing",
+            points,
+        )
+
+
+def locate_from_phone(conn: psycopg.Connection, moment_id: str) -> int:
+    """Give a moment with no location of its own the phone's locations while it ran. Return how many it got."""
+    return conn.execute(
+        "insert into location (moment_id, at, lat, lon, accuracy_m)"
+        " select m.id, p.at, p.lat, p.lon, p.accuracy_m from moment m, phone_location p"
+        "  where m.id = %(id)s and not exists (select 1 from location where moment_id = m.id)"
+        "    and p.at between m.started_at and m.started_at + make_interval(secs => m.duration_seconds)",
+        {"id": moment_id},
+    ).rowcount
+
+
 def recording_list(conn: psycopg.Connection, moments: list[str] | None = None) -> list[dict]:
     """Return every recording, or only the named ones, newest first, with title, start, length and where it started."""
     rows = conn.execute(

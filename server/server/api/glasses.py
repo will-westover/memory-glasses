@@ -2,9 +2,11 @@
 
 import json
 import pathlib
+from datetime import datetime
 
 import psycopg
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from server import db
 from server.ingest import glasses
@@ -97,6 +99,26 @@ def glasses_firmware() -> dict:
     url = storage.download_url(firmware_path, "application/octet-stream", seconds=3600)
 
     return {"version": firmware["version"], "size": firmware["size"], "crc32": firmware["crc32"], "url": url}
+
+
+class PhonePoint(BaseModel):
+    at: datetime
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    accuracy_m: float | None = Field(None, ge=0)
+
+
+class PhoneTrail(BaseModel):
+    points: list[PhonePoint]
+
+
+@router.post("/locations")
+def phone_locations(body: PhoneTrail, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Keep where the phone was while the glasses were connected, so glasses recordings know where they were."""
+    db.save_phone_locations(conn, [(point.at, point.lat, point.lon, point.accuracy_m) for point in body.points])
+    conn.commit()
+
+    return {"saved": len(body.points)}
 
 
 @router.get("/glasses/status")

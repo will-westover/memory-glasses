@@ -40,6 +40,7 @@ def process(
 
     with db.connect() as conn:
         db.save_moment(conn, moment_dir)
+        db.locate_from_phone(conn, moment_id)
         conn.commit()
 
         on_step(STEPS[1])

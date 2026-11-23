@@ -255,5 +255,7 @@ final class GlassesLink: NSObject {
         if let settings = lastSettings {
             sendSettings(settings, displayText: glassesDisplayText)
         }
+
+        await LocationTrail.shared.send()
     }
 }
