@@ -75,8 +75,8 @@ class Match(BaseModel):
     reason: str = Field(description="One short sentence on what decided it")
 
 
-def crop(image_path: str, box: list[float]) -> str | None:
-    """Return a small JPEG of the boxed part of a photo, with some margin, as a data link; None if it can't be read."""
+def crop_jpeg(image_path: str, box: list[float]) -> bytes | None:
+    """Return a small JPEG of the boxed part of a photo, with some margin; None if it can't be read."""
     path = storage.local_copy(DATA_DIR / image_path)
     image = cv2.imread(str(path)) if path else None
 
@@ -96,7 +96,14 @@ def crop(image_path: str, box: list[float]) -> str | None:
     piece = cv2.resize(piece, None, fx=scale, fy=scale) if scale < 1 else piece
     ok, jpeg = cv2.imencode(".jpg", piece, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
-    return f"data:image/jpeg;base64,{base64.b64encode(jpeg.tobytes()).decode()}" if ok else None
+    return jpeg.tobytes() if ok else None
+
+
+def crop(image_path: str, box: list[float]) -> str | None:
+    """Return the boxed part of a photo as a data link for the model; None if it can't be read."""
+    jpeg = crop_jpeg(image_path, box)
+
+    return f"data:image/jpeg;base64,{base64.b64encode(jpeg).decode()}" if jpeg else None
 
 
 def label(thing: dict) -> str:

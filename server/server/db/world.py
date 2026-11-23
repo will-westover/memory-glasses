@@ -128,6 +128,14 @@ def link_candidates(
     ]
 
 
+def thing_photo(conn: psycopg.Connection, entity_id: int) -> tuple[str, list | None] | None:
+    """Return the photo and box that show a thing best, or None if there is no such thing with a photo."""
+    return conn.execute(
+        "select f.image_path, e.crop_box from entity e join frame f on f.id = e.crop_frame_id where e.id = %s",
+        (entity_id,),
+    ).fetchone()
+
+
 def link_things(conn: psycopg.Connection, entity_id: int, same_as: int, reason: str) -> None:
     """Record that a thing is the same as an earlier one; the link can be undone, nothing is moved."""
     conn.execute("update entity set merged_into = %s, merge_reason = %s where id = %s", (same_as, reason, entity_id))

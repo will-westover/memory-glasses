@@ -1,16 +1,24 @@
 """Things seen more than once: the links made between them, to check, confirm or undo."""
 
 import psycopg
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 
 from server import db
 from server.api.shared import connection, image_url
+from server.ingest.link import crop_jpeg
 
 router = APIRouter()
 
 
 def side_json(side: dict) -> dict:
-    return {"id": side["id"], "name": side["name"], "image": image_url(side["image_path"]), "box": side["box"]}
+    return {
+        "id": side["id"],
+        "name": side["name"],
+        "image": image_url(side["image_path"]),
+        "box": side["box"],
+        "photo": f"/things/{side['id']}/photo",
+    }
 
 
 LINKS_PAGE = 50
@@ -52,3 +60,20 @@ def unlink_thing(entity_id: int, conn: psycopg.Connection = Depends(connection))
     conn.commit()
 
     return {"id": entity_id, "linked": False}
+
+
+@router.get("/things/{entity_id}/photo")
+def thing_photo(entity_id: int, conn: psycopg.Connection = Depends(connection)) -> Response:
+    """Return the part of a photo that shows a thing, or the whole photo when it has no box, as JPEG."""
+    found = db.thing_photo(conn, entity_id)
+
+    if found is None:
+        raise HTTPException(404, "no photo of that thing")
+
+    image_path, box = found
+    jpeg = crop_jpeg(image_path, box or [0.0, 0.0, 1.0, 1.0])
+
+    if jpeg is None:
+        raise HTTPException(404, "no photo of that thing")
+
+    return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
