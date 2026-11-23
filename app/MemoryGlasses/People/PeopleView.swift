@@ -150,7 +150,7 @@ struct PersonView: View {
                                 Button {
                                     router.openSearch(photos.map(\.fact), at: index, query: "")
                                 } label: {
-                                    FrameImage(path: photo.image)
+                                    FrameImage(path: photo.image, small: true)
                                         .frame(width: 128, height: 96)
                                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                         .overlay(alignment: .bottomLeading) {

@@ -42,7 +42,7 @@ struct StepLine: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(step.images, id: \.self) { image in
-                            FrameImage(path: image)
+                            FrameImage(path: image, small: true)
                                 .frame(width: 44, height: 44)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
@@ -173,7 +173,7 @@ struct SourceChip: View {
         Button { openSource(fact) } label: {
             ZStack(alignment: .bottomLeading) {
                 if fact.image != nil {
-                    FrameImage(path: fact.image)
+                    FrameImage(path: fact.image, small: true)
                 } else {
                     Rectangle()
                         .fill(Color(.secondarySystemBackground))

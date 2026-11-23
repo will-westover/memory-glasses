@@ -76,7 +76,7 @@ struct HitRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            FrameImage(path: fact.image)
+            FrameImage(path: fact.image, small: true)
                 .frame(width: 64, height: 48)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 

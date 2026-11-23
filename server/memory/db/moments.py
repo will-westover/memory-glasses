@@ -13,6 +13,32 @@ def frame_position(frame: dict) -> tuple:
     return tuple(pose) if pose else (None, None, None, None)
 
 
+def moment_files(manifest: dict) -> dict:
+    """Return what a manifest says was kept with a moment: its video, frame rate and extra files."""
+    return {
+        "video": manifest.get("video_file"),
+        "rate": manifest.get("frames_per_minute"),
+        "extras": manifest.get("extras", []),
+    }
+
+
+def save_moment_files(conn: psycopg.Connection, moment_id: str, manifest: dict) -> None:
+    """Store what a manifest says was kept with a moment."""
+    conn.execute(
+        "update moment set video_file = %(video)s, frames_per_minute = %(rate)s, extras = %(extras)s where id = %(id)s",
+        {"id": moment_id, **moment_files(manifest)},
+    )
+
+
+def kept_files(conn: psycopg.Connection, moment_id: str) -> dict:
+    """Return whether a moment kept its video and a lidar mesh, and its frame rate."""
+    video, rate, extras = conn.execute(
+        "select video_file, frames_per_minute, extras from moment where id = %s", (moment_id,)
+    ).fetchone()
+
+    return {"has_video": video is not None, "frames_per_minute": rate, "has_mesh": "mesh.obj" in extras}
+
+
 def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
     """Store a moment folder's manifest, keeping the captions of frames that are unchanged."""
     manifest = json.loads((moment_dir / "manifest.json").read_text())
@@ -23,16 +49,18 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
 
     with conn.transaction():
         conn.execute(
-            "insert into moment (id, source, started_at, duration_seconds, audio_path)"
-            " values (%(id)s, %(source)s, %(started_at)s, %(duration)s, %(audio)s)"
+            "insert into moment (id, source, started_at, duration_seconds, audio_path, video_file, frames_per_minute, extras)"
+            " values (%(id)s, %(source)s, %(started_at)s, %(duration)s, %(audio)s, %(video)s, %(rate)s, %(extras)s)"
             " on conflict (id) do update set source = excluded.source, started_at = excluded.started_at,"
-            " duration_seconds = excluded.duration_seconds, audio_path = excluded.audio_path",
+            " duration_seconds = excluded.duration_seconds, audio_path = excluded.audio_path,"
+            " video_file = excluded.video_file, frames_per_minute = excluded.frames_per_minute, extras = excluded.extras",
             {
                 "id": moment_id,
                 "source": manifest["source"],
                 "started_at": manifest["started_at"],
                 "duration": manifest["duration_seconds"],
                 "audio": f"{folder}/{manifest['audio']}" if manifest["audio"] else None,
+                **moment_files(manifest),
             },
         )
 

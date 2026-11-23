@@ -78,7 +78,7 @@ struct Filmstrip: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 6) {
                     ForEach(frames.indices, id: \.self) { position in
-                        FrameImage(path: frames[position].image)
+                        FrameImage(path: frames[position].image, small: true)
                             .frame(width: 56, height: 42)
                             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                             .overlay {

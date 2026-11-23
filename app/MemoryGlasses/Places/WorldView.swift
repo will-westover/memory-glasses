@@ -112,7 +112,7 @@ struct WorldView: View {
             ForEach(world.moments.filter { $0.place == nil }) { moment in
                 Annotation("", coordinate: CLLocationCoordinate2D(latitude: moment.lat, longitude: moment.lon)) {
                     Button { selectedMoment = MomentRoute(id: moment.id, startedAt: moment.startedAt) } label: {
-                        FrameImage(path: moment.cover)
+                        FrameImage(path: moment.cover, small: true)
                             .frame(width: 30, height: 30)
                             .clipShape(Circle())
                             .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))

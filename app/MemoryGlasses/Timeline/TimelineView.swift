@@ -130,8 +130,10 @@ struct TimelineView: View {
 
     private func load() async {
         do {
-            moments = try await API.current.get("/moments")
-            uploads = (try? await API.current.get("/uploads")) ?? []
+            async let fetchedMoments: [MomentSummary] = API.current.get("/moments")
+            async let fetchedUploads: [UploadStatus]? = try? API.current.get("/uploads")
+            moments = try await fetchedMoments
+            uploads = await fetchedUploads ?? []
             problem = nil
         } catch {
             problem = error.localizedDescription
@@ -146,7 +148,7 @@ struct MomentRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            FrameImage(path: moment.cover)
+            FrameImage(path: moment.cover, small: true)
                 .frame(width: 56, height: 56)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 

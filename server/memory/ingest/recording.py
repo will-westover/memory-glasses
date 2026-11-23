@@ -16,6 +16,7 @@ from memory.config import DATA_DIR, FRAMES_PER_MINUTE
 from memory.ingest.blur import CANDIDATES_PER_SLOT, DEFAULT_MAX_BLUR, blur_scores, sharpest_per_slot
 from memory.ingest.poses import load_poses, nearest_pose
 from memory.gps import parse_location
+from memory.thumbs import make_thumbs
 from memory.ingest.fingerprint import (
     DEFAULT_MAX_DISTANCE,
     THUMB_BYTES,
@@ -247,6 +248,7 @@ def build_moment(
         fingerprints, blur, seconds_per_frame, max_distance, max_blur, candidates, reusable_frames
     )
     frames = keep_frames(frames_dir, picks, candidates, started)
+    make_thumbs(frames_dir)
     poses = load_poses(extras["poses.json"]) if "poses.json" in extras else []
 
     for frame in frames:

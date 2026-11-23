@@ -133,7 +133,7 @@ struct FrameContextCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            FrameImage(path: context.image)
+            FrameImage(path: context.image, small: true)
                 .frame(width: 96, height: 72)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 

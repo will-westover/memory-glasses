@@ -56,6 +56,7 @@ struct MemoryGlassesApp: App {
 
 struct FrameImage: View {
     let path: String?
+    var small = false
 
     @State private var image: UIImage?
     @State private var failed = false
@@ -84,23 +85,61 @@ struct FrameImage: View {
             .task(id: path) { await load() }
     }
 
-    private func load() async {
-        guard let path else { return }
+    private var wanted: String? {
+        guard let path else { return nil }
 
-        if let cached = Self.cache.object(forKey: path as NSString) {
+        return small && path.hasPrefix("/images/") ? path + "?size=small" : path
+    }
+
+    private func load() async {
+        guard let path, let wanted else { return }
+
+        if let cached = Self.cache.object(forKey: wanted as NSString) {
             image = cached
             return
         }
 
         failed = false
 
-        guard let data = try? await API.current.download(path), let loaded = UIImage(data: data) else {
+        if let kept = await ImageStore.read(wanted), let loaded = UIImage(data: kept) {
+            Self.cache.setObject(loaded, forKey: wanted as NSString)
+            image = loaded
+            return
+        }
+
+        let fetched = try? await API.current.download(wanted)
+        let data = fetched != nil || wanted == path ? fetched : try? await API.current.download(path)
+
+        guard let data, let loaded = UIImage(data: data) else {
             if !Task.isCancelled { failed = true }
             return
         }
 
-        Self.cache.setObject(loaded, forKey: path as NSString)
+        Self.cache.setObject(loaded, forKey: wanted as NSString)
+        await ImageStore.write(data, for: wanted)
         withAnimation(.easeOut(duration: 0.2)) { image = loaded }
+    }
+}
+
+enum ImageStore {
+    static let folder: URL = {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let folder = base.appendingPathComponent("images", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        return folder
+    }()
+
+    static func file(for path: String) -> URL {
+        folder.appendingPathComponent(path.map { $0.isLetter || $0.isNumber || $0 == "." ? String($0) : "_" }.joined())
+    }
+
+    static func read(_ path: String) async -> Data? {
+        await Task.detached(priority: .userInitiated) { try? Data(contentsOf: file(for: path)) }.value
+    }
+
+    static func write(_ data: Data, for path: String) async {
+        await Task.detached(priority: .utility) { try? data.write(to: file(for: path), options: .atomic) }.value
     }
 }
 

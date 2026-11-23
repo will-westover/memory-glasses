@@ -38,7 +38,7 @@ Inside `server/memory/`, the same word means the same thing at every layer:
 4. The server counts it in the `recording` table: [glasses.py](server/memory/glasses.py).
 5. When the recording ends, a worker job joins the photos into a video: `process_glasses` in
    [jobs.py](server/memory/jobs.py).
-6. The pipeline keeps the sharp frames, transcribes the speech, captions each frame (with the words spoken around
+6. The pipeline keeps the sharp frames, each with a small copy for lists ([thumbs.py](server/memory/thumbs.py)), transcribes the speech, captions each frame (with the words spoken around
    it), finds faces and rooms, and builds the world model: [pipeline.py](server/memory/pipeline.py). The result is a
    moment.
 7. The audio becomes timed lines, each with a voiceprint: [ingest/transcript.py](server/memory/ingest/transcript.py).

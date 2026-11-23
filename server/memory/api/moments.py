@@ -13,7 +13,8 @@ from memory import db, jobs, storage
 from memory.ingest.poses import load_poses, thin
 from memory.ingest.recording import MAX_FRAMES_PER_MINUTE
 from memory.gps import place_for
-from memory.moment_files import MOMENTS_DIR, has_video, manifest_of, video_path
+from memory.moment_files import MOMENTS_DIR, manifest_of, video_path
+from memory.thumbs import thumb_path
 from memory.api.shared import (
     MAX_CLIP_SECONDS,
     Rate,
@@ -82,9 +83,7 @@ def moment(moment_id: str, conn: psycopg.Connection = Depends(connection)) -> di
         "frames": [frame_json(frame) for frame in db.captioned_frames(conn, moment_id)],
         "transcript": db.transcript_lines(conn, moment_id),
         "summaries": [fact_json(fact) for fact in summaries],
-        "has_video": has_video(moment_id),
-        "frames_per_minute": manifest_of(moment_id).get("frames_per_minute"),
-        "has_mesh": storage.exists(MOMENTS_DIR / moment_id / "mesh.obj"),
+        **db.kept_files(conn, moment_id),
         "place": db.moment_place(conn, moment_id),
     }
 
@@ -215,11 +214,11 @@ def moment_video_link(moment_id: str) -> dict:
 
 
 @router.get("/images/{path:path}")
-def image(path: str) -> Response:
-    """Serve one frame's JPEG."""
+def image(path: str, size: str | None = None) -> Response:
+    """Serve one frame's JPEG, or its small copy when size is small."""
     file = (MOMENTS_DIR / path).resolve()
 
     if not file.is_relative_to(MOMENTS_DIR) or file.suffix != ".jpg":
         raise HTTPException(404, "no such image")
 
-    return redirect_to_stored(file, "image/jpeg")
+    return redirect_to_stored(thumb_path(file) if size == "small" else file, "image/jpeg")

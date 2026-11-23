@@ -392,6 +392,7 @@ struct MomentView: View {
 
     private func load() async {
         do {
+            async let walked: WalkedPath? = try? API.current.get("/moments/\(link.id)/path")
             let loaded: MomentDetail = try await API.current.get("/moments/\(link.id)")
 
             if let focus = link.focus {
@@ -401,7 +402,7 @@ struct MomentView: View {
             }
 
             detail = loaded
-            path = ((try? await API.current.get("/moments/\(link.id)/path")) as WalkedPath?)?.points ?? []
+            path = await walked?.points ?? []
             problem = nil
         } catch {
             problem = error.localizedDescription
