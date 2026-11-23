@@ -4,7 +4,7 @@ import re
 import subprocess
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from server import db, storage
@@ -12,6 +12,7 @@ from server.config import DATA_DIR
 
 GLASSES_DIR = DATA_DIR / "glasses"
 MAX_FRAME_BYTES = 2_000_000
+PART_GAP_SECONDS = 600
 UPLOAD_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -74,16 +75,41 @@ def frame_durations(names: list[str]) -> list[float]:
     return gaps + [gaps[-1] if gaps else 1.0]
 
 
-def build_video(folder: Path, started: datetime) -> Path:
-    """Join a recording's frames into an MP4 that keeps their timing and the time it started."""
-    storage.fetch_folder(folder)
-    frames = sorted(path.name for path in folder.glob("*.jpg"))
+def parts(names: list[str]) -> list[list[str]]:
+    """Split a recording's frame names wherever no photo came for a long while, so each part is one stretch of wear."""
+    groups: list[list[str]] = []
+    last = None
 
-    playlist = folder / "frames.txt"
+    for name in sorted(names):
+        offset = int(Path(name).stem) / 1000
+
+        if last is None or offset - last > PART_GAP_SECONDS:
+            groups.append([])
+
+        groups[-1].append(name)
+        last = offset
+
+    return groups
+
+
+def build_videos(folder: Path, started: datetime) -> list[Path]:
+    """Join a recording's frames into one MP4 per part, each keeping its frames' timing and the time it started."""
+    storage.fetch_folder(folder)
+    frame_parts = parts([path.name for path in folder.glob("*.jpg")])
+
+    return [
+        build_video(folder, frames, started + timedelta(seconds=int(Path(frames[0]).stem) / 1000), number)
+        for number, frames in enumerate(frame_parts, start=1)
+    ]
+
+
+def build_video(folder: Path, frames: list[str], started: datetime, number: int) -> Path:
+    """Join some of a recording's frames into an MP4 that keeps their timing and the time the first was taken."""
+    playlist = folder / f"frames-{number}.txt"
     lines = [f"file '{name}'\nduration {seconds:.3f}" for name, seconds in zip(frames, frame_durations(frames))]
     playlist.write_text("\n".join(lines + [f"file '{frames[-1]}'"]) + "\n")
 
-    video = folder / "video.mp4"
+    video = folder / ("video.mp4" if number == 1 else f"video-{number}.mp4")
     subprocess.run(
         [
             "ffmpeg",

@@ -72,7 +72,10 @@ Everything else is your call.
   upload straight to R2, and captions give OpenAI an R2 link.
 - A glasses recording ends only when the phone or glasses say so (`POST /glasses/recordings/{id}/end`); nothing
   checks for ones that went quiet. The first photo of a newer recording also ends any older one still open. Photos that
-  arrive later start a new part. Photos are filed by when they were taken, not when they arrived.
+  arrive later start a new part. Photos are filed by when they were taken, not when they arrived. When it is
+  processed, a recording is split into separate moments wherever no photo came for 10 minutes.
+- Each scene is told the things seen earlier in the same rooms and in the scene just before, not the whole
+  recording, so long recordings stay fast.
 - Facts cover a stretch of a moment (`fact.end_offset_seconds`, and `fact_frame` for the photos), split by code where
   the room changes, the photos stop looking alike, there is a 30 s gap or two minutes pass.
 - A thing seen again at the same place is linked to the earlier one (`entity.merged_into`), never moved, so a link can

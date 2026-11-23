@@ -247,6 +247,17 @@ def chosen_photos(frames: list[dict], count: int = SCENE_PHOTOS) -> list[int]:
     return sorted({round(1 + index * (len(frames) - 1) / (count - 1)) for index in range(count)})
 
 
+def relevant(known: list[dict], frames: list[dict], scene: int) -> list[dict]:
+    """Return the earlier things a scene could see again: those seen in its rooms, and those in the scene before it."""
+    rooms = {frame.get("room") for frame in frames}
+
+    return [
+        item
+        for item in known
+        if any(frame.get("room") in rooms or seen_in == scene - 1 for frame, *_, seen_in, _ in item["sightings"])
+    ]
+
+
 def known_lines(known: list[dict]) -> str:
     """Return the things seen earlier in this recording as labelled lines."""
     return "\n".join(f"{item['label']}: {item['name']} ({item['details'] or 'no details'})" for item in known)
@@ -464,11 +475,11 @@ def stretch_facts(
 
 
 def all_stretch_facts(conn, groups: list[tuple[list, list]], place: str | None, known: list[dict]) -> list[dict]:
-    """Ask about each scene in order, so each knows what earlier scenes saw, and return all their facts."""
+    """Ask about each scene in order, so each knows what earlier scenes in its rooms saw, and return all their facts."""
     facts = []
 
     for scene, (frames, passages) in enumerate(groups):
-        stretch, usage = summarise_stretch(frames, passages, known)
+        stretch, usage = summarise_stretch(frames, passages, relevant(known, frames, scene))
         llm.log_cost(conn, "summary", SUMMARY_MODEL, usage)
         facts += stretch_facts(frames, passages, place, stretch, known, scene)
 

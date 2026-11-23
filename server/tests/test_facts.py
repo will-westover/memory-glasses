@@ -222,3 +222,14 @@ def test_speech_summaries_go_to_the_passage_they_name():
     facts = said_facts([first, second, third], said, None)
 
     assert [(fact["offset_seconds"], fact["text"]) for fact in facts] == [(0, "About one."), (20, "About three.")]
+
+
+def test_a_scene_is_shown_things_from_its_rooms_and_the_scene_before():
+    from server.ingest.facts import relevant
+
+    kitchen, hall, bedroom = frame(1, 0.0, room="Kitchen"), frame(2, 40.0, room="Hall"), frame(3, 80.0, room="Bedroom")
+    mug = {"label": "K1", "sightings": [(kitchen, "", "", "seen", 0, None)]}
+    keys = {"label": "K2", "sightings": [(hall, "", "", "seen", 1, None)]}
+    lamp = {"label": "K3", "sightings": [(bedroom, "", "", "seen", 0, None)]}
+
+    assert relevant([mug, keys, lamp], [frame(4, 120.0, room="Kitchen")], 2) == [mug, keys]

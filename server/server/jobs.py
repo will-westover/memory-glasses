@@ -73,21 +73,22 @@ def process_ended_recordings() -> list[str]:
 
 
 def process_glasses(job_id, task: dict) -> None:
-    """Turn a stopped glasses recording into a video and process it like any upload."""
+    """Turn a stopped glasses recording into one video per stretch of wear and process each like any upload."""
     folder = glasses.GLASSES_DIR / task["recording"]
 
     try:
         with db.connect() as conn:
             started = db.recording_start(conn, task["recording"])
 
-        video = glasses.build_video(folder, started)
+        videos = glasses.build_videos(folder, started)
     except Exception as error:
         with db.connect() as conn:
             db.update_job(conn, job_id, status="failed", error=str(error))
 
         return
 
-    process_video(job_id, video, {}, task["frames_per_minute"], None, "glasses")
+    for video in videos:
+        process_video(job_id, video, {}, task["frames_per_minute"], None, "glasses")
 
 
 def upload_task(file_names: dict, frames_per_minute: float, place_id: int | None, source: str) -> dict:

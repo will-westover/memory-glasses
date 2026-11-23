@@ -55,7 +55,7 @@ docker buildx build --platform linux/amd64 -t "$IMAGE" --push .
 echo "Worker job"
 gcloud run jobs deploy "$WORKER_JOB_NAME" --image "$IMAGE" --region "$REGION" --project "$PROJECT" \
   --service-account "$SERVICE_ACCOUNT" --command python,-m,server.worker \
-  --cpu 1 --memory 2Gi --task-timeout 3600 --max-retries 0 \
+  --cpu 1 --memory 2Gi --task-timeout 86400 --max-retries 0 \
   --set-env-vars "$ENV_VARS" --set-secrets "$SECRET_FLAGS" >/dev/null
 
 gcloud run jobs add-iam-policy-binding "$WORKER_JOB_NAME" --region "$REGION" --project "$PROJECT" \
