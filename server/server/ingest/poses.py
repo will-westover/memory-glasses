@@ -1,4 +1,5 @@
-"""Where the phone was during a recording, from the poses the app saves: [seconds, x, y, z, yaw] in metres."""
+"""Where the phone was during a recording, from the poses the app saves: [seconds, x, y, z, yaw] in metres, then, in
+newer recordings, the camera's full view (see frame_position in db/moments.py)."""
 
 import bisect
 import json
@@ -28,10 +29,8 @@ def nearest_pose(poses: list[list[float]], seconds: float, max_gap: float = MAX_
 
 
 def thin(poses: list[list[float]], limit: int = PATH_POINTS) -> list[list[float]]:
-    """Return at most about `limit` evenly spaced poses, always keeping the last."""
-    if len(poses) <= limit:
-        return poses
+    """Return at most about `limit` evenly spaced poses, always keeping the last, as [seconds, x, y, z, yaw]."""
+    kept = poses if len(poses) <= limit else poses[:: math.ceil(len(poses) / limit)]
+    kept = kept if kept[-1] is poses[-1] else kept + [poses[-1]]
 
-    kept = poses[:: math.ceil(len(poses) / limit)]
-
-    return kept if kept[-1] is poses[-1] else kept + [poses[-1]]
+    return [pose[:5] for pose in kept]

@@ -275,8 +275,15 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
         let forward = -transform.columns.2
         let seconds = frame.timestamp - (firstFrameTime ?? frame.timestamp)
 
+        let columns = [transform.columns.0, transform.columns.1, transform.columns.2, transform.columns.3]
+        let intrinsics = frame.camera.intrinsics
+        let view = columns.flatMap { [Double($0.x), Double($0.y), Double($0.z), Double($0.w)] }
+            + [Double(intrinsics.columns.0.x), Double(intrinsics.columns.1.y),
+               Double(intrinsics.columns.2.x), Double(intrinsics.columns.2.y),
+               Double(frame.camera.imageResolution.width), Double(frame.camera.imageResolution.height)]
+
         poses.append([seconds, Double(transform.columns.3.x), Double(transform.columns.3.y),
-                      Double(transform.columns.3.z), Double(atan2(forward.x, forward.z))])
+                      Double(transform.columns.3.z), Double(atan2(forward.x, forward.z))] + view)
         lastPoseTime = frame.timestamp
     }
 

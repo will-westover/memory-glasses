@@ -254,7 +254,8 @@ def build_moment(
 
     for frame in frames:
         pose = nearest_pose(poses, frame["offset_seconds"])
-        frame["position"] = pose[1:] if pose else None
+        frame["position"] = pose[1:5] if pose else None
+        frame["camera"] = pose[5:] if pose and len(pose) > 5 else None
 
     if has_sound(info):
         extract_audio(video, build_dir / "audio.wav")

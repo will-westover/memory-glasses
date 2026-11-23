@@ -7,10 +7,12 @@ import psycopg
 
 
 def frame_position(frame: dict) -> tuple:
-    """Return a manifest frame's (x, y, z, yaw), or Nones if the recording had no positions."""
+    """Return a manifest frame's (x, y, z, yaw, camera), or Nones if the recording had no positions. The camera is the
+    phone's full view when it saved one: its 4x4 transform (column by column), fx, fy, cx, cy, and image width and
+    height."""
     pose = frame.get("position")
 
-    return tuple(pose) if pose else (None, None, None, None)
+    return (*pose[:4], frame.get("camera")) if pose else (None, None, None, None, None)
 
 
 def moment_files(manifest: dict) -> dict:
@@ -85,7 +87,7 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
 
         with conn.cursor() as cursor:
             cursor.executemany(
-                "update frame set captured_at = %s, x = %s, y = %s, z = %s, yaw = %s where id = %s",
+                "update frame set captured_at = %s, x = %s, y = %s, z = %s, yaw = %s, camera = %s where id = %s",
                 [
                     (manifest_frames[key]["captured_at"], *frame_position(manifest_frames[key]), stored_frames[key][0])
                     for key in manifest_frames.keys() & stored_frames.keys()
@@ -93,8 +95,8 @@ def save_moment(conn: psycopg.Connection, moment_dir: Path) -> dict:
             )
 
             cursor.executemany(
-                "insert into frame (moment_id, captured_at, image_path, fingerprint, x, y, z, yaw)"
-                " values (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "insert into frame (moment_id, captured_at, image_path, fingerprint, x, y, z, yaw, camera)"
+                " values (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 [
                     (moment_id, manifest_frames[key]["captured_at"], *key, *frame_position(manifest_frames[key]))
                     for key in manifest_frames.keys() - stored_frames.keys()

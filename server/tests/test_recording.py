@@ -101,3 +101,19 @@ def test_extra_files_and_the_source_are_kept(tmp_path):
     assert manifest["extras"] == ["poses.json"]
     assert (moment_dir / "poses.json").is_file()
     assert all(frame["position"] for frame in manifest["frames"])
+
+
+def test_a_frame_keeps_its_position_and_any_camera_view():
+    from server.db.moments import frame_position
+
+    camera = [1.0] * 22
+
+    assert frame_position({"position": [1, 2, 3, 0.5]}) == (1, 2, 3, 0.5, None)
+    assert frame_position({"position": [1, 2, 3, 0.5], "camera": camera}) == (1, 2, 3, 0.5, camera)
+    assert frame_position({}) == (None, None, None, None, None)
+
+
+def test_a_path_sends_only_where_the_phone_was():
+    from server.ingest.poses import thin
+
+    assert thin([[0.0, 1, 2, 3, 0.5, *([9.0] * 22)]]) == [[0.0, 1, 2, 3, 0.5]]
