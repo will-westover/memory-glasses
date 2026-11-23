@@ -21,8 +21,12 @@ final class LocationTrail: NSObject, CLLocationManagerDelegate {
     private var latest: CLLocation?
     private var lastPointAt = Date.distantPast
     private var sending = false
+    private var started = false
 
     func start() {
+        guard !started else { return }
+
+        started = true
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         manager.distanceFilter = 25
@@ -34,10 +38,6 @@ final class LocationTrail: NSObject, CLLocationManagerDelegate {
         }
 
         manager.startUpdatingLocation()
-    }
-
-    func stop() {
-        manager.stopUpdatingLocation()
     }
 
     func send() async {
@@ -67,7 +67,10 @@ final class LocationTrail: NSObject, CLLocationManagerDelegate {
         Task { @MainActor in
             for location in locations where location.horizontalAccuracy >= 0 {
                 self.latest = location
-                self.keep(location, at: location.timestamp)
+
+                if GlassesLink.shared.state == .connected {
+                    self.keep(location, at: location.timestamp)
+                }
             }
         }
     }

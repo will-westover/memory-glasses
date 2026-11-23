@@ -36,7 +36,6 @@ extension GlassesLink: CBCentralManagerDelegate {
         central.stopScan()
         state = .connected
         connected.discoverServices([Self.service])
-        Task { @MainActor in LocationTrail.shared.start() }
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect failed: CBPeripheral, error: Error?) {
@@ -46,7 +45,6 @@ extension GlassesLink: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral gone: CBPeripheral, error: Error?) {
         state = .looking
-        Task { @MainActor in LocationTrail.shared.stop() }
         settingsCharacteristic = nil
         ackCharacteristic = nil
         updateCharacteristic = nil

@@ -41,7 +41,10 @@ struct MemoryGlassesApp: App {
             .environment(router)
             .onOpenURL { pairing = Pairing(url: $0) }
             .onChange(of: scenePhase, initial: true) { _, phase in
-                if phase == .active { Task { try? await API.current.wake() } }
+                if phase == .active {
+                    LocationTrail.shared.start()
+                    Task { try? await API.current.wake() }
+                }
             }
             .alert("Connect to this server?", isPresented: Binding(get: { pairing != nil }, set: { if !$0 { pairing = nil } }),
                    presenting: pairing) { found in
