@@ -26,7 +26,7 @@ FRAMES_PER_MINUTE = float(os.environ.get("FRAMES_PER_MINUTE", 30))
 
 CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gpt-6-sol")
 
-TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-4o-transcribe-diarize")
+TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-transcribe")
 
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-6-luna")
 

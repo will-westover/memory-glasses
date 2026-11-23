@@ -42,7 +42,7 @@ Inside `server/server/`, the same word means the same thing at every layer:
    it), finds faces and rooms, and builds the world model: [ingest/pipeline.py](server/server/ingest/pipeline.py). The result is a
    moment.
 7. The audio becomes timed lines, each with a voiceprint: [ingest/transcript.py](server/server/ingest/transcript.py).
-   With `TRANSCRIBE_MODEL=gpt-transcribe`, Silero VAD finds the runs of speech, each run is transcribed on its own
+   Silero VAD finds the runs of speech, each run is transcribed on its own by `gpt-transcribe`
    (with `gpt-live-transcribe` when that hears nothing), and WeSpeaker gives each line a voiceprint:
    [ingest/speech.py](server/server/ingest/speech.py). The model files go in the ignored `server/models/`:
    `silero_vad.onnx` from github.com/snakers4/silero-vad and `voxceleb_resnet34_LM.onnx` from
