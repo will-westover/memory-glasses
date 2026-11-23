@@ -93,89 +93,205 @@ struct PeopleView: View {
     }
 }
 
+struct PersonDetail: Decodable {
+    let photos: [PersonPhoto]
+    let recordings: [PersonRecording]
+}
+
+struct PersonPhoto: Decodable, Identifiable {
+    let id: Int
+    let at: Date
+    let momentId: String
+    let offsetSeconds: Double
+    let image: String?
+
+    var fact: Fact {
+        Fact(id: -id, kind: "frame", at: at, momentId: momentId, offsetSeconds: offsetSeconds, text: "", image: image)
+    }
+}
+
+struct PersonRecording: Decodable, Identifiable {
+    let id: String
+    let title: String?
+    let startedAt: Date
+    let durationSeconds: Double
+
+    var fact: Fact {
+        Fact(id: -abs(id.hashValue), kind: "recording", at: startedAt, momentId: id, offsetSeconds: 0, text: title ?? "", image: nil)
+    }
+}
+
 struct PersonView: View {
     let person: Person
     let others: [Person]
 
+    @Environment(Router.self) private var router
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
+    @State private var savedName: String?
     @State private var status: String?
+    @State private var detail: PersonDetail?
+    @State private var merging = false
     @State private var confirmingForget = false
+    @State private var asking = false
     @State private var working = false
+    @FocusState private var editingName: Bool
 
     var body: some View {
-        Form {
-            Section {
-                HStack {
-                    Spacer()
-                    FaceImage(path: person.face, size: 140)
-                    Spacer()
-                }
-                .listRowBackground(Color.clear)
-            }
+        ScrollView {
+            VStack(spacing: 28) {
+                header
 
-            Section {
-                TextField("Name", text: $name)
-                    .textInputAutocapitalization(.words)
-                    .onSubmit { Task { await save() } }
-
-                Button("Save name") { Task { await save() } }
-                    .disabled(name.trimmingCharacters(in: .whitespaces) == (person.name ?? ""))
-            } header: {
-                Text("Name")
-            } footer: {
-                Text(status ?? "\(seenCount(person.faces)), from \(person.firstSeen.formatted(date: .abbreviated, time: .shortened)) to \(person.lastSeen.formatted(date: .abbreviated, time: .shortened)).")
-            }
-
-            if !others.isEmpty {
-                Section("Same person as") {
-                    ForEach(others) { other in
-                        Button { Task { await merge(into: other) } } label: {
-                            HStack(spacing: 12) {
-                                FaceImage(path: other.face, size: 36)
-                                Text(other.label)
+                if let photos = detail?.photos, !photos.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
+                                Button {
+                                    router.openSearch(photos.map(\.fact), at: index, query: "")
+                                } label: {
+                                    FrameImage(path: photo.image)
+                                        .frame(width: 128, height: 96)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                        .overlay(alignment: .bottomLeading) {
+                                            Text(whenLast(photo.at))
+                                                .font(.caption2.weight(.semibold))
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 3)
+                                                .background(.ultraThinMaterial, in: Capsule())
+                                                .padding(6)
+                                        }
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
-                        .buttonStyle(.plain)
-                        .disabled(working)
+                        .padding(.horizontal)
                     }
+                    .scrollClipDisabled()
                 }
-            }
 
-            Section {
-                Button(role: .destructive) { confirmingForget = true } label: {
-                    HStack {
-                        Text("Forget this person")
+                if let recordings = detail?.recordings, !recordings.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Recordings")
+                            .font(.headline)
+                            .padding(.bottom, 6)
 
-                        if working {
-                            Spacer()
-                            ProgressView().controlSize(.small)
+                        ForEach(recordings) { recording in
+                            Button { router.open(recording.fact) } label: {
+                                HStack {
+                                    Text(recording.title ?? "Recording")
+                                        .lineLimit(1)
+
+                                    Spacer()
+
+                                    Text(whenLast(recording.startedAt))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 12)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            if recording.id != recordings.last?.id {
+                                Divider()
+                            }
                         }
                     }
+                    .padding(.horizontal)
+                }
+
+                Button { asking = true } label: {
+                    Label(isMe ? "Ask about me" : "Ask about \(shownName)", systemImage: "bubble.left")
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .overlay(Capsule().stroke(Color(.separator)))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical)
+        }
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if !others.isEmpty {
+                        Button { merging = true } label: { Label("Merge with…", systemImage: "person.2") }
+                    }
+
+                    Button(role: .destructive) { confirmingForget = true } label: {
+                        Label("Forget this person", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
                 }
                 .disabled(working)
-            } footer: {
-                Text("Deletes every face of them. Their photos stay.")
+                .accessibilityLabel("More")
             }
         }
-        .navigationTitle(person.label)
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear { name = person.name ?? "" }
-        .confirmationDialog("Forget \(person.label)?", isPresented: $confirmingForget, titleVisibility: .visible) {
+        .onAppear { if savedName == nil { name = person.name ?? ""; savedName = name } }
+        .task { await load() }
+        .onChange(of: editingName) { _, editing in if !editing { Task { await save() } } }
+        .sheet(isPresented: $merging) {
+            MergePicker(person: person, others: others) { other in Task { await merge(into: other) } }
+        }
+        .sheet(isPresented: $asking) {
+            PersonChat(question: isMe ? "What have I been doing lately?" : "What do I know about \(shownName)?")
+        }
+        .confirmationDialog("Forget \(shownName)?", isPresented: $confirmingForget, titleVisibility: .visible) {
             Button("Forget", role: .destructive) { Task { await forget() } }
         } message: {
-            Text("This deletes all \(person.faces) faces of them. It can't be undone.")
+            Text("Their photos stay. This can't be undone.")
+        }
+    }
+
+    private var isMe: Bool {
+        name.trimmingCharacters(in: .whitespaces).lowercased() == "me"
+    }
+
+    private var shownName: String {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+
+        return trimmed.isEmpty ? "this person" : trimmed
+    }
+
+    private var header: some View {
+        VStack(spacing: 10) {
+            FaceImage(path: person.face, size: 132)
+
+            TextField("Add a name", text: $name)
+                .font(.title2.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .textInputAutocapitalization(.words)
+                .submitLabel(.done)
+                .focused($editingName)
+                .padding(.horizontal)
+
+            Text(status ?? "\(seenCount(person.faces)) · last \(whenLast(person.lastSeen))")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func load() async {
+        do {
+            detail = try await API.current.get("/people/\(person.id)")
+        } catch {
+            status = error.localizedDescription
         }
     }
 
     private func save() async {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
 
+        guard trimmed != savedName else { return }
+
         do {
             let _: EmptyReply = try await API.current.send("/people/\(person.id)", method: "PUT",
                                                    body: NameUpdate(name: trimmed.isEmpty ? nil : trimmed))
-            status = "Saved. Answers will use the new name in about a minute."
+            savedName = trimmed
+            status = "Saved"
         } catch {
             status = error.localizedDescription
         }
@@ -203,6 +319,123 @@ struct PersonView: View {
         } catch {
             status = error.localizedDescription
         }
+    }
+}
+
+struct MergePicker: View {
+    let person: Person
+    let others: [Person]
+    let merge: (Person) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var chosen: Person?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let chosen {
+                    VStack(spacing: 24) {
+                        HStack(spacing: 20) {
+                            side(person)
+                            Image(systemName: "equal")
+                                .font(.title2)
+                                .foregroundStyle(.secondary)
+                            side(chosen)
+                        }
+
+                        Text("Same person?")
+                            .font(.headline)
+
+                        Button("Merge") {
+                            merge(chosen)
+                            dismiss()
+                        }
+                        .buttonStyle(FilledButton())
+                    }
+                    .padding()
+                } else {
+                    List(others) { other in
+                        Button { chosen = other } label: {
+                            HStack(spacing: 12) {
+                                FaceImage(path: other.face, size: 40)
+                                Text(other.label)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle(chosen == nil ? "Merge with" : "")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if chosen == nil {
+                        Button("Cancel") { dismiss() }
+                    } else {
+                        Button { chosen = nil } label: { Image(systemName: "chevron.left") }
+                            .accessibilityLabel("Back")
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func side(_ someone: Person) -> some View {
+        VStack(spacing: 8) {
+            FaceImage(path: someone.face, size: 96)
+
+            Text(someone.label)
+                .font(.subheadline)
+                .lineLimit(1)
+        }
+        .frame(width: 120)
+    }
+}
+
+struct PersonChat: View {
+    let question: String
+
+    @Environment(ConversationStore.self) private var store
+    @Environment(Router.self) private var router
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var chat: UUID?
+    @State private var problem: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let chat {
+                    ChatView(id: chat, newChat: { Task { await begin() } })
+                } else if let problem {
+                    ServerProblem(message: problem, retry: begin)
+                } else {
+                    ProgressView()
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .environment(\.openSource) { [router] in router.open($0) }
+        .onChange(of: router.focusChangeCount) { dismiss() }
+        .task { if chat == nil { await begin() } }
+    }
+
+    private func begin() async {
+        guard let started = await store.start() else {
+            problem = store.problem ?? "Couldn't start a chat."
+            return
+        }
+
+        chat = started
+        problem = nil
+        Task { await store.ask(question, in: started) }
     }
 }
 

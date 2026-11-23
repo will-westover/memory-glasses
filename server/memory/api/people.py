@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from memory import db, storage
 from memory.config import DATA_DIR
 from memory.jobs import start_rebuild
-from memory.api.shared import Merge, PersonName, connection
+from memory.api.shared import Merge, PersonName, connection, image_url
 
 router = APIRouter()
 
@@ -25,6 +25,22 @@ def person_json(person: dict) -> dict:
 def people(conn: psycopg.Connection = Depends(connection)) -> list[dict]:
     """List everyone whose face was found, most seen first."""
     return [person_json(person) for person in db.list_people(conn)]
+
+
+@router.get("/people/{person_id}")
+def person(person_id: int, conn: psycopg.Connection = Depends(connection)) -> dict:
+    """Return a person with a photo from each scene they are in and the recordings they are in."""
+    found = next((person for person in db.list_people(conn) if person["id"] == person_id), None)
+
+    if not found:
+        raise HTTPException(404, "no such person")
+
+    photos = [
+        {**{key: photo[key] for key in ("id", "at", "moment_id", "offset_seconds")}, "image": image_url(photo["image_path"])}
+        for photo in db.person_photos(conn, person_id)
+    ]
+
+    return {**person_json(found), "photos": photos, "recordings": db.person_recordings(conn, person_id)}
 
 
 @router.put("/people/{person_id}")
