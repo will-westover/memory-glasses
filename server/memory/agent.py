@@ -59,11 +59,13 @@ Recordings:
 
 AGENT_NOTES = """
 
-You have four tools. search finds facts by what they are about; when the question names a time, it looks there
+You have five tools. search finds facts by what they are about; when the question names a time, it looks there
 first. timeline lists what happened between two times, in order: use it for questions about a stretch of time, or
 about what came before or after something. entity lists every time the thing or person an object or person fact is
 about was seen: use it for when something was last seen, whether it was there another time, or what changed about
-it. nearby lists what was seen close to where one fact's frame was taken, across every moment recorded in the same
+it. coverage lists the recordings and scenes between two times with their exact lengths and what was not recorded:
+use it for how long, how often, what a day consisted of, and before saying something was not recorded. nearby lists
+what was seen close to where one fact's frame was taken, across every moment recorded in the same
 mapped place: use it for what was near something. Things worn or held by a recognised person say whose. Facts say which room
 they were in when it is known, and facts from phone recordings also say where, in metres. Call them
 until you can answer. If a search finds nothing relevant, try other words before giving up. Earlier messages
@@ -121,6 +123,23 @@ TOOLS = [
                 "metres": {"type": ["number", "null"], "description": "How far around to look; 1.5 if null"},
             },
             "required": ["fact_id", "metres"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
+        "name": "coverage",
+        "description": "List every recording between two times with its scenes, each with exact start, end and length, "
+        "plus how much of the time was recorded and not recorded: use it for how long something took, how often, "
+        "what a day or evening consisted of, and to say exactly when nothing was recorded.",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start": {"type": "string", "description": f"Start of the range. {ISO_TIME}"},
+                "end": {"type": "string", "description": f"End of the range. {ISO_TIME}"},
+            },
+            "required": ["start", "end"],
             "additionalProperties": False,
         },
     },
@@ -229,6 +248,38 @@ def recording_note(fact: dict) -> str:
     return f'  [recording "{fact.get("moment_title") or "untitled"}", {start:%H:%M}-{end:%H:%M}]'
 
 
+def coverage_text(recordings: list[dict], start: datetime, end: datetime) -> str:
+    """Describe the recordings in a range, with scene lengths and totals worked out, as the model reads it."""
+    if not recordings:
+        return f"Nothing was recorded between {start:%a %d %b %H:%M} and {end:%a %d %b %H:%M}."
+
+    lines, recorded = [], 0.0
+
+    for recording in recordings:
+        began, ended = max(recording["start"], start), min(recording["end"], end)
+        seconds = max((ended - began).total_seconds(), 0)
+        recorded += seconds
+        lines.append(
+            f'Recording "{recording["title"] or "untitled"}", {recording["start"].astimezone():%a %d %b %H:%M:%S} to'
+            f" {recording['end'].astimezone():%H:%M:%S} ({spoken_length(seconds)}): {recording['overview'] or ''}"
+        )
+
+        for scene in recording["scenes"]:
+            scene_start, scene_end = datetime.fromisoformat(scene["start"]), datetime.fromisoformat(scene["end"])
+            length = spoken_length((scene_end - scene_start).total_seconds())
+            lines.append(
+                f"  - {scene_start.astimezone():%H:%M:%S} to {scene_end.astimezone():%H:%M:%S} ({length}): {scene['title']}"
+            )
+
+    total = (end - start).total_seconds()
+    unrecorded = spoken_length(max(total - recorded, 0))
+    lines.append(
+        f"Recorded {spoken_length(recorded)} of the {spoken_length(total)} asked about; not recorded {unrecorded}."
+    )
+
+    return "\n".join(lines)
+
+
 def fact_line(fact: dict) -> str:
     """Return a fact as the one line the model reads."""
     where = ""
@@ -286,6 +337,14 @@ def run_tool(
     conn, name: str, arguments: dict, seen: dict, moments: list[str] | None = None, window: tuple = (None, None)
 ) -> tuple[str, list[dict]]:
     """Run one tool call, remember the facts it returned, and return them as text and as found."""
+    if name == "coverage":
+        start, end = parse_time(arguments.get("start")), parse_time(arguments.get("end"))
+
+        if not start or not end:
+            return f"error: start and end must be {ISO_TIME}", []
+
+        return coverage_text(db.coverage(conn, start, end, moments), start, end), []
+
     try:
         facts = find_facts(conn, name, arguments, moments, window)
     except ValueError:
@@ -363,6 +422,9 @@ def step_text(name: str, arguments: dict) -> str:
 
     if name == "entity":
         return "Looking at every time one thing was seen"
+
+    if name == "coverage":
+        return f"Adding up what was recorded from {spoken_time(arguments.get('start'))} to {spoken_time(arguments.get('end'))}"
 
     return "Looking at what was nearby"
 

@@ -164,3 +164,22 @@ def recent_links(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
         }
         for entity_id, name, image_path, box, root_id, root_name, root_image, root_box, reason, confirmed in rows
     ]
+
+
+def coverage(conn: psycopg.Connection, start, end, moments: list[str] | None = None) -> list[dict]:
+    """Return the recordings that overlap a time range, oldest first, each with its scenes, title and times."""
+    rows = conn.execute(
+        "select m.id, m.title, m.overview, m.started_at, m.started_at + make_interval(secs => m.duration_seconds),"
+        "       coalesce((select json_agg(json_build_object('title', e.title, 'start', e.start_at, 'end', e.end_at)"
+        "                 order by e.start_at) from episode e where e.moment_id = m.id and e.level = 'scene'), '[]')"
+        "  from moment m"
+        " where m.started_at <= %(end)s and m.started_at + make_interval(secs => m.duration_seconds) >= %(start)s"
+        "   and (%(moments)s::text[] is null or m.id = any(%(moments)s::text[]))"
+        " order by m.started_at",
+        {"start": start, "end": end, "moments": moments},
+    )
+
+    return [
+        {"id": moment_id, "title": title, "overview": overview, "start": began, "end": ended, "scenes": scenes}
+        for moment_id, title, overview, began, ended, scenes in rows
+    ]
