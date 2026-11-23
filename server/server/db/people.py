@@ -45,17 +45,22 @@ def remove_faceless_people(conn: psycopg.Connection) -> None:
 
 
 def list_people(
-    conn: psycopg.Connection, person_id: int | None = None, limit: int | None = None, offset: int = 0
+    conn: psycopg.Connection,
+    person_id: int | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    passers_by: bool = True,
 ) -> list[dict]:
     """Return people most seen first, a page at a time, or just one, with a face count, when they were seen, and
-    their clearest face."""
+    their clearest face. Without passers_by, unnamed people seen in only one recording are left out."""
     rows = conn.execute(
         "select p.id, p.name, count(f.id), min(fr.captured_at), max(fr.captured_at),"
         "       (select f2.id from face f2 where f2.person_id = p.id order by f2.w * f2.h * f2.score desc limit 1)"
         "  from person p join face f on f.person_id = p.id join frame fr on fr.id = f.frame_id"
         " where %(id)s::bigint is null or p.id = %(id)s::bigint"
-        " group by p.id order by count(f.id) desc, p.id limit %(limit)s offset %(offset)s",
-        {"id": person_id, "limit": limit, "offset": offset},
+        " group by p.id having %(passers_by)s or p.name is not null or count(distinct fr.moment_id) > 1"
+        " order by count(f.id) desc, p.id limit %(limit)s offset %(offset)s",
+        {"id": person_id, "limit": limit, "offset": offset, "passers_by": passers_by},
     )
 
     return [

@@ -32,8 +32,9 @@ def people(
     limit: int = Query(PEOPLE_PAGE, ge=1, le=500),
     conn: psycopg.Connection = Depends(connection),
 ) -> list[dict]:
-    """List everyone whose face was found, most seen first, a page at a time."""
-    return [person_json(person) for person in db.list_people(conn, limit=limit, offset=offset)]
+    """List the people worth naming, most seen first, a page at a time: everyone named, and anyone seen in more than
+    one recording."""
+    return [person_json(person) for person in db.list_people(conn, limit=limit, offset=offset, passers_by=False)]
 
 
 @router.get("/people/{person_id}")

@@ -136,13 +136,14 @@ def moment_vector(conn, moment_id: str) -> np.ndarray | None:
 
 
 def places_near(conn, lat, lon) -> list[dict]:
-    """Return the places near a location, most recently updated first; all of them when the location is unknown."""
+    """Return the places near a location, within each place's own radius when it has one, most recently updated first;
+    all of them when the location is unknown."""
     return [
         place
         for place in db.list_places(conn)
         if lat is None
         or place["lat"] is None
-        or distance_m(lat, lon, place["lat"], place["lon"]) <= PLACE_SEARCH_METRES
+        or distance_m(lat, lon, place["lat"], place["lon"]) <= (place["radius_m"] or PLACE_SEARCH_METRES)
     ]
 
 

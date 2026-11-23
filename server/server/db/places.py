@@ -67,7 +67,7 @@ def located_moments(conn: psycopg.Connection) -> list[dict]:
 def list_places(conn: psycopg.Connection) -> list[dict]:
     """Return every place, most recently updated first, with its rooms and how many moments were there."""
     rows = conn.execute(
-        "select p.id, p.name, p.lat, p.lon, p.updated_at, p.map_path is not null,"
+        "select p.id, p.name, p.lat, p.lon, p.radius_m, p.updated_at, p.map_path is not null,"
         "       (select count(distinct s.moment_id) from segment s where s.place_id = p.id),"
         "       (select coalesce(json_agg(r.name order by r.name), '[]') from room r where r.place_id = p.id)"
         "  from place p order by p.updated_at desc"
@@ -79,12 +79,13 @@ def list_places(conn: psycopg.Connection) -> list[dict]:
             "name": name,
             "lat": lat,
             "lon": lon,
+            "radius_m": radius_m,
             "updated_at": updated_at,
             "has_map": has_map,
             "moments": moments,
             "rooms": rooms,
         }
-        for place_id, name, lat, lon, updated_at, has_map, moments, rooms in rows
+        for place_id, name, lat, lon, radius_m, updated_at, has_map, moments, rooms in rows
     ]
 
 
