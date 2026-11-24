@@ -17,6 +17,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     static let videoBitrate = 6_000_000
     static let poseInterval = 0.1
     static let recogniseSeconds = 10.0
+    static let locationWaitSteps = 15
 
     @Published private(set) var stage: Stage = .ready
     @Published private(set) var elapsed: TimeInterval = 0
@@ -98,7 +99,11 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate, CLLocationM
     private func nearestPlaceMap() async -> (Place, ARWorldMap)? {
         var path = "/places"
 
-        if let location {
+        for _ in 0..<Self.locationWaitSteps where location == nil && locationManager.location == nil {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+
+        if let location = location ?? locationManager.location {
             path += "?lat=\(location.coordinate.latitude)&lon=\(location.coordinate.longitude)"
         }
 
