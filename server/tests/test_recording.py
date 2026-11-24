@@ -111,6 +111,7 @@ def test_a_frame_keeps_its_position_and_any_camera_view():
     assert frame_position({"position": [1, 2, 3, 0.5]}) == (1, 2, 3, 0.5, None)
     assert frame_position({"position": [1, 2, 3, 0.5], "camera": camera}) == (1, 2, 3, 0.5, camera)
     assert frame_position({}) == (None, None, None, None, None)
+    assert all(isinstance(value, float) for value in frame_position({"position": [1, 2, 3, 0], "camera": [1, 0]})[4])
 
 
 def test_a_path_sends_only_where_the_phone_was():

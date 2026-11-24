@@ -10,9 +10,12 @@ def frame_position(frame: dict) -> tuple:
     """Return a manifest frame's (x, y, z, yaw, camera), or Nones if the recording had no positions. The camera is the
     phone's full view when it saved one: its 4x4 transform (column by column), fx, fy, cx, cy, and image width and
     height."""
-    pose = frame.get("position")
+    pose, camera = frame.get("position"), frame.get("camera")
 
-    return (*pose[:4], frame.get("camera")) if pose else (None, None, None, None, None)
+    if not pose:
+        return (None, None, None, None, None)
+
+    return (*[float(value) for value in pose[:4]], [float(value) for value in camera] if camera else None)
 
 
 def moment_files(manifest: dict) -> dict:
