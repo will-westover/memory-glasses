@@ -124,7 +124,7 @@ def process_video(job_id, video, extras: dict, frames_per_minute: float, place_i
         try:
             storage.fetch_folder(video.parent, videos=True)
             moment_id = pipeline.process(
-                video, frames_per_minute, extras, place_id=place_id, source=source, on_step=report_step
+                video, frames_per_minute, extras, replace=True, place_id=place_id, source=source, on_step=report_step
             )
             db.update_job(conn, job_id, status="ready", step=None, moment_id=moment_id)
 
